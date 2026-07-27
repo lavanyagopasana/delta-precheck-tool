@@ -4,10 +4,12 @@
 
 - All backend routes are under `/api/**` (except `/uploads/**`, served statically by `WebConfig`).
 - Frontend's single source of truth for the API surface is `frontend/src/api/client.js` —
-  `API_BASE = "http://localhost:8080/api"` is hardcoded there (no environment-based API base URL
-  yet; if you add one, update both `client.js` and this file).
-- CORS (`WebConfig.addCorsMappings`) only allows `http://localhost:3000` today. A deployed frontend
-  origin must be added there before it will work against a deployed backend.
+  `API_BASE`/`FILE_BASE` derive from `REACT_APP_API_BASE` (set in `frontend/.env.local` or the
+  deployed build's env), falling back to `http://localhost:8080` for local dev.
+- CORS (`WebConfig.addCorsMappings`) reads a comma-separated origin list from `app.allowed-origins`
+  / `APP_ALLOWED_ORIGINS`, defaulting to `http://localhost:3000`. Add the deployed frontend's origin
+  via that env var before it will work against a deployed backend — don't hardcode a second
+  `.allowedOrigins(...)` call.
 
 ## Request/response shape
 

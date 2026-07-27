@@ -1,7 +1,10 @@
 import axios from "axios";
 import { getAccessToken } from "../auth/getAccessToken";
 
-const API_BASE = "http://localhost:8080/api";
+// Set REACT_APP_API_BASE in frontend/.env.local (or the deployed build's env) to point at a
+// non-localhost backend -- localhost:8080 stays the default for local dev.
+const BACKEND_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8080";
+const API_BASE = `${BACKEND_BASE}/api`;
 
 const client = axios.create({ baseURL: API_BASE });
 
@@ -13,7 +16,7 @@ client.interceptors.request.use(async (config) => {
   return config;
 });
 
-export const FILE_BASE = "http://localhost:8080";
+export const FILE_BASE = BACKEND_BASE;
 
 export const getDashboardSummary = () => client.get("/dashboard/summary").then((r) => r.data);
 

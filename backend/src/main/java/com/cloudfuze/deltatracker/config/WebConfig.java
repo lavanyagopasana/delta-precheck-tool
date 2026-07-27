@@ -14,10 +14,15 @@ public class WebConfig implements WebMvcConfigurer {
     @Value("${app.upload-dir}")
     private String uploadDir;
 
+    // Comma-separated list so a deployed frontend origin can be added without touching code --
+    // set APP_ALLOWED_ORIGINS in production (localhost:3000 stays the default for local dev).
+    @Value("${app.allowed-origins:http://localhost:3000}")
+    private String allowedOrigins;
+
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/api/**")
-                .allowedOrigins("http://localhost:3000")
+                .allowedOrigins(allowedOrigins.split("\\s*,\\s*"))
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .allowedHeaders("*");
     }

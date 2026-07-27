@@ -52,7 +52,7 @@ Inside any Claude Code session, run `/gstack-upgrade`.
 - **Backend**: Java 21, Spring Boot 3.3.4 (Web, Data JPA, Validation, Security, OAuth2 Resource Server, Mail), Maven, Lombok, Hibernate (`ddl-auto=update` — **no Flyway/Liquibase**, schema evolves by annotation changes only)
 - **Database**: MySQL 8 (`mysql-connector-j`). A `postgresql` driver is also on the classpath but unused today — leftover from an earlier deploy target consideration, not an active dual-DB setup.
 - **Frontend**: React 18 (Create React App / `react-scripts` 5), `react-router-dom` 6, `axios`, `@azure/msal-browser` + `@azure/msal-react`
-- **Auth**: Microsoft Entra ID (Azure AD), multi-tenant app registration. The frontend deliberately sends the **ID token** (not an access token) as the bearer credential — see `frontend/src/auth/getAccessToken.js` for why. Auth is entirely optional: leave `AZURE_CLIENT_ID` unset and the backend runs fully open (`permitAll`) with no login screen — this is the default local-dev state.
+- **Auth**: Microsoft Entra ID (Azure AD), single-tenant app registration (client ID + tenant ID are baked into `application.properties` as defaults — see Environment Variables). The frontend deliberately sends the **ID token** (not an access token) as the bearer credential — see `frontend/src/auth/getAccessToken.js` for why. Auth can still be disabled entirely by explicitly overriding `AZURE_CLIENT_ID` to blank (the backend then runs fully open, `permitAll`, no login screen) — but that's no longer the default state.
 - **File storage**: local filesystem (`backend/uploads`), served at `/uploads/**`
 - **Email**: SMTP via Spring Mail, defaults to Office 365's relay (`smtp.office365.com`)
 - **Tests**: none exist yet in either backend (`spring-boot-starter-test` is on the classpath but `backend/src/test/` doesn't exist) or frontend (no `*.test.js` files). See `.claude/rules/testing-standard.md` before writing the first ones.
@@ -87,14 +87,16 @@ signing in with the auto-provision domain (default `cloudfuze.com`) is silently 
 
 ## Critical Constraints
 
-- **`AZURE_CLIENT_ID` is not persisted anywhere** — not in `application.properties` defaults, not in
-  a `.env`, not in OS environment variables. It must be exported in the shell that starts the
-  backend, every time. **Forgetting it does not fail loudly** — the backend silently falls back to
-  fully-open `permitAll` mode, and `/api/me` returns `{email: null, role: null, allowed: true}` for
-  everyone regardless of who's actually signed in. This has already caused real confusion once this
-  project (an admin who should see the Admin nav link couldn't, because the backend had been
-  restarted without the var). Always restart the backend with
-  `AZURE_CLIENT_ID=<value from frontend/.env.local>` — see `.claude/memory/decisions.md`.
+- **`AZURE_CLIENT_ID`/`AZURE_TENANT_ID` are baked into `application.properties` as defaults**
+  (as of 2026-07-27 — client ID `a55e053f-bfe9-4b4a-8b74-362649f82cf0`, tenant ID
+  `66d8848d-26b6-4147-8124-127624d7b3a6`; this is now a **single-tenant** registration, not
+  multi-tenant as it was originally). Neither value is a secret (both are public OAuth identifiers,
+  not credentials), so baking them in as defaults is safe — and it closes a footgun that bit this
+  project repeatedly before: when these had to be exported manually every backend restart,
+  forgetting silently fell back to fully-open `permitAll` mode (`/api/me` would return
+  `{email: null, role: null, allowed: true}` for everyone) rather than failing loudly. If auth ever
+  looks broken again, the first thing to check is whether something is now *explicitly* overriding
+  `AZURE_CLIENT_ID` to blank (the only way it can degrade now) — see `.claude/memory/decisions.md`.
 - **`README.md`'s "Key business rules" section is stale.** It describes an older per-*workspace-pair*,
   per-*category* ("Pre-Check 1 / Pre-Check 2") pre-check model with automatic escalation on every
   checkbox toggle. The **actual current code** tracks pre-check and sign-off at the **server**
@@ -103,7 +105,9 @@ signing in with the auto-provision domain (default `cloudfuze.com`) is silently 
   services (`.claude/memory/domain-knowledge.md`), not the README, when in doubt.
 - **No tests exist.** Don't assume a testing pattern is already established; `.claude/rules/testing-standard.md` defines the target standard for new code.
 - **No git repo yet.** Don't assume `git status`/`git log`/branching workflows apply until this is initialized.
-- **CORS is hardcoded to `http://localhost:3000` only** (`WebConfig.java`) — a production frontend origin needs to be added there.
+- **CORS origins are env-driven** (`WebConfig.java`, `app.allowed-origins`/`APP_ALLOWED_ORIGINS`) —
+  defaults to `http://localhost:3000`; set the env var to a comma-separated list to add a deployed
+  frontend origin, no code change needed.
 - **Hibernate `ddl-auto=update`** means schema changes happen by editing `@Entity` annotations directly — there is no migration file to write or review.
 - The approval sequence (`MIGRATION_LEAD, DEV_LEAD, QA_LEAD`) is defined as an identical constant in **two** places (`SignOffService` and `ProjectService`) — keep both in sync if it ever changes.
 
@@ -148,21 +152,24 @@ frontend/src/
 | `DB_URL` | `jdbc:mysql://localhost:3306/delta_migration_tracker?...` | DB auto-created on first connect |
 | `DB_USERNAME` | `root` | |
 | `DB_PASSWORD` | `root` | |
-| `AZURE_CLIENT_ID` | *(blank)* | **Must be exported manually every backend start** — see Critical Constraints |
-| `AZURE_TENANT_ID` | *(blank)* | Blank = multi-tenant (`organizations` endpoint) |
+| `AZURE_CLIENT_ID` | `a55e053f-bfe9-4b4a-8b74-362649f82cf0` | Baked in; override only to test a different app registration or to disable auth (set blank) |
+| `AZURE_TENANT_ID` | `66d8848d-26b6-4147-8124-127624d7b3a6` | Single-tenant — only accounts in this Entra ID tenant can authenticate at all |
 | `AZURE_ALLOWED_EMAIL_DOMAIN` | *(blank)* | Currently unset for testing; set to `cloudfuze.com` to restrict sign-in |
-| `AZURE_REQUIRE_ALLOWLIST` | `false` | When `false`, any valid Microsoft account can use the app regardless of `app_users` |
+| `AZURE_REQUIRE_ALLOWLIST` | `true` | Only people added under Manage Access can sign in. Set `false` only for local testing with unregistered accounts |
 | `AZURE_AUTO_PROVISION_DOMAIN` | `cloudfuze.com` | Auto-added as `MIGRATION_ENGINEER` on first sign-in |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` | `smtp.office365.com` / `587` / `leo@fuzebot.io` / *(blank)* | Blank password disables sending (logs a warning) |
 | `APP_FRONTEND_URL` | `http://localhost:3000` | Used to build links in outgoing emails |
+| `APP_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated CORS allowlist for `/api/**` (`WebConfig`) — add the deployed frontend's origin here |
 | (frontend) `REACT_APP_AZURE_CLIENT_ID` | — | Set in `frontend/.env.local`, same value as backend's `AZURE_CLIENT_ID` |
+| (frontend) `REACT_APP_AZURE_TENANT_ID` | — | Set in `frontend/.env.local`, same value as backend's `AZURE_TENANT_ID` |
 | (frontend) `REACT_APP_ALLOWED_EMAIL_DOMAIN` | *(blank)* | |
+| (frontend) `REACT_APP_API_BASE` | `http://localhost:8080` | Backend origin, no `/api` suffix, no trailing slash — set for a deployed backend |
 
 ## Common Commands
 
 ```bash
 # Backend (run from backend/)
-mvn spring-boot:run                    # start API on :8080 — remember AZURE_CLIENT_ID!
+mvn spring-boot:run                    # start API on :8080 — auth config is now baked in, no env var needed
 mvn -o -q compile                      # fast offline compile check
 
 # Frontend (run from frontend/)

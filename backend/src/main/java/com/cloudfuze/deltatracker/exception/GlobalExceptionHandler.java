@@ -1,5 +1,7 @@
 package com.cloudfuze.deltatracker.exception;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -14,6 +16,8 @@ import java.util.Map;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<Map<String, Object>> handleApiException(ApiException ex) {
@@ -43,10 +47,13 @@ public class GlobalExceptionHandler {
                 .body(body(HttpStatus.CONFLICT, "That conflicts with an existing record -- please check your input and try again."));
     }
 
+    // Backstop for anything not explicitly handled above -- never send ex.getMessage() here, it can
+    // carry internal details (file paths, class names, driver-level errors) straight to the client.
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneric(Exception ex) {
+        log.error("Unhandled exception", ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(body(HttpStatus.INTERNAL_SERVER_ERROR, ex.getMessage()));
+                .body(body(HttpStatus.INTERNAL_SERVER_ERROR, "Something went wrong. Please try again."));
     }
 
     private Map<String, Object> body(HttpStatus status, String message) {
