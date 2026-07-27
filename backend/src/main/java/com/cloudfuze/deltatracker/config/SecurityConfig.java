@@ -23,7 +23,12 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
 import org.springframework.util.StringUtils;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.util.Arrays;
+import java.util.List;
 import java.util.regex.Pattern;
 
 /**
@@ -75,6 +80,15 @@ public class SecurityConfig {
     @Value("${azure.allowed-email-domain:}")
     private String allowedEmailDomain;
 
+    // Comma-separated list so a deployed frontend origin can be added without touching code --
+    // set APP_ALLOWED_ORIGINS in production (localhost:3000 stays the default for local dev). Owned
+    // here rather than in WebConfig because it must be wired into the Security filter chain via
+    // .cors(...) -- a WebMvcConfigurer-only CORS registration never runs for requests Spring
+    // Security itself rejects (401/403), which otherwise surface to the browser as an opaque CORS
+    // failure instead of a readable auth error.
+    @Value("${app.allowed-origins:http://localhost:3000}")
+    private String allowedOrigins;
+
     public SecurityConfig(AppUserService appUserService) {
         this.appUserService = appUserService;
     }
@@ -84,8 +98,21 @@ public class SecurityConfig {
     }
 
     @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(Arrays.asList(allowedOrigins.split("\\s*,\\s*")));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        configuration.setAllowedHeaders(List.of("*"));
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/api/**", configuration);
+        return source;
+    }
+
+    @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http.csrf(csrf -> csrf.disable())
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
 
         if (!authConfigured()) {
