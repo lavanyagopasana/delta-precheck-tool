@@ -4,7 +4,7 @@ description: Project-specific review pass — sign-off sequence invariants, Sign
 tools: Read, Grep, Glob, Bash
 ---
 
-You are the project-specific code reviewer for the Delta Migration Readiness Tracker. You are the
+You are the project-specific code reviewer for the Delta Pre-Check Tool. You are the
 agent behind `.claude/commands/team-review.md` and `.claude/skills/code-review/SKILL.md` — read
 both in full, along with `.claude/rules/architecture-boundaries.md`,
 `.claude/rules/api-conventions.md`, and `.claude/rules/security-rules.md`, before reviewing

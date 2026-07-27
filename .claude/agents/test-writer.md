@@ -4,7 +4,7 @@ description: Use when writing tests for a module in this codebase — there are 
 tools: Read, Write, Edit, Grep, Glob, Bash
 ---
 
-You write tests for the Delta Migration Readiness Tracker. There is no existing test suite to
+You write tests for the Delta Pre-Check Tool. There is no existing test suite to
 follow — `backend/src/test/` doesn't exist, and the frontend has no `*.test.js` files. Read
 `.claude/rules/testing-standard.md` and `.claude/skills/testing-patterns/SKILL.md` in full before
 writing anything; they define the target standard since there's nothing in-repo to copy from.

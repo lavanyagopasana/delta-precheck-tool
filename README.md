@@ -1,14 +1,23 @@
-# Delta Migration Readiness Tracker
+# Delta Pre-Check Tool
 
-A full-stack app for tracking pre-migration checklist compliance for a Content Migration team:
-dashboard rollups, per-workspace-pair pre-check forms with evidence-gated checkboxes, automatic
-escalation rules, and a per-server sign-off / "Initiate Delta" flow.
+An internal CloudFuze tool for tracking pre-migration checklist compliance and approval sign-off
+across Content/Email/Message migration projects. Each **Project** (a customer engagement) contains
+**Servers**; each Server has a CSV-imported list of source → destination workspace pairs, a single
+server-wide pre-check checklist, and a sequential three-role sign-off chain (Migration Manager →
+Dev Lead → QA Lead) that must fully resolve before the server's data migration ("Delta") can be
+initiated.
 
 ## Tech Stack
 
-- **Backend**: Java 21, Spring Boot 3.3 (Web, Data JPA, Validation), MySQL
-- **Frontend**: React 18 (Create React App), Axios, React Router
-- **File storage**: local filesystem (`backend/uploads`) for evidence uploads
+- **Backend**: Java 21, Spring Boot 3.3.4 (Web, Data JPA, Validation, Security, OAuth2 Resource
+  Server, Mail), Maven, Lombok, Hibernate (`ddl-auto=update` — no migration tool; schema evolves by
+  editing `@Entity` annotations)
+- **Database**: MySQL 8
+- **Frontend**: React 18 (Create React App), `react-router-dom`, `axios`, `@azure/msal-browser` +
+  `@azure/msal-react`
+- **Auth**: Microsoft Entra ID (Azure AD), single-tenant app registration
+- **File storage**: local filesystem (`backend/uploads`), served at `/uploads/**`
+- **Email**: SMTP via Spring Mail (defaults to Office 365's relay)
 
 ## Prerequisites
 
@@ -20,17 +29,35 @@ escalation rules, and a per-server sign-off / "Initiate Delta" flow.
 
 ## Configuration
 
-Backend datasource settings live in `backend/src/main/resources/application.properties` and can be
-overridden with environment variables:
+All backend settings live in `backend/src/main/resources/application.properties` and are overridable
+by environment variable — nothing needs editing for local dev, the defaults below are what
+`mvn spring-boot:run` uses out of the box.
 
-| Property | Env var | Default |
+| Property | Env var | Local default | Set for production |
+|---|---|---|---|
+| JDBC URL | `DB_URL` | `jdbc:mysql://localhost:3306/delta_migration_tracker?...` | your real DB host/name |
+| DB username | `DB_USERNAME` | `root` | real DB user |
+| DB password | `DB_PASSWORD` | `root` | real DB password (secret) |
+| CORS allowlist for `/api/**` | `APP_ALLOWED_ORIGINS` | `http://localhost:3000` | your deployed frontend origin (comma-separate for more than one) |
+| Frontend URL (used in email links) | `APP_FRONTEND_URL` | `http://localhost:3000` | your deployed frontend URL |
+| Azure app (client) ID | `AZURE_CLIENT_ID` | baked-in default | usually leave as-is — it's a public identifier, not a secret |
+| Azure tenant ID | `AZURE_TENANT_ID` | baked-in default | usually leave as-is |
+| Restrict sign-in to an email domain | `AZURE_ALLOWED_EMAIL_DOMAIN` | *(blank — open)* | `cloudfuze.com` before go-live |
+| Require admin-managed allowlist | `AZURE_REQUIRE_ALLOWLIST` | `true` | leave `true` |
+| Auto-provision domain | `AZURE_AUTO_PROVISION_DOMAIN` | `cloudfuze.com` | as needed |
+| SMTP host/port/username | `SMTP_HOST`/`SMTP_PORT`/`SMTP_USERNAME` | Office 365 relay defaults | as needed |
+| SMTP password | `SMTP_PASSWORD` | *(blank — sending disabled)* | real SMTP password (secret) |
+
+Frontend settings are build-time env vars (Create React App) in `frontend/.env.local` — copy
+`frontend/.env.example` to get started:
+
+| Env var | Local default | Set for production |
 |---|---|---|
-| JDBC URL | `DB_URL` | `jdbc:mysql://localhost:3306/delta_migration_tracker?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC` |
-| Username | `DB_USERNAME` | `root` |
-| Password | `DB_PASSWORD` | `root` |
-
-If your local MySQL root password differs, either export `DB_PASSWORD` before starting the backend,
-or edit `application.properties` directly.
+| `REACT_APP_API_BASE` | `http://localhost:8080` | your deployed backend URL, no `/api` suffix |
+| `REACT_APP_AZURE_CLIENT_ID` | — | same value as backend's `AZURE_CLIENT_ID` |
+| `REACT_APP_AZURE_TENANT_ID` | — | same value as backend's `AZURE_TENANT_ID` |
+| `REACT_APP_AZURE_REDIRECT_URI` | `http://localhost:3000` | your deployed frontend URL — must also be registered as a redirect URI on the Azure app registration |
+| `REACT_APP_ALLOWED_EMAIL_DOMAIN` | `cloudfuze.com` | as needed |
 
 ## Run the backend
 
@@ -39,40 +66,13 @@ cd backend
 mvn spring-boot:run
 ```
 
-The API starts on **http://localhost:8080**. The database starts empty — no seed/demo data is
-generated. Servers and workspace pairs are populated by importing a CSV (see the Servers page);
-tickets, sign-offs, and pre-check progress are entered manually through the app.
+The API starts on **http://localhost:8080**. Auth is already configured (client/tenant ID are
+baked into `application.properties` as defaults) — no environment variable is required to get a
+working login locally. The database starts empty; an admin user is seeded automatically on first
+run against an empty `app_users` table (`AdminBootstrap`).
 
-Uploaded evidence files are stored under `backend/uploads` and served at `http://localhost:8080/uploads/<file>`.
-
-## Sign in with Microsoft (optional)
-
-The app can require sign-in with a Microsoft work/school account, restricted to `@cloudfuze.com`
-addresses. Until it's configured, the app runs exactly as before with no login screen.
-
-The app registration is **multi-tenant**, so it can be created under *anyone's own* Microsoft
-account — no cloudfuze.com IT/admin action is needed. The `@cloudfuze.com` restriction is enforced
-by the app itself (checking the signed-in account's email), not by Azure.
-
-1. In the [Azure Portal](https://portal.azure.com), go to **Microsoft Entra ID → App registrations
-   → New registration**.
-2. Name it (e.g. "Delta Migration Readiness Tracker"). Under **Supported account types**, choose
-   **Accounts in any organizational directory (Any Microsoft Entra ID tenant — Multitenant)**.
-3. Under **Redirect URI**, choose platform **Single-page application (SPA)** and enter
-   `http://localhost:3000` (add your production URL later the same way).
-4. Click **Register**, then copy the **Application (client) ID** from the Overview page. (No
-   tenant ID, client secret, or "Expose an API" step needed — the app only needs to know who's
-   signed in, not call any Microsoft API.)
-5. Set the value you copied:
-   - Frontend: copy `frontend/.env.example` to `frontend/.env.local` and fill in
-     `REACT_APP_AZURE_CLIENT_ID`.
-   - Backend: export `AZURE_CLIENT_ID` before starting the backend (same pattern as
-     `DB_PASSWORD`).
-6. Restart both the frontend and backend. A "Sign in with Microsoft" screen now gates the app.
-   Anyone can authenticate with a Microsoft work/school account, but only `@cloudfuze.com`
-   addresses get past the sign-in screen — everyone else sees an "Access restricted" message.
-   Change the allowed domain via `REACT_APP_ALLOWED_EMAIL_DOMAIN` (frontend) and
-   `AZURE_ALLOWED_EMAIL_DOMAIN` (backend) if needed.
+Uploaded evidence files are stored under `backend/uploads` and served at
+`http://localhost:8080/uploads/<file>`.
 
 ## Run the frontend
 
@@ -82,43 +82,82 @@ npm install
 npm start
 ```
 
-The app opens on **http://localhost:3000** and talks to the backend at `http://localhost:8080/api`.
+The app opens on **http://localhost:3000** and talks to the backend at
+`http://localhost:8080/api` by default (override with `REACT_APP_API_BASE`).
 
-## Demo flow
+## Sign in with Microsoft
 
-1. **Dashboard** — summary cards + server-wise readiness table.
-2. Click a server → **Workspace Pairs** list with status badges.
-3. Click a pair → **Pre-Check Form**: one card per category (Pre-Check 1 / Pre-Check 2) with a plain
-   checklist, a "Check All" shortcut, a shared Notes/Remarks box, and a single evidence attachment
-   per category. Check every item, add an attachment, then **Submit for Migration Manager Review** — the button
-   stays disabled until both conditions are met, and the server enforces the same rule. **Save
-   Draft** persists partial progress without those requirements. Once both categories are submitted,
-   the pair flips to **Delta Ready** automatically.
-4. **Escalations** — auto-created tickets from incomplete pre-checks or server-wide large-cursor
-   issues; mark them Resolved.
-5. **Sign-off** (per server) — three role sign-offs (Migration Manager, Dev Lead, QA Lead);
-   **Initiate Delta** unlocks only once all three are signed.
+Sign-in is required by default — any Microsoft work/school account in the configured Entra ID
+tenant can authenticate, but **authentication alone doesn't grant access**. A second, independent
+check (the `app_users` allowlist, managed under **Manage Access**) decides whether a signed-in
+account can actually use the app, and as what role. Accounts on the auto-provision domain (default
+`cloudfuze.com`) are added automatically as `Migration Engineer` the first time they sign in;
+everyone else needs an admin to add them first.
 
-## Key business rules implemented
+To point this at a different Azure app registration instead of the baked-in default, set
+`AZURE_CLIENT_ID`/`AZURE_TENANT_ID` (backend) and `REACT_APP_AZURE_CLIENT_ID`/
+`REACT_APP_AZURE_TENANT_ID` (frontend) to the new registration's values, and add the frontend's
+URL as a redirect URI (platform: Single-page application) on that registration.
 
-- Each Pre-Check category (Pre-Check 1, Pre-Check 2) is tracked as a `PreCheckSubmission` — status
-  `NOT_STARTED` → `DRAFT` → `SUBMITTED`, with shared notes, one evidence attachment, submitter name,
-  and timestamp. Checkboxes underneath can be toggled freely while drafting.
-- `POST /api/pairs/{pairId}/precheck-submissions/{category}/submit` rejects (400) unless **every**
-  item in that category is checked **and** an evidence file is attached — enforced server-side in
-  `PreCheckSubmissionService`, mirrored client-side by disabling the Submit button.
-- A workspace pair becomes `DELTA_READY` only when **both** category submissions reach `SUBMITTED`.
-- Auto-escalation (on every checkbox toggle, and via a 5-minute scheduled sweep):
-  - Any incomplete Pre-Check 1 item → `PRIORITY_1_TICKET` for that pair.
-  - Any incomplete Pre-Check 2 item → `DEV_TEAM_NOTIFY` for that pair.
-  - More than 10% of a server's pairs flagged with an unresolved "large change cursor" item →
-    `TEAM_LEAD_ESCALATION` for that server.
-  - Escalations are only created if no matching open escalation already exists.
+Auth can be turned off entirely for local testing by explicitly setting `AZURE_CLIENT_ID=` (blank)
+— the backend then runs fully open (`permitAll`, no login screen). Never do this in a real
+deployment.
+
+## Importing data (CSV)
+
+There's no manual form to create a Server or workspace pair one at a time — both come from
+importing a CSV. The importer matches header names loosely (case-insensitive, punctuation-stripped,
+several aliases accepted per column):
+
+| Column | Required | Accepted header aliases |
+|---|---|---|
+| Server name | yes (global import only) | `server_name`, `server` |
+| Source email | yes | `source_email`, `source`, `source_user`, `source_account` |
+| Source path | no | `source_path`, `source_folder`, `source_folder_path` |
+| Destination email | yes | `destination_email`, `destination`, `destination_user`, `target_email`, `destination_account` |
+| Destination path | no | `destination_path`, `destination_folder`, `target_path`, `destination_folder_path` |
+| Combination (e.g. "Google Drive -> OneDrive") | no | `combination`, `platform_combination`, `source_destination_type` |
+
+Bad rows are collected as per-row errors rather than failing the whole import — the response
+reports total/created/updated counts plus a list of row-level problems.
+
+## Usage flow
+
+1. **Projects** — create a project (name, product type: Content/Email/Message), assign a Migration
+   Manager and engineers.
+2. Add **Servers** to the project, then import each server's workspace pairs via CSV.
+3. **Server pre-check** — fill out the server's flat checklist (one item per row: status, evidence
+   file, note). All items must be complete, evidenced, and noted (barring one exempt item) before
+   the form can be submitted; only whoever started the submission can submit it. Submitting requires
+   the project to have a Migration Manager assigned.
+4. Submitting auto-creates the sign-off chain and emails the assigned Migration Manager.
+5. **Approvals** — the chain resolves strictly in order: Migration Manager, then Dev Lead, then QA
+   Lead. Only the role whose turn it is can approve or decline; declining bounces the chain back
+   one step for rework. The Dev Lead alone decides, at approval time, whether QA Lead sign-off is
+   required for that server — skipping it finalizes the Delta immediately.
+6. Once the chain fully resolves, the server is marked Delta-initiated.
+7. **Escalations** — created manually (there's no automatic escalation logic) to track and resolve
+   issues found along the way.
+
+## Key business rules
+
+- Pre-check tracking is **per server**, not per workspace pair — one flat checklist
+  (`PreCheckItem`) and exactly one submission record (`PreCheckSubmission`) per server. Workspace
+  pairs are pure data (source/destination account mapping); they carry no status or checklist of
+  their own.
+- A pre-check submission can only be submitted by whoever started it (locked by email) — anyone
+  else's attempt is rejected with a message naming the current owner.
+- The sign-off chain is created all at once (all three rows, `PENDING`) the moment the pre-check is
+  submitted — a row existing means the chain has started, not that the role has decided anything.
+  "Done" means `APPROVED`; a later role isn't genuinely pending until every earlier role is
+  `APPROVED`.
+- Escalations, sign-offs, and pre-check attribution are all keyed by email, compared
+  case-insensitively throughout.
 
 ## Project structure
 
 ```
-delta-migration-readiness-tracker/
+delta-precheck-tool/
 ├── backend/    Spring Boot API (entities, repositories, services, controllers, seed data)
-└── frontend/   React app (Dashboard, Servers, Pre-Check Form, Escalations, Sign-off)
+└── frontend/   React app (Dashboard, Projects, Approvals, Escalations, Admin, Pre-Check form)
 ```

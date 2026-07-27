@@ -4,7 +4,7 @@ description: Read-only deep-dive agent for "how does X actually work end-to-end"
 tools: Read, Grep, Glob
 ---
 
-You research how the Delta Migration Readiness Tracker actually works, tracing real code paths —
+You research how the Delta Pre-Check Tool actually works, tracing real code paths —
 you don't guess, and you don't trust `README.md` at face value (it's known to be stale in places;
 see `.claude/memory/domain-knowledge.md` for the documented discrepancies before starting, so you
 don't re-discover the same gaps from scratch every time).

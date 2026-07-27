@@ -4,7 +4,7 @@ description: Use for deciding where new functionality belongs in this codebase's
 tools: Read, Grep, Glob, Bash
 ---
 
-You make architectural placement decisions for the Delta Migration Readiness Tracker. Read
+You make architectural placement decisions for the Delta Pre-Check Tool. Read
 `.claude/rules/architecture-boundaries.md` and `.claude/skills/architecture/SKILL.md` in full
 before deciding anything — they encode this repo's actual layering and aggregate shape, verified
 against the entities directly (not `README.md`, which describes an older data model in places).

@@ -1,4 +1,4 @@
-# Delta Migration Readiness Tracker
+# Delta Pre-Check Tool
 
 A full-stack internal tool (CloudFuze) for tracking pre-migration checklist compliance and
 approval sign-off across Content/Email/Message migration projects. Each **Project** (e.g. a
@@ -97,17 +97,18 @@ signing in with the auto-provision domain (default `cloudfuze.com`) is silently 
   `{email: null, role: null, allowed: true}` for everyone) rather than failing loudly. If auth ever
   looks broken again, the first thing to check is whether something is now *explicitly* overriding
   `AZURE_CLIENT_ID` to blank (the only way it can degrade now) — see `.claude/memory/decisions.md`.
-- **`README.md`'s "Key business rules" section is stale.** It describes an older per-*workspace-pair*,
-  per-*category* ("Pre-Check 1 / Pre-Check 2") pre-check model with automatic escalation on every
-  checkbox toggle. The **actual current code** tracks pre-check and sign-off at the **server**
-  level (one flat checklist, one `PreCheckSubmission` per server), and `EscalationService` has no
-  auto-creation logic at all — escalations are created manually via the API. Trust the entities and
-  services (`.claude/memory/domain-knowledge.md`), not the README, when in doubt.
+- **`README.md` was rewritten on 2026-07-27 to match the actual current code** (server-level
+  pre-check/sign-off, manually-created escalations, the real CSV column aliases, current env var
+  list). If it and the entities/services (`.claude/memory/domain-knowledge.md`) ever disagree
+  again, trust the code — but as of this rewrite there's no known discrepancy.
 - **No tests exist.** Don't assume a testing pattern is already established; `.claude/rules/testing-standard.md` defines the target standard for new code.
-- **No git repo yet.** Don't assume `git status`/`git log`/branching workflows apply until this is initialized.
-- **CORS origins are env-driven** (`WebConfig.java`, `app.allowed-origins`/`APP_ALLOWED_ORIGINS`) —
-  defaults to `http://localhost:3000`; set the env var to a comma-separated list to add a deployed
-  frontend origin, no code change needed.
+- **This is a real git repo**, pushed to `github.com/lavanyagopasana/delta-precheck-tool` (`main`
+  branch) — normal git workflows apply.
+- **CORS origins are env-driven** (`SecurityConfig.java`, `app.allowed-origins`/`APP_ALLOWED_ORIGINS`)
+  — defaults to `http://localhost:3000`; set the env var to a comma-separated list to add a deployed
+  frontend origin, no code change needed. Owned by `SecurityConfig` (via a `CorsConfigurationSource`
+  wired into the filter chain), not `WebConfig` — a `WebMvcConfigurer`-only registration never runs
+  for requests Spring Security itself rejects (401/403).
 - **Hibernate `ddl-auto=update`** means schema changes happen by editing `@Entity` annotations directly — there is no migration file to write or review.
 - The approval sequence (`MIGRATION_LEAD, DEV_LEAD, QA_LEAD`) is defined as an identical constant in **two** places (`SignOffService` and `ProjectService`) — keep both in sync if it ever changes.
 
@@ -122,7 +123,7 @@ backend/src/main/java/com/cloudfuze/deltatracker/
 ├── entity/       JPA entities — the ground truth for the data model (trust these over README)
 ├── repository/   Spring Data JPA repositories
 ├── dto/          Request/response shapes — controllers never return entities directly
-├── config/       SecurityConfig (JWT/CORS/auth-gating), WebConfig (CORS + /uploads static serving)
+├── config/       SecurityConfig (JWT/CORS/auth-gating), WebConfig (/uploads static serving)
 ├── exception/    ApiException, EvidenceRequiredException, GlobalExceptionHandler (uniform error JSON)
 ├── seed/         AdminBootstrap — seeds the first ADMIN row on an empty app_users table
 └── util/         CsvUtils (hand-rolled CSV line parser), JwtEmailUtil
@@ -140,7 +141,7 @@ frontend/src/
 
 - [`.claude/memory/project-context.md`](.claude/memory/project-context.md) — who this is for, business purpose, current state
 - [`.claude/memory/architecture.md`](.claude/memory/architecture.md) — deeper architecture notes than fit above
-- [`.claude/memory/domain-knowledge.md`](.claude/memory/domain-knowledge.md) — the real business rules (corrects the stale README)
+- [`.claude/memory/domain-knowledge.md`](.claude/memory/domain-knowledge.md) — the real business rules, verified against entities/services
 - [`.claude/memory/decisions.md`](.claude/memory/decisions.md) — why things are the way they are, including recent fixes
 - [`.claude/memory/repository-map.md`](.claude/memory/repository-map.md) — full file-by-file map
 - [`.claude/memory/progress.md`](.claude/memory/progress.md) — what's done, in-flight, and known gaps
@@ -159,7 +160,7 @@ frontend/src/
 | `AZURE_AUTO_PROVISION_DOMAIN` | `cloudfuze.com` | Auto-added as `MIGRATION_ENGINEER` on first sign-in |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` | `smtp.office365.com` / `587` / `leo@fuzebot.io` / *(blank)* | Blank password disables sending (logs a warning) |
 | `APP_FRONTEND_URL` | `http://localhost:3000` | Used to build links in outgoing emails |
-| `APP_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated CORS allowlist for `/api/**` (`WebConfig`) — add the deployed frontend's origin here |
+| `APP_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated CORS allowlist for `/api/**` (`SecurityConfig`) — add the deployed frontend's origin here |
 | (frontend) `REACT_APP_AZURE_CLIENT_ID` | — | Set in `frontend/.env.local`, same value as backend's `AZURE_CLIENT_ID` |
 | (frontend) `REACT_APP_AZURE_TENANT_ID` | — | Set in `frontend/.env.local`, same value as backend's `AZURE_TENANT_ID` |
 | (frontend) `REACT_APP_ALLOWED_EMAIL_DOMAIN` | *(blank)* | |

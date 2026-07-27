@@ -61,19 +61,15 @@ means the chain has started, not that this role has approved. "Done" must mean
 `status == APPROVED`; "genuinely pending" for a non-first role additionally requires the prior
 role to already be `APPROVED`. See `.claude/memory/decisions.md`.
 
-## Known `README.md` discrepancies (verified against code, not assumed)
+## `README.md` was rewritten on 2026-07-27 to match this file
 
-| README claims | Actual current code |
-|---|---|
-| Pre-checks are per-**workspace-pair**, split into "Pre-Check 1" / "Pre-Check 2" categories | `PreCheckSubmission` is unique per **server**; `PreCheckItem` is a flat server-wide list with no category split |
-| "A workspace pair becomes DELTA_READY... automatically" once both categories submit | `WorkspacePair` has no status field at all; `DELTA_READY` is a `Server`-level `PairStatus` |
-| Escalations auto-create on checkbox toggle, and via a 5-minute scheduled sweep, with specific rules (`PRIORITY_1_TICKET`, `DEV_TEAM_NOTIFY`, `TEAM_LEAD_ESCALATION`) | `EscalationService` has no auto-creation logic, no scheduler, and no such ticket-type constants exist anywhere in the codebase — escalations are entirely manually created via the API |
-| Sign-off is described as "three role sign-offs... Initiate Delta unlocks once all three are signed" | Broadly still true, but the README doesn't mention the sequential turn-based ordering, the decline/bounce-back behavior, or the Dev-Lead-decides-QA branch — all real and load-bearing |
-
-Don't assume any other part of the README is accurate either — it wasn't exhaustively re-verified
-line by line as part of this scaffold, only the "Key business rules" and "Demo flow" sections that
-directly conflict with the entities. If you rely on another README section, verify it against the
-actual code first, per `.claude/skills/documentation/SKILL.md`'s trust-level guidance.
+The old README described a per-*workspace-pair*, per-*category* ("Pre-Check 1"/"Pre-Check 2")
+pre-check model with automatic escalation on every checkbox toggle — none of that matched the
+actual code (server-level pre-check, manually-created escalations, no such categories or
+auto-creation logic anywhere). The rewrite aligned the README's "Key business rules," "Usage flow,"
+config/env var list, and CSV column reference to the entities/services described above. If the
+README and this file ever disagree again, trust the code and update whichever one is wrong — don't
+assume either is automatically authoritative just because it was fixed once.
 
 ## Auto-provisioning and default posture (current, not necessarily permanent)
 

@@ -130,7 +130,7 @@ export default function LoginPage() {
 
         <div className="card login-card">
           <img src={cloudfuzeLogo} alt="CloudFuze" className="login-card-logo" />
-          <div className="login-card-eyebrow">Delta Migration Readiness Tracker</div>
+          <div className="login-card-eyebrow">Delta Pre-Check Tool</div>
           <h2 style={{ justifyContent: "center", marginBottom: 4 }}>Welcome back</h2>
           <p style={{ color: "var(--color-text-muted)", fontSize: 13.5, marginTop: 0, marginBottom: 28 }}>
             Sign in with your CloudFuze Microsoft account to continue.

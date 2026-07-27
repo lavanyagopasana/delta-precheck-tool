@@ -1,6 +1,6 @@
 # Workflow: Feature Build
 
-The full path from idea to shipped PR for a new feature in the Delta Migration Readiness Tracker.
+The full path from idea to shipped PR for a new feature in the Delta Pre-Check Tool.
 Assumes gstack is installed (`CLAUDE.md`'s Pre-flight check) — if not, follow the "no gstack"
 fallback at the bottom.
 

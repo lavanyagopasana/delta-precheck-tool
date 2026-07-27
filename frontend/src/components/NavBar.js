@@ -123,8 +123,8 @@ export default function NavBar() {
           <img src={cloudfuzeLogo} alt="CloudFuze" />
         </div>
         <div className="brand-text">
-          <strong>Delta Migration</strong>
-          <span>Readiness Tracker</span>
+          <strong>Delta Pre-Check</strong>
+          <span>Tool</span>
         </div>
       </div>
       <div className="sidebar-body">

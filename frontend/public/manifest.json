@@ -1,6 +1,6 @@
 {
-  "short_name": "Delta Migration Tracker",
-  "name": "Delta Migration Readiness Tracker",
+  "short_name": "Delta Pre-Check",
+  "name": "Delta Pre-Check Tool",
   "icons": [
     {
       "src": "favicon.png",

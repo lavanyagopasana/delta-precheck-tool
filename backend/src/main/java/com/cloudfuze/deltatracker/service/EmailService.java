@@ -199,7 +199,7 @@ public class EmailService {
                 + "</td></tr>"
                 + "<tr><td style=\"padding:14px 24px;border-top:1px solid " + LINE + ";\">"
                 + "<p style=\"margin:0;font-size:11px;color:" + MUTED + ";text-align:center;\">"
-                + "This is an automated notification from Delta Migration Readiness Tracker. Do not reply to this email.</p>"
+                + "This is an automated notification from Delta Pre-Check Tool. Do not reply to this email.</p>"
                 + "</td></tr>"
                 + "</table>"
                 + "</td></tr></table>";

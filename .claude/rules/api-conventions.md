@@ -6,10 +6,13 @@
 - Frontend's single source of truth for the API surface is `frontend/src/api/client.js` —
   `API_BASE`/`FILE_BASE` derive from `REACT_APP_API_BASE` (set in `frontend/.env.local` or the
   deployed build's env), falling back to `http://localhost:8080` for local dev.
-- CORS (`WebConfig.addCorsMappings`) reads a comma-separated origin list from `app.allowed-origins`
-  / `APP_ALLOWED_ORIGINS`, defaulting to `http://localhost:3000`. Add the deployed frontend's origin
-  via that env var before it will work against a deployed backend — don't hardcode a second
-  `.allowedOrigins(...)` call.
+- CORS (`SecurityConfig.corsConfigurationSource`) reads a comma-separated origin list from
+  `app.allowed-origins`/`APP_ALLOWED_ORIGINS`, defaulting to `http://localhost:3000`. Add the
+  deployed frontend's origin via that env var before it will work against a deployed backend.
+  Deliberately owned by `SecurityConfig`, not `WebConfig`'s `WebMvcConfigurer` — a
+  `WebMvcConfigurer`-only CORS registration never runs for requests Spring Security itself rejects
+  (401/403), which otherwise surface to the browser as an opaque CORS failure instead of a readable
+  auth error. Don't move it back to `WebConfig` or add a second registration.
 
 ## Request/response shape
 
