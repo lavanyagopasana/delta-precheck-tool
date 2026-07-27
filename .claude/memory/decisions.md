@@ -2,6 +2,46 @@
 
 Why things are the way they are. Newest first.
 
+## 2026-07-27 — Repo pushed to GitHub; new Azure app registration baked in as defaults
+
+**Repo is now live** at `github.com/lavanyagopasana/delta-precheck-tool` (`main` branch) — `git
+init` had never been run before this. While staging the first commit, found (and correctly kept
+gitignored) a real secret: `backend/application.properties` (repo root — distinct from the one in
+`src/main/resources/`, a local-only override file Spring Boot auto-loads from the working
+directory) contains a real SMTP password. A `.gitignore` "cleanup" earlier the same day had
+mistakenly removed the rule protecting this exact file, having wrongly concluded it was dead
+weight without checking whether a file existed at that path. Caught before committing; the
+`.gitignore` rule is restored. **Lesson for next time:** never remove a `.gitignore` rule for a
+path you haven't actually checked the contents of, even if it looks like it doesn't match anything
+obvious.
+
+**New Azure app registration wired in**: client ID `a55e053f-bfe9-4b4a-8b74-362649f82cf0`, tenant
+ID `66d8848d-26b6-4147-8124-127624d7b3a6` — this is now a **single-tenant** registration (previously
+multi-tenant, using the generic `organizations` issuer). Both values are baked into
+`backend/src/main/resources/application.properties` as defaults (not secrets — public OAuth
+identifiers) and into `frontend/.env.local` (gitignored, personal-machine file — update this
+manually if the Claude session's write is blocked by the `.env*` deny rule in
+`.claude/settings.json`; that rule is intentional and shouldn't be worked around by editing
+`.claude/settings.json` itself). This permanently resolves the `AZURE_CLIENT_ID` "must export every
+restart" footgun described further down this file and in `.claude/rules/security-rules.md` — that
+guidance is now about what to check if auth *degrades*, not a routine step.
+
+## 2026-07-27 — Allowlist bypass + over-permissive project visibility (security fix)
+
+**What was wrong, in two parts:** (1) `azure.require-allowlist` defaulted to `false`, so any valid
+Microsoft account — not just people added under Manage Access — could sign in at all. Confirmed via
+direct DB query that `alex@filefuze.co` had signed in and used the app despite never appearing in
+`app_users`. (2) Independent of that, `ProjectService.isVisible()` treated "authenticated but no
+recognized role" (`callerRole == null`) the same as "auth not configured at all"
+(`callerEmail == null`) — both returned `true` (see everything). An unrecognized, unregistered
+caller should see nothing, not everything; conflating the two defeated the entire per-role
+visibility model for anyone not yet in `app_users`.
+
+**Fix:** `azure.require-allowlist` now defaults to `true`. `isVisible()` now returns `false` when
+`callerRole == null` while `callerEmail != null`, keeping the `callerEmail == null` (auth-not-
+configured) case as the only one that still defaults open. Both changes are pure default-tightening
+— no new admin action needed on already-registered users.
+
 ## 2026-07-27 — Dashboard/Projects approval counts fixed (row-exists vs. actually-approved)
 
 **What was wrong:** `DashboardService.getSummary()` and `ProjectService.buildSummary()` both

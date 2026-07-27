@@ -10,18 +10,23 @@ covers what's specific to this app's auth model and has already bitten this proj
 `permitAll()`, with no authentication at all. This is intentional (it's how local dev works before
 an Azure app registration exists), but it means:
 
-- **Restarting the backend without re-exporting `AZURE_CLIENT_ID` doesn't fail loudly** — the app
-  starts fine, `/api/me` returns `200 {"email":null,"role":null,"allowed":true}` for anyone, and
-  every page still renders. This already caused a real incident this session (an admin's "Admin"
-  nav link silently vanished because a restart dropped the env var, not because of any role/DB
-  issue).
+- **As of 2026-07-27, `AZURE_CLIENT_ID`/`AZURE_TENANT_ID` are baked into `application.properties`
+  as defaults** (see `.claude/memory/decisions.md`), so this no longer happens from a forgotten
+  env var on a routine restart. It can still happen if something **explicitly** overrides
+  `AZURE_CLIENT_ID` to blank (a shell export, a deploy config, a test script) — that's the scenario
+  to check for now, not "did I forget to export it."
+- **This doesn't fail loudly** when it does happen — the app starts fine, `/api/me` returns
+  `200 {"email":null,"role":null,"allowed":true}` for anyone, and every page still renders. This
+  already caused a real incident once (an admin's "Admin" nav link silently vanished because a
+  restart happened in an environment where the var had been forced blank, not because of any
+  role/DB issue).
 - **Never "fix" a missing-auth symptom by loosening a permission check** — check whether
-  `AZURE_CLIENT_ID` is actually set in the running process first. If `/api/me` returns a null
-  `email` for a user who should be authenticated, that's the first thing to check, not a bug in
-  `AppUserService.roleOf`.
-- Before deploying anywhere real, confirm `AZURE_CLIENT_ID` is set in that environment and that
-  `/api/me` actually returns a populated `email`/`role` for a real signed-in user — don't just
-  confirm the app "loads".
+  `AZURE_CLIENT_ID` is actually populated in the running process first (or explicitly blanked). If
+  `/api/me` returns a null `email` for a user who should be authenticated, that's the first thing
+  to check, not a bug in `AppUserService.roleOf`.
+- Before deploying anywhere real, confirm `AZURE_CLIENT_ID`/`AZURE_TENANT_ID` resolve to the real
+  values in that environment and that `/api/me` actually returns a populated `email`/`role` for a
+  real signed-in user — don't just confirm the app "loads".
 
 ## Authorization model — two independent layers
 
