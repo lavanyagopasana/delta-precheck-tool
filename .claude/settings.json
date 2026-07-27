@@ -1,0 +1,62 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mvn -o -q compile)",
+      "Bash(mvn compile)",
+      "Bash(mvn spring-boot:run)",
+      "Bash(npm install)",
+      "Bash(npm start)",
+      "Bash(npm run build)",
+      "Bash(npm test)",
+      "Bash(git status)",
+      "Bash(git diff)",
+      "Bash(git diff *)",
+      "Bash(git log)",
+      "Bash(git log *)",
+      "Bash(curl -s -o /dev/null -w * http://localhost:8080/*)",
+      "Bash(curl -s -o /dev/null -w * http://localhost:3000/*)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(git reset *)",
+      "Bash(git checkout *)",
+      "Bash(git clean *)",
+      "Bash(rm -rf *)"
+    ],
+    "deny": [
+      "Read(./backend/uploads/**)",
+      "Read(./db_backups/**)",
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(./frontend/.env.local)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/block-sensitive-writes.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/validate-code.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/post-edit-format.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

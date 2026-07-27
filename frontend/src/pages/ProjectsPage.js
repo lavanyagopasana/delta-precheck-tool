@@ -1,0 +1,199 @@
+import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { getProjects, createProject, getRoster } from "../api/client";
+import { useToast } from "../components/Toast";
+import { useCurrentUser } from "../auth/CurrentUserContext";
+import { AUTH_CONFIGURED } from "../auth/authConfig";
+import DataTable from "../components/DataTable";
+import Modal from "../components/Modal";
+
+const PRODUCT_TYPE_OPTIONS = [
+  { value: "MESSAGE", label: "Message" },
+  { value: "EMAIL", label: "Email" },
+  { value: "CONTENT", label: "Content" },
+];
+
+const EMPTY_ROSTER = { migrationManagers: [], engineers: [] };
+
+export default function ProjectsPage() {
+  const navigate = useNavigate();
+  const currentUser = useCurrentUser();
+  const showToast = useToast();
+  const [projects, setProjects] = useState([]);
+  const [roster, setRoster] = useState(EMPTY_ROSTER);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+  const [name, setName] = useState("");
+  const [productType, setProductType] = useState("");
+  const [migrationManagerName, setMigrationManagerName] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const createdByName = AUTH_CONFIGURED ? currentUser?.email || currentUser?.name || "" : "";
+  // A Migration Manager creating a project is automatically its manager -- only non-managers
+  // (engineers, admins) need to pick one from the roster.
+  const creatorIsManager = AUTH_CONFIGURED && currentUser?.role === "MIGRATION_MANAGER";
+
+  const load = () => {
+    setLoading(true);
+    getProjects()
+      .then((data) => {
+        setProjects(data);
+        setError(null);
+      })
+      .catch((err) => setError(err.response?.data?.message || "Failed to load projects."))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, []);
+  useEffect(() => {
+    getRoster()
+      .then(setRoster)
+      .catch(() => {});
+  }, []);
+
+  const resetForm = () => {
+    setShowModal(false);
+    setName("");
+    setProductType("");
+    setMigrationManagerName("");
+    setError(null);
+  };
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed || !productType || (!creatorIsManager && !migrationManagerName)) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const project = await createProject({
+        name: trimmed,
+        productType,
+        createdBy: createdByName,
+        migrationManagerName: creatorIsManager ? null : migrationManagerName,
+      });
+      showToast(`Project "${trimmed}" created.`);
+      resetForm();
+      load();
+      navigate(`/projects/${project.id}`);
+    } catch (err) {
+      setError(err.response?.data?.message || "Failed to create project.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <p>Loading projects...</p>;
+
+  return (
+    <div>
+      {showModal && (
+        <Modal title="Create a project" onClose={resetForm}>
+          <form onSubmit={handleCreate}>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+              <div style={{ flex: "1 1 220px" }}>
+                <label htmlFor="project-name" style={{ display: "block", fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>
+                  Project Name <span style={{ color: "var(--color-red)" }}>*</span>
+                </label>
+                <input
+                  id="project-name"
+                  type="text"
+                  placeholder="Project name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div style={{ flex: "1 1 160px" }}>
+                <label htmlFor="project-product-type" style={{ display: "block", fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>
+                  Product Type <span style={{ color: "var(--color-red)" }}>*</span>
+                </label>
+                <select
+                  id="project-product-type"
+                  value={productType}
+                  onChange={(e) => setProductType(e.target.value)}
+                  style={{ width: "100%" }}
+                >
+                  <option value="">Select...</option>
+                  {PRODUCT_TYPE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {!creatorIsManager && (
+              <div style={{ marginTop: 14 }}>
+                <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>
+                  Migration Manager <span style={{ color: "var(--color-red)" }}>*</span>
+                </label>
+                <select
+                  value={migrationManagerName}
+                  onChange={(e) => setMigrationManagerName(e.target.value)}
+                  style={{ width: "100%", maxWidth: 300 }}
+                >
+                  <option value="">Select...</option>
+                  {roster.migrationManagers.map((email) => (
+                    <option key={email} value={email}>
+                      {email}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {error && <div className="inline-hint" style={{ marginTop: 14 }}>{error}</div>}
+
+            <div className="form-actions">
+              <button
+                className="btn"
+                type="submit"
+                disabled={saving || !name.trim() || !productType || (!creatorIsManager && !migrationManagerName)}
+              >
+                {saving ? "Creating..." : "Create Project"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      <DataTable
+        title="Projects"
+        rows={projects}
+        rowKey={(p) => p.id}
+        onRowClick={(p) => navigate(`/projects/${p.id}`)}
+        searchPlaceholder="Filter projects..."
+        emptyMessage="No projects yet. Click Add Project above."
+        toolbarRight={
+          <button className="btn" onClick={() => setShowModal(true)}>
+            + Add Project
+          </button>
+        }
+        columns={[
+          { key: "name", label: "Project" },
+          {
+            key: "productType",
+            label: "Product Type",
+            render: (p) => (p.productType ? PRODUCT_TYPE_OPTIONS.find((o) => o.value === p.productType)?.label || p.productType : "-"),
+          },
+          { key: "serverCount", label: "No. of Servers", filterable: false },
+          {
+            key: "migrationManagers",
+            label: "Migration Manager",
+            sortable: false,
+            filterable: false,
+            render: (p) => (p.migrationManagers?.length ? p.migrationManagers.join(", ") : "Not assigned yet"),
+          },
+          {
+            key: "createdBy",
+            label: "Created By",
+            render: (p) => p.createdBy || "-",
+          },
+        ]}
+      />
+    </div>
+  );
+}

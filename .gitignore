@@ -1,0 +1,21 @@
+backend/application.properties
+.env
+.env.local
+
+# Build output
+backend/target/
+frontend/build/
+frontend/node_modules/
+
+# Runtime data -- not source, shouldn't be committed
+backend/uploads/
+db_backups/
+
+# Local run logs
+*.log
+
+# Personal Claude Code permissions -- not shared config
+.claude/settings.local.json
+
+# Personal Claude Code notes -- not shared config
+CLAUDE.local.md
