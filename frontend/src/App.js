@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthenticatedTemplate, UnauthenticatedTemplate, useMsal } from "@azure/msal-react";
 import NavBar from "./components/NavBar";
 import { ToastProvider } from "./components/Toast";
+import { ConfirmProvider } from "./components/ConfirmDialog";
 import Dashboard from "./pages/Dashboard";
 import ProjectsPage from "./pages/ProjectsPage";
 import ProjectDetailsPage from "./pages/ProjectDetailsPage";
@@ -136,6 +137,7 @@ function AppShell() {
   return (
     <BrowserRouter>
       <ToastProvider>
+        <ConfirmProvider>
         <div className="app-shell">
           <NavBar />
           <div className="main-content">
@@ -150,6 +152,7 @@ function AppShell() {
             </Routes>
           </div>
         </div>
+        </ConfirmProvider>
       </ToastProvider>
     </BrowserRouter>
   );

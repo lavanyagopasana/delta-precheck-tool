@@ -96,9 +96,28 @@ public class AppUserService {
         return roleOf(email).filter(r -> r == AppUserRole.ADMIN).isPresent();
     }
 
-    public AppUserDto upsert(String email, AppUserRole role, String addedBy) {
-        AppUser user = appUserRepository.findByEmailIgnoreCase(email)
-                .orElseGet(() -> new AppUser(email, role, addedBy));
+    // actingAdminEmail is the admin performing the change (from AdminController.requireAdmin). It's
+    // stored as addedBy for brand-new rows, and used to guard the scenarios where editing a user
+    // isn't safe -- so "editing users" is deliberately NOT allowed for every user/every change.
+    public AppUserDto upsert(String email, AppUserRole role, String actingAdminEmail) {
+        Optional<AppUser> existing = appUserRepository.findByEmailIgnoreCase(email);
+
+        if (existing.isPresent()) {
+            AppUser current = existing.get();
+            boolean roleChanging = current.getRole() != role;
+            // You can't change your own role -- another admin must, so an admin can't accidentally
+            // demote themselves out of Manage Access.
+            if (roleChanging && email.equalsIgnoreCase(actingAdminEmail)) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "You can't change your own role.");
+            }
+            // There must always be at least one admin -- the last one can't be demoted.
+            if (roleChanging && current.getRole() == AppUserRole.ADMIN && role != AppUserRole.ADMIN
+                    && appUserRepository.countByRole(AppUserRole.ADMIN) <= 1) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "Can't demote the last remaining admin.");
+            }
+        }
+
+        AppUser user = existing.orElseGet(() -> new AppUser(email, role, actingAdminEmail));
         user.setRole(role);
         return AppUserDto.fromEntity(appUserRepository.save(user));
     }
@@ -143,7 +162,14 @@ public class AppUserService {
             }
 
             boolean existed = appUserRepository.existsByEmailIgnoreCase(email);
-            upsert(email, role, addedBy);
+            try {
+                upsert(email, role, addedBy);
+            } catch (ApiException e) {
+                // Keep processing the rest of the batch -- one guarded row (e.g. the acting admin's
+                // own, or a last-admin demotion) must not fail the whole import.
+                errors.add("Row " + (rowNum + 1) + ": " + e.getMessage());
+                continue;
+            }
             if (existed) {
                 updated++;
             } else {
@@ -181,10 +207,14 @@ public class AppUserService {
         return lines;
     }
 
-    public void remove(String email) {
+    public void remove(String email, String actingAdminEmail) {
         AppUser user = appUserRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + email));
 
+        // You can't remove your own access -- prevents locking yourself out; another admin must.
+        if (email.equalsIgnoreCase(actingAdminEmail)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "You can't remove your own access.");
+        }
         if (user.getRole() == AppUserRole.ADMIN && appUserRepository.countByRole(AppUserRole.ADMIN) <= 1) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Cannot remove the last remaining admin.");
         }

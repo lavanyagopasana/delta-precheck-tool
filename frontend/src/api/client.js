@@ -31,6 +31,9 @@ export const getProjectDetail = (id) => client.get(`/projects/${id}`).then((r) =
 export const createProject = (payload) => client.post("/projects", payload).then((r) => r.data);
 export const updateProjectAssignments = (id, payload) =>
   client.patch(`/projects/${id}/assignments`, payload).then((r) => r.data);
+export const updateProjectDetails = (id, payload) =>
+  client.patch(`/projects/${id}`, payload).then((r) => r.data);
+export const removeProject = (id) => client.delete(`/projects/${id}`).then((r) => r.data);
 
 export const getRoster = () => client.get("/roster").then((r) => r.data);
 
@@ -74,6 +77,8 @@ export const getPreCheckSubmission = (serverId, viewerEmail) =>
   client.get(`/servers/${serverId}/precheck-submission`, { params: { viewerEmail } }).then((r) => r.data);
 export const submitPreCheckForReview = (serverId, payload) =>
   client.post(`/servers/${serverId}/precheck-submission/submit`, payload).then((r) => r.data);
+export const withdrawPreCheck = (serverId) =>
+  client.post(`/servers/${serverId}/precheck-submission/withdraw`).then((r) => r.data);
 
 export const uploadEvidence = (file) => {
   const formData = new FormData();
@@ -105,6 +110,9 @@ export const getOpenEscalationCount = () =>
 export const createEscalation = (payload) => client.post("/escalations", payload).then((r) => r.data);
 export const resolveEscalation = (id, resolutionNotes) =>
   client.patch(`/escalations/${id}/resolve`, { resolutionNotes }).then((r) => r.data);
+export const updateEscalation = (id, payload) =>
+  client.put(`/escalations/${id}`, payload).then((r) => r.data);
+export const removeEscalation = (id) => client.delete(`/escalations/${id}`).then((r) => r.data);
 
 export const approveSignOff = (serverId, role, approverEmail, qaRequired) =>
   client.post(`/servers/${serverId}/signoffs/${role}/approve`, { approverEmail, qaRequired }).then((r) => r.data);

@@ -2,10 +2,12 @@ package com.cloudfuze.deltatracker.service;
 
 import com.cloudfuze.deltatracker.dto.ProjectAssignmentRequest;
 import com.cloudfuze.deltatracker.dto.ProjectDetailDto;
+import com.cloudfuze.deltatracker.dto.ProjectUpdateRequest;
 import com.cloudfuze.deltatracker.dto.ProjectSummaryDto;
 import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
 import com.cloudfuze.deltatracker.entity.AppUserRole;
 import com.cloudfuze.deltatracker.entity.PairStatus;
+import com.cloudfuze.deltatracker.entity.PreCheckItem;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
 import com.cloudfuze.deltatracker.entity.ProductType;
 import com.cloudfuze.deltatracker.entity.Project;
@@ -16,6 +18,8 @@ import com.cloudfuze.deltatracker.entity.SignOffStatus;
 import com.cloudfuze.deltatracker.entity.SubmissionStatus;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
+import com.cloudfuze.deltatracker.repository.EscalationRepository;
+import com.cloudfuze.deltatracker.repository.PreCheckItemRepository;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
 import com.cloudfuze.deltatracker.repository.ProjectRepository;
 import com.cloudfuze.deltatracker.repository.ServerRepository;
@@ -46,6 +50,9 @@ public class ProjectService {
     private final EscalationService escalationService;
     private final SignOffRepository signOffRepository;
     private final PreCheckSubmissionRepository preCheckSubmissionRepository;
+    private final PreCheckItemRepository preCheckItemRepository;
+    private final EscalationRepository escalationRepository;
+    private final FileStorageService fileStorageService;
     private final ServerService serverService;
     private final AppUserService appUserService;
 
@@ -55,6 +62,9 @@ public class ProjectService {
                            EscalationService escalationService,
                            SignOffRepository signOffRepository,
                            PreCheckSubmissionRepository preCheckSubmissionRepository,
+                           PreCheckItemRepository preCheckItemRepository,
+                           EscalationRepository escalationRepository,
+                           FileStorageService fileStorageService,
                            ServerService serverService,
                            AppUserService appUserService) {
         this.projectRepository = projectRepository;
@@ -63,6 +73,9 @@ public class ProjectService {
         this.escalationService = escalationService;
         this.signOffRepository = signOffRepository;
         this.preCheckSubmissionRepository = preCheckSubmissionRepository;
+        this.preCheckItemRepository = preCheckItemRepository;
+        this.escalationRepository = escalationRepository;
+        this.fileStorageService = fileStorageService;
         this.serverService = serverService;
         this.appUserService = appUserService;
     }
@@ -158,6 +171,175 @@ public class ProjectService {
         project.setEngineerEmails(toSet(request.getEngineerEmails()));
         Project saved = projectRepository.save(project);
         return buildSummary(saved, serverRepository.findAll());
+    }
+
+    // Edit a project's details (name, product type, Migration Manager). Allowed for admins, the
+    // project's current Migration Manager, its creator, or an assigned engineer -- so a wrong
+    // Migration Manager can be fixed. Changing the Migration Manager re-points any still-pending
+    // MM sign-off rows to the new person; it's blocked once the (old) MM has already approved a
+    // server, since that would invalidate a real approval (withdraw/roll it back first).
+    public ProjectSummaryDto updateDetails(Long id, ProjectUpdateRequest request,
+                                           String callerEmail, AppUserRole callerRole) {
+        Project project = findOrThrow(id);
+        if (!canEditDetails(project, callerEmail, callerRole)) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "You don't have permission to edit this project.");
+        }
+
+        String trimmedName = request.getName() == null ? "" : request.getName().trim();
+        if (trimmedName.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Project name is required.");
+        }
+        if (!trimmedName.equalsIgnoreCase(project.getName())
+                && projectRepository.existsByNameIgnoreCase(trimmedName)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "A project named \"" + trimmedName + "\" already exists.");
+        }
+
+        String newManager = blankToNull(request.getMigrationManagerName());
+        boolean mmChanged = newManager == null
+                ? project.getMigrationManagerName() != null
+                : !newManager.equalsIgnoreCase(project.getMigrationManagerName());
+        if (mmChanged) {
+            List<Server> servers = serverRepository.findAll().stream()
+                    .filter(s -> s.getProject() != null && s.getProject().getId().equals(id))
+                    .toList();
+            for (Server server : servers) {
+                List<SignOff> chain = signOffRepository.findByServerId(server.getId());
+                if (chain.isEmpty()) {
+                    continue; // pre-check not submitted on this server -- no chain to touch
+                }
+                if (newManager == null) {
+                    throw new ApiException(HttpStatus.CONFLICT,
+                            "Can't clear the Migration Manager while server \"" + server.getName()
+                                    + "\" has an approval chain in progress -- assign a different manager instead.");
+                }
+                // Changing the manager rolls the approval chain back to the manager step WITHOUT
+                // touching the pre-check itself. Every sign-off returns to PENDING (prior approvals
+                // cleared, QA-required reset), the MM row is re-pointed to the new manager, and a
+                // finalized Delta is un-stamped. The pre-check stays SUBMITTED, so the chain simply
+                // continues fresh from the (new) Migration Manager -- no re-doing the pre-check.
+                for (SignOff signOff : chain) {
+                    signOff.setStatus(SignOffStatus.PENDING);
+                    signOff.setApprovedBy(null);
+                    signOff.setApprovedAt(null);
+                    signOff.setQaRequired(null);
+                    if (signOff.getRole() == SignOffRole.MIGRATION_LEAD) {
+                        signOff.setSignedBy(newManager);
+                    }
+                    signOffRepository.save(signOff);
+                }
+                if (server.getDeltaInitiatedAt() != null) {
+                    server.setDeltaInitiatedAt(null);
+                    server.setDeltaInitiatedBy(null);
+                }
+                serverService.save(server);
+                serverService.recomputeStatus(server);
+            }
+            project.setMigrationManagerName(newManager);
+        }
+
+        project.setName(trimmedName);
+        project.setProductType(request.getProductType());
+        Project saved = projectRepository.save(project);
+        return buildSummary(saved, serverRepository.findAll());
+    }
+
+    private boolean canEditDetails(Project project, String callerEmail, AppUserRole callerRole) {
+        if (callerEmail == null) {
+            return true; // auth not configured
+        }
+        if (callerRole == null) {
+            return false;
+        }
+        if (callerRole == AppUserRole.ADMIN) {
+            return true;
+        }
+        if (callerRole == AppUserRole.MIGRATION_MANAGER) {
+            return callerEmail.equalsIgnoreCase(project.getMigrationManagerName());
+        }
+        if (callerRole == AppUserRole.MIGRATION_ENGINEER) {
+            return callerEmail.equalsIgnoreCase(project.getCreatedBy())
+                    || project.getEngineerEmails().stream().anyMatch(callerEmail::equalsIgnoreCase);
+        }
+        return false;
+    }
+
+    // Deleting a project cascades to everything hanging off its servers (pre-check items + their
+    // evidence files, the submission, the sign-off chain, escalations, and workspace pairs). Two
+    // guards apply:
+    //   1. Authorization (canDelete): admin, the managing Migration Manager, or the creator -- but
+    //      the creator loses the right once an approver has actually approved a server (not merely on
+    //      submit), so an engineer can still undo a just-submitted project yet can't wipe one once
+    //      other roles' approvals are riding on it.
+    //   2. Audit protection: a project with a Delta-initiated server is a completed migration record
+    //      and is never deletable -- not even by an admin (delete it in the DB if truly necessary).
+    public void delete(Long id, String callerEmail, AppUserRole callerRole) {
+        Project project = findOrThrow(id);
+        List<Server> servers = serverRepository.findAll().stream()
+                .filter(s -> s.getProject() != null && s.getProject().getId().equals(id))
+                .toList();
+
+        if (!canDelete(project, servers, callerEmail, callerRole)) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "You don't have permission to delete this project.");
+        }
+
+        // The Delta-initiated audit guard protects everyone EXCEPT admins -- admins have full override
+        // and can delete a completed-migration project if they really mean to.
+        boolean anyDeltaInitiated = servers.stream().anyMatch(s -> s.getDeltaInitiatedAt() != null);
+        if (anyDeltaInitiated && callerRole != AppUserRole.ADMIN) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "This project has server(s) with Delta already initiated -- it's a completed migration "
+                            + "record and can't be deleted.");
+        }
+
+        for (Server server : servers) {
+            List<PreCheckItem> items = preCheckItemRepository.findByServerId(server.getId());
+            items.forEach(item -> fileStorageService.delete(item.getEvidenceFilePath()));
+            preCheckItemRepository.deleteAll(items);
+            preCheckSubmissionRepository.findByServerId(server.getId())
+                    .ifPresent(preCheckSubmissionRepository::delete);
+            signOffRepository.deleteAll(signOffRepository.findByServerId(server.getId()));
+            escalationRepository.deleteAll(escalationRepository.findByServerId(server.getId()));
+            // Workspace pairs cascade via Server's @OneToMany(orphanRemoval=true) on delete.
+            serverRepository.delete(server);
+        }
+        projectRepository.delete(project);
+    }
+
+    // Mirrors the visibility model in isVisible(), plus the creator-until-submit rule. callerEmail
+    // == null means auth isn't configured (everything permitted, matching the rest of the app);
+    // callerRole == null means an authenticated-but-unrecognized account (allowed nothing).
+    private boolean canDelete(Project project, List<Server> servers, String callerEmail, AppUserRole callerRole) {
+        if (callerEmail == null) {
+            return true;
+        }
+        if (callerRole == null) {
+            return false;
+        }
+        if (callerRole == AppUserRole.ADMIN) {
+            return true;
+        }
+        if (callerRole == AppUserRole.MIGRATION_MANAGER
+                && callerEmail.equalsIgnoreCase(project.getMigrationManagerName())) {
+            return true;
+        }
+        if (callerEmail.equalsIgnoreCase(project.getCreatedBy())) {
+            // The creator (typically an engineer) can still delete their own project even after a
+            // pre-check is submitted -- right up until an approver actually approves. Once any
+            // sign-off is approved/skipped (or Delta initiated), deleting would erase someone else's
+            // approval, so the right is withdrawn and only the managing MM / admin can delete.
+            boolean anyApprovalStarted = servers.stream().anyMatch(this::approvalHasStarted);
+            return !anyApprovalStarted;
+        }
+        return false;
+    }
+
+    private boolean approvalHasStarted(Server server) {
+        if (server.getDeltaInitiatedAt() != null) {
+            return true;
+        }
+        return signOffRepository.findByServerId(server.getId()).stream()
+                .anyMatch(so -> so.getStatus() == SignOffStatus.APPROVED || so.getStatus() == SignOffStatus.SKIPPED);
     }
 
     private Project findOrThrow(Long id) {

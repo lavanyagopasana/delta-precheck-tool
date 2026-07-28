@@ -4,6 +4,8 @@ import { useCurrentUser } from "../auth/CurrentUserContext";
 import { useToast } from "../components/Toast";
 import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
+import { TrashIcon } from "../components/Icons";
+import { useConfirm } from "../components/ConfirmDialog";
 
 const ROLE_OPTIONS = [
   { value: "MIGRATION_ENGINEER", label: "Migration Engineer" },
@@ -18,6 +20,7 @@ const roleLabel = (role) => ROLE_OPTIONS.find((r) => r.value === role)?.label ||
 export default function AdminUsersPage() {
   const currentUser = useCurrentUser();
   const showToast = useToast();
+  const confirm = useConfirm();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -91,9 +94,12 @@ export default function AdminUsersPage() {
 
   const handleRoleChange = async (user, newRole) => {
     if (newRole === user.role) return;
-    if (!window.confirm(`Change ${user.email}'s role from ${roleLabel(user.role)} to ${roleLabel(newRole)}?`)) {
-      return;
-    }
+    const ok = await confirm({
+      title: "Change role?",
+      message: `Change ${user.email}'s role from ${roleLabel(user.role)} to ${roleLabel(newRole)}?`,
+      confirmLabel: "Change Role",
+    });
+    if (!ok) return;
     setError(null);
     try {
       await upsertAllowedUser({ email: user.email, role: newRole });
@@ -105,7 +111,13 @@ export default function AdminUsersPage() {
   };
 
   const handleRemove = async (user) => {
-    if (!window.confirm(`Remove ${user.email}? They will lose access immediately.`)) return;
+    const ok = await confirm({
+      title: `Remove ${user.email}?`,
+      message: "They will lose access to the app immediately.",
+      confirmLabel: "Remove",
+      danger: true,
+    });
+    if (!ok) return;
     setRemovingEmail(user.email);
     setError(null);
     try {
@@ -180,15 +192,23 @@ export default function AdminUsersPage() {
             key: "role",
             label: "Role",
             filterValue: (u) => roleLabel(u.role),
-            render: (u) => (
-              <select value={u.role} onChange={(e) => handleRoleChange(u, e.target.value)}>
-                {ROLE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            ),
+            render: (u) => {
+              const isSelf = currentUser?.email?.toLowerCase() === u.email.toLowerCase();
+              return (
+                <select
+                  value={u.role}
+                  onChange={(e) => handleRoleChange(u, e.target.value)}
+                  disabled={isSelf}
+                  title={isSelf ? "You can't change your own role -- another admin must." : undefined}
+                >
+                  {ROLE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              );
+            },
           },
           { key: "addedBy", label: "Added By", render: (u) => u.addedBy || "-" },
           {
@@ -201,15 +221,25 @@ export default function AdminUsersPage() {
             label: "",
             sortable: false,
             filterable: false,
-            render: (u) => (
-              <button
-                className="btn secondary"
-                onClick={() => handleRemove(u)}
-                disabled={removingEmail === u.email}
-              >
-                {removingEmail === u.email ? "Removing..." : "Remove"}
-              </button>
-            ),
+            render: (u) => {
+              const isSelf = currentUser?.email?.toLowerCase() === u.email.toLowerCase();
+              return (
+                <button
+                  className="btn secondary"
+                  style={{ padding: "6px 10px" }}
+                  onClick={() => handleRemove(u)}
+                  disabled={removingEmail === u.email || isSelf}
+                  title={isSelf ? "You can't remove your own access -- another admin must." : "Remove user"}
+                  aria-label="Remove user"
+                >
+                  {removingEmail === u.email ? (
+                    <span className="spinner" />
+                  ) : (
+                    <TrashIcon size={18} style={{ marginRight: 0 }} />
+                  )}
+                </button>
+              );
+            },
           },
         ]}
       />

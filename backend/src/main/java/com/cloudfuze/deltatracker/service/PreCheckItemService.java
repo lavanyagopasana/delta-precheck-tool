@@ -26,13 +26,16 @@ public class PreCheckItemService {
     private final PreCheckItemRepository preCheckItemRepository;
     private final PreCheckSubmissionRepository preCheckSubmissionRepository;
     private final ServerService serverService;
+    private final AppUserService appUserService;
 
     public PreCheckItemService(PreCheckItemRepository preCheckItemRepository,
                                 PreCheckSubmissionRepository preCheckSubmissionRepository,
-                                ServerService serverService) {
+                                ServerService serverService,
+                                AppUserService appUserService) {
         this.preCheckItemRepository = preCheckItemRepository;
         this.preCheckSubmissionRepository = preCheckSubmissionRepository;
         this.serverService = serverService;
+        this.appUserService = appUserService;
     }
 
     public List<PreCheckItemDto> listByServer(Long serverId) {
@@ -50,8 +53,9 @@ public class PreCheckItemService {
         if (!item.getServerId().equals(server.getId())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Pre-check item does not belong to this server");
         }
-        requireUnlocked(serverId);
-        claimOrVerifyOwnership(serverId, request.getUpdatedBy());
+        boolean isAdmin = appUserService.isAdmin(request.getUpdatedBy());
+        requireUnlocked(serverId, isAdmin);
+        claimOrVerifyOwnership(serverId, request.getUpdatedBy(), isAdmin);
 
         item.setStatus(request.getStatus());
         item.setNotes(request.getNotes());
@@ -70,8 +74,9 @@ public class PreCheckItemService {
 
     public void setAllStatus(Long serverId, ItemStatus status, String updatedBy) {
         Server server = serverService.findOrThrow(serverId);
-        requireUnlocked(serverId);
-        claimOrVerifyOwnership(serverId, updatedBy);
+        boolean isAdmin = appUserService.isAdmin(updatedBy);
+        requireUnlocked(serverId, isAdmin);
+        claimOrVerifyOwnership(serverId, updatedBy, isAdmin);
 
         List<PreCheckItem> items = preCheckItemRepository.findByServerId(serverId);
         items.forEach(i -> {
@@ -86,7 +91,11 @@ public class PreCheckItemService {
         serverService.recomputeStatus(server);
     }
 
-    private void requireUnlocked(Long serverId) {
+    // Admins bypass the submitted-lock entirely -- full access to edit even a submitted pre-check.
+    private void requireUnlocked(Long serverId, boolean isAdmin) {
+        if (isAdmin) {
+            return;
+        }
         preCheckSubmissionRepository.findByServerId(serverId)
                 .filter(s -> s.getStatus() == SubmissionStatus.SUBMITTED)
                 .ifPresent(s -> {
@@ -96,8 +105,12 @@ public class PreCheckItemService {
     }
 
     // First person to edit a server's pre-check claims it -- everyone else is blocked from editing
-    // (and from seeing the real content) until that person submits it for review.
-    private void claimOrVerifyOwnership(Long serverId, String editorEmail) {
+    // (and from seeing the real content) until that person submits it for review. Admins bypass the
+    // claim entirely (full access, and they don't take ownership of the form).
+    private void claimOrVerifyOwnership(Long serverId, String editorEmail, boolean isAdmin) {
+        if (isAdmin) {
+            return;
+        }
         PreCheckSubmission submission = preCheckSubmissionRepository.findByServerId(serverId).orElse(null);
         if (submission == null) {
             return;

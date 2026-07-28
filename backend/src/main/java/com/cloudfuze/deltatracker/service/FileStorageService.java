@@ -46,4 +46,21 @@ public class FileStorageService {
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to store uploaded file");
         }
     }
+
+    // Best-effort removal of an evidence file when its owning record is deleted (e.g. a project
+    // cascade-delete). Stored paths look like "/uploads/<uuid>.<ext>"; a missing or locked file must
+    // never block deleting the DB record, so any failure here is swallowed rather than thrown.
+    public void delete(String publicPath) {
+        if (!StringUtils.hasText(publicPath)) {
+            return;
+        }
+        String fileName = publicPath.startsWith("/uploads/")
+                ? publicPath.substring("/uploads/".length())
+                : publicPath;
+        try {
+            Files.deleteIfExists(uploadRoot.resolve(fileName).normalize());
+        } catch (IOException | RuntimeException ignored) {
+            // Non-fatal by design -- see method comment.
+        }
+    }
 }

@@ -3,7 +3,10 @@ package com.cloudfuze.deltatracker.controller;
 import com.cloudfuze.deltatracker.dto.PreCheckSubmissionDto;
 import com.cloudfuze.deltatracker.dto.SubmissionSubmitRequest;
 import com.cloudfuze.deltatracker.service.PreCheckSubmissionService;
+import com.cloudfuze.deltatracker.util.JwtEmailUtil;
 import jakarta.validation.Valid;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -26,5 +29,13 @@ public class PreCheckSubmissionController {
     public PreCheckSubmissionDto submit(@PathVariable Long serverId,
                                          @Valid @RequestBody SubmissionSubmitRequest request) {
         return submissionService.submit(serverId, request);
+    }
+
+    // Un-submit a mistakenly-submitted pre-check so it can be corrected and resubmitted. Identity is
+    // taken from the token (not the body) since this reverts a review request. Gated to
+    // MIGRATION_ENGINEER/MIGRATION_MANAGER by SecurityConfig (same as the rest of precheck-submission).
+    @PostMapping("/withdraw")
+    public PreCheckSubmissionDto withdraw(@PathVariable Long serverId, @AuthenticationPrincipal Jwt jwt) {
+        return submissionService.withdraw(serverId, JwtEmailUtil.extractEmail(jwt));
     }
 }

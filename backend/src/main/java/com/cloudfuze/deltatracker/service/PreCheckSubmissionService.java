@@ -29,15 +29,18 @@ public class PreCheckSubmissionService {
     private final PreCheckItemRepository itemRepository;
     private final ServerService serverService;
     private final SignOffService signOffService;
+    private final AppUserService appUserService;
 
     public PreCheckSubmissionService(PreCheckSubmissionRepository submissionRepository,
                                       PreCheckItemRepository itemRepository,
                                       ServerService serverService,
-                                      SignOffService signOffService) {
+                                      SignOffService signOffService,
+                                      AppUserService appUserService) {
         this.submissionRepository = submissionRepository;
         this.itemRepository = itemRepository;
         this.serverService = serverService;
         this.signOffService = signOffService;
+        this.appUserService = appUserService;
     }
 
     public PreCheckSubmissionDto getByServer(Long serverId, String viewerEmail) {
@@ -50,7 +53,8 @@ public class PreCheckSubmissionService {
         PreCheckSubmission submission = getOrCreate(server);
 
         if (StringUtils.hasText(submission.getStartedByEmail())
-                && !submission.getStartedByEmail().equalsIgnoreCase(request.getSubmittedBy())) {
+                && !submission.getStartedByEmail().equalsIgnoreCase(request.getSubmittedBy())
+                && !appUserService.isAdmin(request.getSubmittedBy())) {
             throw new ApiException(HttpStatus.FORBIDDEN,
                     "This pre-check is currently being filled out by " + submission.getStartedByEmail()
                             + " -- only they can submit it.");
@@ -91,6 +95,59 @@ public class PreCheckSubmissionService {
         signOffService.notifyPreCheckSubmitted(server, request.getSubmittedBy(), migrationManagerEmail);
 
         return toDto(submission, request.getSubmittedBy());
+    }
+
+    // Un-submits a pre-check that was submitted by mistake so it can be corrected and resubmitted:
+    // reverts SUBMITTED -> DRAFT (items keep their data, form unlocks) and removes the pending
+    // approval chain. Only works while nobody has approved yet -- SignOffService.removeChainForWithdrawal
+    // enforces that and throws a 409 otherwise. Allowed for the person who submitted/started it or the
+    // project's Migration Manager (ADMIN is intentionally out here, mirroring how ADMIN is excluded
+    // from filling out/submitting pre-checks in SecurityConfig).
+    public PreCheckSubmissionDto withdraw(Long serverId, String callerEmail) {
+        Server server = serverService.findOrThrow(serverId);
+        PreCheckSubmission submission = submissionRepository.findByServerId(serverId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "No pre-check submission for this server."));
+
+        if (submission.getStatus() != SubmissionStatus.SUBMITTED) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "This pre-check isn't submitted, so there's nothing to withdraw.");
+        }
+        // Admins have full access: they can withdraw anyone's submission AND roll back a chain that's
+        // already been approved or even had Delta initiated (removeChainForWithdrawal's allowRollback).
+        boolean isAdmin = appUserService.isAdmin(callerEmail);
+        if (!isAdmin && !canWithdraw(submission, server, callerEmail)) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Only the person who submitted this pre-check or the project's Migration Manager can withdraw it.");
+        }
+
+        signOffService.removeChainForWithdrawal(server, isAdmin);
+        if (isAdmin && server.getDeltaInitiatedAt() != null) {
+            // Admin rollback of a finalized Delta -- un-stamp it so the server returns to pre-submit.
+            server.setDeltaInitiatedAt(null);
+            server.setDeltaInitiatedBy(null);
+            serverService.save(server);
+        }
+
+        submission.setStatus(SubmissionStatus.DRAFT);
+        submission.setSubmittedBy(null);
+        submission.setSubmittedAt(null);
+        // startedByEmail is kept so the same person retains the edit lock and can fix + resubmit.
+        submission = submissionRepository.save(submission);
+        serverService.recomputeStatus(server);
+
+        return toDto(submission, callerEmail);
+    }
+
+    private boolean canWithdraw(PreCheckSubmission submission, Server server, String callerEmail) {
+        if (callerEmail == null) {
+            return true; // auth not configured -- matches how the rest of the app degrades open
+        }
+        if (server.getProject() != null
+                && callerEmail.equalsIgnoreCase(server.getProject().getMigrationManagerName())) {
+            return true;
+        }
+        return callerEmail.equalsIgnoreCase(submission.getSubmittedBy())
+                || callerEmail.equalsIgnoreCase(submission.getStartedByEmail());
     }
 
     private PreCheckSubmission getOrCreate(Server server) {

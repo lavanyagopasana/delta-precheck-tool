@@ -6,12 +6,14 @@ export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
   const idRef = useRef(0);
 
-  const showToast = useCallback((message) => {
+  // showToast(message) or showToast(message, "success" | "error" | "info"). Errors linger a bit
+  // longer since they usually carry something the user needs to read and act on.
+  const showToast = useCallback((message, type = "info") => {
     const id = ++idRef.current;
-    setToasts((prev) => [...prev, { id, message }]);
+    setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3000);
+    }, type === "error" ? 6000 : 3000);
   }, []);
 
   return (
@@ -19,7 +21,7 @@ export function ToastProvider({ children }) {
       {children}
       <div className="toast-stack" role="status" aria-live="polite">
         {toasts.map((t) => (
-          <div key={t.id} className="toast">
+          <div key={t.id} className={`toast toast--${t.type}`} role={t.type === "error" ? "alert" : undefined}>
             {t.message}
           </div>
         ))}

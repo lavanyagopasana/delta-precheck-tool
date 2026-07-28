@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import {
   getEscalations,
   createEscalation,
+  updateEscalation,
+  removeEscalation,
   resolveEscalation,
   getServers,
   getProjects,
@@ -14,6 +16,8 @@ import Modal from "../components/Modal";
 import { useToast } from "../components/Toast";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
+import { EditIcon, TrashIcon, CheckIcon, PlusIcon } from "../components/Icons";
+import { useConfirm } from "../components/ConfirmDialog";
 
 const MAX_EVIDENCE_FILE_SIZE_MB = 20;
 
@@ -54,9 +58,26 @@ const EMPTY_FORM = {
   evidenceFileName: "",
 };
 
-function TicketForm({ projects, servers, existingTicketNumbers, onCreated }) {
+function TicketForm({ projects, servers, existingTicketNumbers, onCreated, existing = null }) {
   const currentUser = useCurrentUser();
-  const [form, setForm] = useState(EMPTY_FORM);
+  const isEdit = !!existing;
+  const [form, setForm] = useState(() =>
+    existing
+      ? {
+          projectId: "",
+          serverId: String(existing.serverId ?? ""),
+          ticketNumber: existing.ticketNumber || "",
+          description: existing.description || "",
+          reason: existing.reason || "",
+          createdBy: existing.createdBy || "",
+          status: existing.status || "OPEN",
+          priority: existing.priority || "MEDIUM",
+          resolutionNotes: existing.resolutionNotes || "",
+          evidenceFilePath: existing.evidenceFilePath || "",
+          evidenceFileName: existing.evidenceFileName || "",
+        }
+      : EMPTY_FORM
+  );
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -80,14 +101,14 @@ function TicketForm({ projects, servers, existingTicketNumbers, onCreated }) {
     : form.createdBy.trim();
 
   const requiredFilled =
-    form.projectId &&
-    form.serverId &&
     form.ticketNumber.trim() &&
     form.description.trim() &&
     form.reason.trim() &&
-    createdByName;
+    (isEdit || (form.projectId && form.serverId && createdByName));
   const isDuplicate =
-    !!form.ticketNumber.trim() && existingTicketNumbers.has(form.ticketNumber.trim().toLowerCase());
+    !!form.ticketNumber.trim() &&
+    form.ticketNumber.trim().toLowerCase() !== (existing?.ticketNumber || "").toLowerCase() &&
+    existingTicketNumbers.has(form.ticketNumber.trim().toLowerCase());
   const canSubmit =
     requiredFilled && !isDuplicate && (form.status !== "RESOLVED" || form.resolutionNotes.trim());
 
@@ -124,23 +145,29 @@ function TicketForm({ projects, servers, existingTicketNumbers, onCreated }) {
     setSaving(true);
     setError(null);
     try {
-      await createEscalation({
-        serverId: Number(form.serverId),
+      const payload = {
         ticketNumber: form.ticketNumber.trim(),
         description: form.description.trim(),
         reason: form.reason.trim(),
-        createdBy: createdByName,
         status: form.status,
         priority: form.priority,
         resolutionNotes: form.resolutionNotes.trim() || null,
         evidenceFilePath: form.evidenceFilePath || null,
         evidenceFileName: form.evidenceFileName || null,
-      });
-      showToast(`Ticket ${form.ticketNumber.trim()} logged.`);
+      };
+      if (isEdit) {
+        await updateEscalation(existing.id, payload);
+        showToast(`Ticket ${form.ticketNumber.trim()} updated.`, "success");
+      } else {
+        await createEscalation({ ...payload, serverId: Number(form.serverId), createdBy: createdByName });
+        showToast(`Ticket ${form.ticketNumber.trim()} logged.`, "success");
+      }
       setForm(EMPTY_FORM);
       onCreated();
     } catch (err) {
-      setError(err.response?.data?.message || "Failed to create ticket.");
+      const msg = err.response?.data?.message || (isEdit ? "Failed to update ticket." : "Failed to create ticket.");
+      setError(msg);
+      showToast(msg, "error");
     } finally {
       setSaving(false);
     }
@@ -149,30 +176,38 @@ function TicketForm({ projects, servers, existingTicketNumbers, onCreated }) {
   return (
     <form onSubmit={handleSubmit}>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-        <label className="sr-only" htmlFor="ticket-project">Project</label>
-        <select id="ticket-project" value={form.projectId} onChange={setProject} style={{ minWidth: 180 }}>
-          <option value="">Select project...</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        <label className="sr-only" htmlFor="ticket-server">Server</label>
-        <select
-          id="ticket-server"
-          value={form.serverId}
-          onChange={set("serverId")}
-          disabled={!form.projectId}
-          style={{ minWidth: 180 }}
-        >
-          <option value="">{form.projectId ? "Select server..." : "Select a project first"}</option>
-          {serversForProject.map((s) => (
-            <option key={s.serverId} value={s.serverId}>
-              {s.serverName}
-            </option>
-          ))}
-        </select>
+        {isEdit ? (
+          <span className="progress-label" style={{ alignSelf: "center" }}>
+            Server: <strong>{existing.serverName}</strong>
+          </span>
+        ) : (
+          <>
+            <label className="sr-only" htmlFor="ticket-project">Project</label>
+            <select id="ticket-project" value={form.projectId} onChange={setProject} style={{ minWidth: 180 }}>
+              <option value="">Select project...</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <label className="sr-only" htmlFor="ticket-server">Server</label>
+            <select
+              id="ticket-server"
+              value={form.serverId}
+              onChange={set("serverId")}
+              disabled={!form.projectId}
+              style={{ minWidth: 180 }}
+            >
+              <option value="">{form.projectId ? "Select server..." : "Select a project first"}</option>
+              {serversForProject.map((s) => (
+                <option key={s.serverId} value={s.serverId}>
+                  {s.serverName}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
         <label className="sr-only" htmlFor="ticket-number">Ticket number</label>
         <input
           id="ticket-number"
@@ -274,7 +309,7 @@ function TicketForm({ projects, servers, existingTicketNumbers, onCreated }) {
           </span>
         )}
         <button className="btn" type="submit" disabled={!canSubmit || saving}>
-          {saving ? "Saving..." : "Log Ticket"}
+          {saving ? "Saving..." : isEdit ? "Save Changes" : "Log Ticket"}
         </button>
       </div>
     </form>
@@ -293,13 +328,15 @@ function ResolveControl({ escalation, onResolved }) {
     return (
       <button
         className="btn secondary"
-        style={{ padding: "4px 10px", fontSize: 12 }}
+        style={{ padding: "6px 10px" }}
+        title="Mark resolved"
+        aria-label="Mark resolved"
         onClick={(e) => {
           e.stopPropagation();
           setResolving(true);
         }}
       >
-        Mark Resolved
+        <CheckIcon size={18} style={{ marginRight: 0 }} />
       </button>
     );
   }
@@ -351,6 +388,9 @@ export default function EscalationsPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("ALL");
   const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const showToast = useToast();
+  const confirm = useConfirm();
 
   const load = () => {
     setLoading(true);
@@ -364,6 +404,23 @@ export default function EscalationsPage() {
   };
 
   useEffect(load, []);
+
+  const handleDelete = async (escalation) => {
+    const ok = await confirm({
+      title: `Delete ticket ${escalation.ticketNumber}?`,
+      message: "This permanently removes the ticket and its attachment. This can't be undone.",
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await removeEscalation(escalation.id);
+      showToast(`Ticket ${escalation.ticketNumber} deleted.`, "success");
+      load();
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to delete ticket.", "error");
+    }
+  };
 
   if (loading) return <p>Loading tickets...</p>;
 
@@ -386,7 +443,8 @@ export default function EscalationsPage() {
               <option value="RESOLVED">Resolved</option>
             </select>
             <button className="btn" onClick={() => setShowModal(true)}>
-              + Log Ticket
+              <PlusIcon />
+              Log Ticket
             </button>
           </div>
         }
@@ -455,7 +513,32 @@ export default function EscalationsPage() {
             label: "",
             sortable: false,
             filterable: false,
-            render: (e) => <ResolveControl escalation={e} onResolved={load} />,
+            render: (e) => (
+              <div
+                style={{ display: "flex", gap: 6, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}
+                onClick={(evt) => evt.stopPropagation()}
+              >
+                <ResolveControl escalation={e} onResolved={load} />
+                <button
+                  className="btn secondary"
+                  style={{ padding: "6px 10px" }}
+                  title="Edit ticket"
+                  aria-label="Edit ticket"
+                  onClick={() => setEditing(e)}
+                >
+                  <EditIcon size={18} style={{ marginRight: 0 }} />
+                </button>
+                <button
+                  className="btn danger"
+                  style={{ padding: "6px 10px" }}
+                  title="Delete ticket"
+                  aria-label="Delete ticket"
+                  onClick={() => handleDelete(e)}
+                >
+                  <TrashIcon size={18} style={{ marginRight: 0 }} />
+                </button>
+              </div>
+            ),
           },
         ]}
       />
@@ -469,6 +552,21 @@ export default function EscalationsPage() {
             onCreated={() => {
               load();
               setShowModal(false);
+            }}
+          />
+        </Modal>
+      )}
+
+      {editing && (
+        <Modal title={`Edit Ticket ${editing.ticketNumber}`} onClose={() => setEditing(null)} width={640} closeIcon>
+          <TicketForm
+            projects={projects}
+            servers={servers}
+            existing={editing}
+            existingTicketNumbers={new Set(escalations.map((e) => e.ticketNumber.toLowerCase()))}
+            onCreated={() => {
+              load();
+              setEditing(null);
             }}
           />
         </Modal>
