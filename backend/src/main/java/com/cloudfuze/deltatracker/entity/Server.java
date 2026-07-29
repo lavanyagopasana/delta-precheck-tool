@@ -37,6 +37,20 @@ public class Server {
     @Column(name = "delta_initiated_by")
     private String deltaInitiatedBy;
 
+    // Post-Delta lifecycle, driven by the engineer: after Delta is initiated they Start the actual
+    // migration, then mark it Finished. Both are timestamps stamped at click time (null until then).
+    @Column(name = "delta_started_at")
+    private LocalDateTime deltaStartedAt;
+
+    @Column(name = "delta_started_by")
+    private String deltaStartedBy;
+
+    @Column(name = "delta_finished_at")
+    private LocalDateTime deltaFinishedAt;
+
+    @Column(name = "delta_finished_by")
+    private String deltaFinishedBy;
+
     @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "project_id")

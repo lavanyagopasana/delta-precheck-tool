@@ -22,6 +22,10 @@ public class ServerReadinessDto {
     private String readinessStatus;
     private LocalDateTime deltaInitiatedAt;
     private String deltaInitiatedBy;
+    private LocalDateTime deltaStartedAt;
+    private String deltaStartedBy;
+    private LocalDateTime deltaFinishedAt;
+    private String deltaFinishedBy;
     private String migrationManagerName;
     private Long projectId;
     private String projectName;

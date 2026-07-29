@@ -115,9 +115,10 @@ public class PreCheckSubmissionService {
         // Admins have full access: they can withdraw anyone's submission AND roll back a chain that's
         // already been approved or even had Delta initiated (removeChainForWithdrawal's allowRollback).
         boolean isAdmin = appUserService.isAdmin(callerEmail);
-        if (!isAdmin && !canWithdraw(submission, server, callerEmail)) {
+        if (!isAdmin && !canWithdraw(submission, callerEmail)) {
             throw new ApiException(HttpStatus.FORBIDDEN,
-                    "Only the person who submitted this pre-check or the project's Migration Manager can withdraw it.");
+                    "Only the person who submitted this pre-check can withdraw it (or an admin). "
+                            + "Migration Managers review it -- to send it back, decline it instead.");
         }
 
         signOffService.removeChainForWithdrawal(server, isAdmin);
@@ -138,13 +139,12 @@ public class PreCheckSubmissionService {
         return toDto(submission, callerEmail);
     }
 
-    private boolean canWithdraw(PreCheckSubmission submission, Server server, String callerEmail) {
+    // Withdraw is the engineer's "undo my submission" -- only the person who submitted it or started
+    // (owns) the pre-check. Migration Managers do NOT withdraw (in review they approve/decline);
+    // admins withdraw/roll back via the isAdmin bypass in withdraw(), not through this check.
+    private boolean canWithdraw(PreCheckSubmission submission, String callerEmail) {
         if (callerEmail == null) {
             return true; // auth not configured -- matches how the rest of the app degrades open
-        }
-        if (server.getProject() != null
-                && callerEmail.equalsIgnoreCase(server.getProject().getMigrationManagerName())) {
-            return true;
         }
         return callerEmail.equalsIgnoreCase(submission.getSubmittedBy())
                 || callerEmail.equalsIgnoreCase(submission.getStartedByEmail());

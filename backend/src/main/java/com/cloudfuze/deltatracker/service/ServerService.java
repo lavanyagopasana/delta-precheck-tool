@@ -10,7 +10,9 @@ import com.cloudfuze.deltatracker.entity.Project;
 import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.entity.SubmissionStatus;
 import com.cloudfuze.deltatracker.entity.WorkspacePair;
+import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
+import org.springframework.http.HttpStatus;
 import com.cloudfuze.deltatracker.repository.PreCheckItemRepository;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
 import com.cloudfuze.deltatracker.repository.ProjectRepository;
@@ -19,6 +21,7 @@ import com.cloudfuze.deltatracker.repository.WorkspacePairRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -123,6 +126,34 @@ public class ServerService {
         return buildReadiness(server, true);
     }
 
+    // Post-Delta lifecycle (engineer-driven). Start can only happen after Delta is initiated;
+    // Finish only after Start. Timestamps are stamped at click time.
+    public ServerReadinessDto startDelta(Long serverId, String actorEmail) {
+        Server server = findOrThrow(serverId);
+        if (server.getDeltaInitiatedAt() == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Delta hasn't been initiated for this server yet.");
+        }
+        if (server.getDeltaStartedAt() != null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Delta migration has already been started for this server.");
+        }
+        server.setDeltaStartedAt(LocalDateTime.now());
+        server.setDeltaStartedBy(actorEmail);
+        return buildReadiness(serverRepository.save(server), true);
+    }
+
+    public ServerReadinessDto finishDelta(Long serverId, String actorEmail) {
+        Server server = findOrThrow(serverId);
+        if (server.getDeltaStartedAt() == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Start the Delta migration before marking it finished.");
+        }
+        if (server.getDeltaFinishedAt() != null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Delta migration is already marked finished for this server.");
+        }
+        server.setDeltaFinishedAt(LocalDateTime.now());
+        server.setDeltaFinishedBy(actorEmail);
+        return buildReadiness(serverRepository.save(server), true);
+    }
+
     private ServerReadinessDto buildReadiness(Server server, boolean includePairs) {
         List<WorkspacePair> pairs = workspacePairRepository.findByServerId(server.getId());
 
@@ -142,6 +173,10 @@ public class ServerService {
         dto.setReadinessStatus(ServerReadinessDto.computeReadinessStatus(server.getStatus(), openEscalations));
         dto.setDeltaInitiatedAt(server.getDeltaInitiatedAt());
         dto.setDeltaInitiatedBy(server.getDeltaInitiatedBy());
+        dto.setDeltaStartedAt(server.getDeltaStartedAt());
+        dto.setDeltaStartedBy(server.getDeltaStartedBy());
+        dto.setDeltaFinishedAt(server.getDeltaFinishedAt());
+        dto.setDeltaFinishedBy(server.getDeltaFinishedBy());
         dto.setSubmissionStatus(preCheckSubmissionRepository.findByServerId(server.getId())
                 .map(PreCheckSubmission::getStatus)
                 .orElse(SubmissionStatus.NOT_STARTED));

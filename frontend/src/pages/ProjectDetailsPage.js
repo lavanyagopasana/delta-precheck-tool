@@ -5,6 +5,8 @@ import {
   updateProjectAssignments,
   getRoster,
   importWorkspacePairsCsvGlobal,
+  startDelta,
+  finishDelta,
   SAMPLE_CSV_COLUMNS_GLOBAL,
 } from "../api/client";
 import { useToast } from "../components/Toast";
@@ -13,7 +15,6 @@ import { AUTH_CONFIGURED } from "../auth/authConfig";
 import CsvImportPanel from "../components/CsvImportPanel";
 import EngineerChecklist from "../components/EngineerChecklist";
 import WorkspacePairsPanel from "../components/WorkspacePairsPanel";
-import { PairStatusBadge } from "../components/StatusBadge";
 
 const PRODUCT_TYPE_LABELS = { MESSAGE: "Message", EMAIL: "Email", CONTENT: "Content" };
 
@@ -120,6 +121,7 @@ export default function ProjectDetailsPage() {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
   const currentUser = useCurrentUser();
+  const showToast = useToast();
   const [project, setProject] = useState(null);
   const [roster, setRoster] = useState(EMPTY_ROSTER);
   const [loading, setLoading] = useState(true);
@@ -128,6 +130,8 @@ export default function ProjectDetailsPage() {
 
   const isAdmin = !AUTH_CONFIGURED || currentUser?.role === "ADMIN";
   const currentUserEmail = AUTH_CONFIGURED ? currentUser?.email || currentUser?.name || "unknown" : "unknown";
+  // The post-Delta Start/Finish actions are engineer-driven (admins too).
+  const canRunDelta = !AUTH_CONFIGURED || currentUser?.role === "MIGRATION_ENGINEER" || currentUser?.role === "ADMIN";
 
   const load = () => {
     getProjectDetail(id)
@@ -137,6 +141,26 @@ export default function ProjectDetailsPage() {
       })
       .catch((err) => setError(err.response?.data?.message || "Failed to load project."))
       .finally(() => setLoading(false));
+  };
+
+  const handleStartDelta = async (server) => {
+    try {
+      await startDelta(server.serverId);
+      showToast("Delta migration started.", "success");
+      load();
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to start Delta.", "error");
+    }
+  };
+
+  const handleFinishDelta = async (server) => {
+    try {
+      await finishDelta(server.serverId);
+      showToast("Delta migration marked finished.", "success");
+      load();
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to finish Delta.", "error");
+    }
   };
 
   useEffect(load, [id]);
@@ -174,7 +198,7 @@ export default function ProjectDetailsPage() {
 
       {canManage && (
         <CsvImportPanel
-          title={`Import servers + workspace pairs into ${project.name}`}
+          title={`Import servers + migration pairs into ${project.name}`}
           columns={SAMPLE_CSV_COLUMNS_GLOBAL}
           sampleRow={SAMPLE_ROW_GLOBAL}
           onUpload={(file) => importWorkspacePairsCsvGlobal(file, project.id)}
@@ -203,36 +227,74 @@ export default function ProjectDetailsPage() {
 
         {!project.servers?.length && (
           <p className="empty-state">
-            {canManage ? "No servers yet. Upload a CSV above to add servers and workspace pairs." : "No servers yet."}
+            {canManage ? "No servers yet. Upload a CSV above to add servers and migration pairs." : "No servers yet."}
           </p>
         )}
 
-        {selectedServer && (
-          <div className="card-row" style={{ marginTop: 20, marginBottom: 0 }}>
-            <div className="stat-card">
-              <div className="value" style={{ fontSize: 20 }}>
-                <PairStatusBadge status={selectedServer.status} />
+        {selectedServer && (() => {
+          const s = selectedServer;
+          const fmt = (d) => new Date(d).toLocaleDateString();
+          // Server status follows the workflow: Pending (pre-check not submitted) -> the approval
+          // chain's "<Role> not approved yet" while in review -> Delta Ready once all approved.
+          const stage =
+            s.readinessStage === "READY"
+              ? { label: "Delta Ready", pill: "green" }
+              : s.readinessStage === "IN_PROGRESS"
+              ? { label: s.readinessDetail || "In review", pill: null, color: "var(--color-yellow)" }
+              : { label: "Pre-check not submitted", pill: null, color: "var(--color-red)" };
+          return (
+            <div className="card-row" style={{ marginTop: 20, marginBottom: 0 }}>
+              <div className="stat-card">
+                <div className="value" style={{ fontSize: 14 }}>
+                  {stage.pill ? (
+                    <span className={`badge ${stage.pill}`}>{stage.label}</span>
+                  ) : (
+                    <span style={{ fontSize: 12, fontWeight: 600, color: stage.color }}>{stage.label}</span>
+                  )}
+                </div>
+                <div className="label">Status</div>
               </div>
-              <div className="label">Status</div>
-            </div>
-            <div className="stat-card">
-              <div className="value">{selectedServer.totalPairs}</div>
-              <div className="label">Pairs</div>
-            </div>
-            <div className="stat-card">
-              <div className="value" style={{ color: selectedServer.openEscalationCount > 0 ? "var(--color-red)" : undefined }}>
-                {selectedServer.openEscalationCount}
+              <div className="stat-card">
+                <div className="value">{s.totalPairs}</div>
+                <div className="label">Pairs</div>
               </div>
-              <div className="label">Escalations</div>
-            </div>
-            <div className="stat-card">
-              <div className="value" style={{ fontSize: 16 }}>
-                {selectedServer.deltaInitiatedAt ? new Date(selectedServer.deltaInitiatedAt).toLocaleDateString() : "—"}
+              <div className="stat-card">
+                <div className="value" style={{ color: s.openEscalationCount > 0 ? "var(--color-red)" : undefined }}>
+                  {s.openEscalationCount}
+                </div>
+                <div className="label">Tickets</div>
               </div>
-              <div className="label">Delta Initiated</div>
+              <div className="stat-card">
+                <div className="value" style={{ fontSize: 16 }}>
+                  {s.deltaStartedAt ? (
+                    fmt(s.deltaStartedAt)
+                  ) : s.deltaInitiatedAt && canRunDelta ? (
+                    <button className="btn success" style={{ padding: "5px 14px", fontSize: 12.5 }} onClick={() => handleStartDelta(s)}>
+                      Start
+                    </button>
+                  ) : (
+                    "—"
+                  )}
+                </div>
+                <div className="label">Delta Started</div>
+              </div>
+              <div className="stat-card">
+                <div className="value" style={{ fontSize: 16 }}>
+                  {s.deltaFinishedAt ? (
+                    fmt(s.deltaFinishedAt)
+                  ) : s.deltaStartedAt && canRunDelta ? (
+                    <button className="btn" style={{ padding: "5px 14px", fontSize: 12.5 }} onClick={() => handleFinishDelta(s)}>
+                      Finished
+                    </button>
+                  ) : (
+                    "—"
+                  )}
+                </div>
+                <div className="label">Delta Finished</div>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {selectedServer && (
           <WorkspacePairsPanel

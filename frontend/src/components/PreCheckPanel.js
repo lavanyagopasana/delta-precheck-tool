@@ -179,7 +179,7 @@ function ItemRow({ item, locked, serverId, editingAs, onSaved }) {
           disabled={locked}
           onChange={handleStatusChange}
           className="precheck-status-pill"
-          style={{ background: visual.bg, color: visual.fg }}
+          style={{ backgroundColor: visual.bg, color: visual.fg }}
         >
           {statusOptionsFor(item.itemName).map((opt) => (
             <option key={opt.value} value={opt.value}>
@@ -337,16 +337,15 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
   const items = submission.items;
   const locked = submission.status === "SUBMITTED" || !canEdit;
 
-  // A mistakenly-submitted pre-check can be withdrawn (un-submitted) by the person who
-  // submitted/started it or the project's Migration Manager -- but only while it's still SUBMITTED
-  // and editable by this role. The backend additionally refuses if an approver already approved.
+  // A mistakenly-submitted pre-check can be withdrawn (un-submitted) only by the person who
+  // submitted/started it, or an admin -- NOT the Migration Manager (managers approve/decline in
+  // review; to send it back they decline). The backend also refuses if an approver already approved.
   const emailLc = currentUser?.email?.toLowerCase();
   const isSubmitter = emailLc && submission.submittedBy?.toLowerCase() === emailLc;
   const isOwner = emailLc && submission.startedByEmail?.toLowerCase() === emailLc;
-  const isProjectMM = emailLc && server.migrationManagerName?.toLowerCase() === emailLc;
   const isAdmin = currentUser?.role === "ADMIN";
   const canWithdraw =
-    submission.status === "SUBMITTED" && canEdit && (!AUTH_CONFIGURED || isSubmitter || isOwner || isProjectMM || isAdmin);
+    submission.status === "SUBMITTED" && canEdit && (!AUTH_CONFIGURED || isSubmitter || isOwner || isAdmin);
   const completedCount = items.filter(isItemComplete).length;
   const allCompleted = items.length > 0 && completedCount === items.length;
   const allHaveEvidence = items
@@ -355,6 +354,8 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
   const allHaveNotes = items
     .filter((i) => i.itemName !== DELTA_TYPE_ITEM)
     .every((i) => !!i.notes?.trim());
+  // Everything filled in correctly -- only then does the Submit button appear.
+  const readyToSubmit = allCompleted && allHaveEvidence && allHaveNotes && hasMigrationManager && !!submittedByName;
   const progressPct = items.length === 0 ? 0 : Math.round((completedCount / items.length) * 100);
   const badge = STATUS_BADGE[submission.status] || STATUS_BADGE.NOT_STARTED;
 
@@ -431,7 +432,7 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
         <>
           <h2>{server.serverName}</h2>
           <p style={{ color: "var(--color-text-muted)", marginTop: -10, marginBottom: 20 }}>
-            {server.totalPairs} workspace pair(s) on this server share this pre-check.
+            {server.totalPairs} migration pair(s) on this server share this pre-check.
           </p>
         </>
       )}
@@ -539,23 +540,21 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
                   />
                 </>
               )}
-              <button
-                className="btn"
-                onClick={handleSubmit}
-                disabled={busy || !allCompleted || !allHaveEvidence || !allHaveNotes || !hasMigrationManager || !submittedByName}
-              >
-                {busy ? (
-                  <>
-                    <span className="spinner" style={{ marginRight: 8 }} />
-                    Submitting…
-                  </>
-                ) : (
-                  <>
-                    <SendIcon />
-                    Submit for Migration Manager Review
-                  </>
-                )}
-              </button>
+              {readyToSubmit && (
+                <button className="btn" onClick={handleSubmit} disabled={busy}>
+                  {busy ? (
+                    <>
+                      <span className="spinner" style={{ marginRight: 8 }} />
+                      Submitting…
+                    </>
+                  ) : (
+                    <>
+                      <SendIcon />
+                      Submit for Migration Manager Review
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         )}
