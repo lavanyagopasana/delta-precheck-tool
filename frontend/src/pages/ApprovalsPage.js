@@ -5,6 +5,7 @@ import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
 import PreCheckPanel from "../components/PreCheckPanel";
 import { useToast } from "../components/Toast";
+import { useConfirm } from "../components/ConfirmDialog";
 
 const ROLE_LABELS = {
   MIGRATION_LEAD: "Migration Manager",
@@ -90,6 +91,7 @@ function ActionsCell({ approval, onActed }) {
   const [acting, setActing] = useState(false);
   const [askingQa, setAskingQa] = useState(false);
   const showToast = useToast();
+  const confirm = useConfirm();
 
   if (approval.status !== "PENDING" || !approval.canAct) {
     return <span style={{ color: "var(--color-text-faint)", fontSize: 12 }}>—</span>;
@@ -115,17 +117,28 @@ function ActionsCell({ approval, onActed }) {
     }
   };
 
-  const handleApproveClick = () => {
+  const handleApproveClick = async () => {
     if (approval.role === "DEV_LEAD") {
       setAskingQa(true);
       return;
     }
-    if (!window.confirm(`Approve as ${roleLabel} for ${approval.serverName}?`)) return;
+    const ok = await confirm({
+      title: `Approve as ${roleLabel}?`,
+      message: `You're approving the pre-check for ${approval.serverName}.`,
+      confirmLabel: "Approve",
+    });
+    if (!ok) return;
     runApprove(undefined);
   };
 
   const handleReject = async () => {
-    if (!window.confirm(`Reject as ${roleLabel} for ${approval.serverName}?`)) return;
+    const ok = await confirm({
+      title: `Reject as ${roleLabel}?`,
+      message: `This sends ${approval.serverName} back a step for rework.`,
+      confirmLabel: "Reject",
+      danger: true,
+    });
+    if (!ok) return;
     setActing(true);
     try {
       await declineSignOff(approval.serverId, approval.role);

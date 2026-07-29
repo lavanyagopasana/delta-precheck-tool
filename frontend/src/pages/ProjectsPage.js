@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { getProjects, createProject, getRoster } from "../api/client";
+import { getProjects, createProject, getRoster, removeProject, updateProjectDetails } from "../api/client";
 import { useToast } from "../components/Toast";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
 import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
+import { TrashIcon, PlusIcon, EditIcon } from "../components/Icons";
+import { useConfirm } from "../components/ConfirmDialog";
 
 const PRODUCT_TYPE_OPTIONS = [
   { value: "MESSAGE", label: "Message" },
@@ -19,6 +21,7 @@ export default function ProjectsPage() {
   const navigate = useNavigate();
   const currentUser = useCurrentUser();
   const showToast = useToast();
+  const confirm = useConfirm();
   const [projects, setProjects] = useState([]);
   const [roster, setRoster] = useState(EMPTY_ROSTER);
   const [loading, setLoading] = useState(true);
@@ -33,6 +36,92 @@ export default function ProjectsPage() {
   // A Migration Manager creating a project is automatically its manager -- only non-managers
   // (engineers, admins) need to pick one from the roster.
   const creatorIsManager = AUTH_CONFIGURED && currentUser?.role === "MIGRATION_MANAGER";
+
+  // Mirrors ProjectService.canDelete so the button only shows when the backend would allow it:
+  // admin, the managing Migration Manager, or the creator while nothing has been APPROVED yet (a
+  // just-submitted project is still deletable by its creator -- only an actual approval locks it).
+  // The server re-checks and also blocks Delta-initiated projects.
+  const canDeleteProject = (p) => {
+    if (!AUTH_CONFIGURED) return true;
+    const email = currentUser?.email?.toLowerCase();
+    const role = currentUser?.role;
+    if (!email || !role) return false;
+    if (role === "ADMIN") return true;
+    if (role === "MIGRATION_MANAGER" && p.migrationManagerName?.toLowerCase() === email) return true;
+    const approvalStarted = p.migrationManagerApprovalsDone > 0 || p.devApprovalsDone > 0;
+    if (p.createdBy?.toLowerCase() === email && !approvalStarted) return true;
+    return false;
+  };
+
+  // Mirrors ProjectService.canEditDetails: admin, the current MM, the creator, or an assigned
+  // engineer can edit the project's details (name / product type / Migration Manager).
+  const canEditProject = (p) => {
+    if (!AUTH_CONFIGURED) return true;
+    const email = currentUser?.email?.toLowerCase();
+    const role = currentUser?.role;
+    if (!email || !role) return false;
+    if (role === "ADMIN") return true;
+    if (role === "MIGRATION_MANAGER") return p.migrationManagerName?.toLowerCase() === email;
+    if (role === "MIGRATION_ENGINEER")
+      return (
+        p.createdBy?.toLowerCase() === email ||
+        (p.engineerEmails || []).some((x) => x?.toLowerCase() === email)
+      );
+    return false;
+  };
+
+  const [editing, setEditing] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [editProductType, setEditProductType] = useState("");
+  const [editMM, setEditMM] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState(null);
+
+  const openEdit = (p) => {
+    setEditing(p);
+    setEditName(p.name || "");
+    setEditProductType(p.productType || "");
+    setEditMM(p.migrationManagerName || "");
+    setEditError(null);
+  };
+
+  const handleUpdate = async (e) => {
+    e.preventDefault();
+    if (!editName.trim() || !editProductType) return;
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      await updateProjectDetails(editing.id, {
+        name: editName.trim(),
+        productType: editProductType,
+        migrationManagerName: editMM || null,
+      });
+      showToast(`Project "${editName.trim()}" updated.`, "success");
+      setEditing(null);
+      load();
+    } catch (err) {
+      setEditError(err.response?.data?.message || "Failed to update project.");
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleDelete = async (p) => {
+    const ok = await confirm({
+      title: `Delete project "${p.name}"?`,
+      message: `This permanently removes its ${p.serverCount} server(s) and all their pre-checks, sign-offs, workspace pairs, and escalations. This cannot be undone.`,
+      confirmLabel: "Delete Project",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await removeProject(p.id);
+      showToast(`Project "${p.name}" deleted.`);
+      load();
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to delete project.");
+    }
+  };
 
   const load = () => {
     setLoading(true);
@@ -160,6 +249,63 @@ export default function ProjectsPage() {
         </Modal>
       )}
 
+      {editing && (
+        <Modal title={`Edit "${editing.name}"`} onClose={() => setEditing(null)} closeIcon>
+          <form onSubmit={handleUpdate}>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+              <div style={{ flex: "1 1 220px" }}>
+                <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>
+                  Project Name <span style={{ color: "var(--color-red)" }}>*</span>
+                </label>
+                <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} style={{ width: "100%" }} />
+              </div>
+              <div style={{ flex: "1 1 160px" }}>
+                <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>
+                  Product Type <span style={{ color: "var(--color-red)" }}>*</span>
+                </label>
+                <select value={editProductType} onChange={(e) => setEditProductType(e.target.value)} style={{ width: "100%" }}>
+                  <option value="">Select...</option>
+                  {PRODUCT_TYPE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>
+                Migration Manager
+              </label>
+              <select value={editMM} onChange={(e) => setEditMM(e.target.value)} style={{ width: "100%", maxWidth: 300 }}>
+                <option value="">— Not assigned —</option>
+                {editMM && !roster.migrationManagers.includes(editMM) && (
+                  <option value={editMM}>{editMM}</option>
+                )}
+                {roster.migrationManagers.map((email) => (
+                  <option key={email} value={email}>
+                    {email}
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: 11.5, color: "var(--color-text-faint)", marginTop: 4 }}>
+                Changing the manager rolls approvals back to the manager step — the pre-check stays exactly as it is,
+                and the chain continues from the new manager (any Delta is un-initiated).
+              </div>
+            </div>
+
+            {editError && <div className="inline-hint" style={{ marginTop: 14 }}>{editError}</div>}
+
+            <div className="form-actions">
+              <button className="btn" type="submit" disabled={editSaving || !editName.trim() || !editProductType}>
+                {editSaving ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       <DataTable
         title="Projects"
         rows={projects}
@@ -169,7 +315,8 @@ export default function ProjectsPage() {
         emptyMessage="No projects yet. Click Add Project above."
         toolbarRight={
           <button className="btn" onClick={() => setShowModal(true)}>
-            + Add Project
+            <PlusIcon />
+            Add Project
           </button>
         }
         columns={[
@@ -191,6 +338,43 @@ export default function ProjectsPage() {
             key: "createdBy",
             label: "Created By",
             render: (p) => p.createdBy || "-",
+          },
+          {
+            key: "actions",
+            label: "",
+            sortable: false,
+            filterable: false,
+            render: (p) => (
+              <div
+                style={{ display: "flex", gap: 6, justifyContent: "center" }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {canEditProject(p) && (
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    style={{ padding: "6px 10px" }}
+                    title="Edit project"
+                    aria-label="Edit project"
+                    onClick={() => openEdit(p)}
+                  >
+                    <EditIcon size={18} style={{ marginRight: 0 }} />
+                  </button>
+                )}
+                {canDeleteProject(p) && (
+                  <button
+                    type="button"
+                    className="btn danger"
+                    style={{ padding: "6px 10px" }}
+                    title="Delete project"
+                    aria-label="Delete project"
+                    onClick={() => handleDelete(p)}
+                  >
+                    <TrashIcon size={18} style={{ marginRight: 0 }} />
+                  </button>
+                )}
+              </div>
+            ),
           },
         ]}
       />

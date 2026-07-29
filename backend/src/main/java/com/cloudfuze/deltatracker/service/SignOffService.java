@@ -71,6 +71,32 @@ public class SignOffService {
         signOffRepository.save(new SignOff(server, SignOffRole.QA_LEAD, "Any QA Lead"));
     }
 
+    // Tears down the approval chain when a pre-check is withdrawn (un-submitted) before anyone has
+    // acted on it -- the inverse of createChainIfAbsent. Refuses once the chain has moved forward
+    // (any role APPROVED or SKIPPED, or Delta already initiated): at that point a real approval
+    // decision exists and the engineer must ask an approver to DECLINE instead of silently erasing
+    // it. A stale DECLINED row (bounced back to the engineer) is fine to withdraw over.
+    public void removeChainForWithdrawal(Server server, boolean allowRollback) {
+        // allowRollback == true is the admin override: full rollback even of an approved chain or a
+        // finalized Delta. For everyone else the normal guards apply -- you can only withdraw before
+        // anyone has approved.
+        if (!allowRollback) {
+            if (server.getDeltaInitiatedAt() != null) {
+                throw new ApiException(HttpStatus.CONFLICT,
+                        "Delta has already been initiated for this server -- it can't be withdrawn.");
+            }
+            List<SignOff> signOffs = signOffRepository.findByServerId(server.getId());
+            boolean alreadyProgressed = signOffs.stream()
+                    .anyMatch(s -> s.getStatus() == SignOffStatus.APPROVED || s.getStatus() == SignOffStatus.SKIPPED);
+            if (alreadyProgressed) {
+                throw new ApiException(HttpStatus.CONFLICT,
+                        "This pre-check has already been approved by someone in the chain -- ask an approver to "
+                                + "decline it instead of withdrawing.");
+            }
+        }
+        signOffRepository.deleteAll(signOffRepository.findByServerId(server.getId()));
+    }
+
     // Approving is only allowed by whoever is eligible for this role, and only once it's actually
     // their turn in the sequence. If the role right after this one had previously been declined,
     // approving here gives it a fresh pending turn again -- and the next role's pool gets an

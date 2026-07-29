@@ -130,10 +130,22 @@ public class SecurityConfig {
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER, AppUserRole.DEV_LEAD, AppUserRole.QA_LEAD))
                         .requestMatchers(HttpMethod.POST, "/api/pairs/import", "/api/servers/*/pairs/import").access(roleRequired(
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER, AppUserRole.MIGRATION_MANAGER))
+                        // Deleting a project is gated here to the roles that could ever be allowed; the
+                        // per-project ownership check (creator / managing MM / admin) and the
+                        // Delta-initiated audit guard are enforced in ProjectService.delete.
+                        .requestMatchers(HttpMethod.DELETE, "/api/projects/*").access(roleRequired(
+                                AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER, AppUserRole.MIGRATION_ENGINEER))
+                        // Edit project details -- gated to roles that can ever edit; the per-project
+                        // check (admin / current MM / creator / assigned engineer) is in ProjectService.
+                        .requestMatchers(HttpMethod.PATCH, "/api/projects/*").access(roleRequired(
+                                AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER, AppUserRole.MIGRATION_ENGINEER))
                         .requestMatchers(HttpMethod.GET, "/api/servers/*/precheck-items/**", "/api/servers/*/precheck-submission/**")
                                 .access(allowlistRequired())
+                        // ADMIN included here by explicit product decision -- admins have full access
+                        // to everything, including filling out/submitting/withdrawing pre-checks. The
+                        // per-action admin bypasses live in the services (ownership lock, submitted lock).
                         .requestMatchers("/api/servers/*/precheck-items/**", "/api/servers/*/precheck-submission/**")
-                                .access(roleRequired(AppUserRole.MIGRATION_ENGINEER, AppUserRole.MIGRATION_MANAGER))
+                                .access(roleRequired(AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER, AppUserRole.MIGRATION_MANAGER))
                         .anyRequest().access(allowlistRequired()))
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.decoder(azureJwtDecoder())));
 

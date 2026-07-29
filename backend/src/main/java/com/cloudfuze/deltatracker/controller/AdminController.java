@@ -48,8 +48,8 @@ public class AdminController {
 
     @DeleteMapping("/{email}")
     public void remove(@AuthenticationPrincipal Jwt jwt, @PathVariable String email) {
-        requireAdmin(jwt);
-        appUserService.remove(email);
+        String adminEmail = requireAdmin(jwt);
+        appUserService.remove(email, adminEmail);
     }
 
     private String requireAdmin(Jwt jwt) {

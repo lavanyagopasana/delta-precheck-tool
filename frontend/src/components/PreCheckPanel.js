@@ -5,14 +5,18 @@ import {
   getPreCheckSubmission,
   updatePreCheckItem,
   submitPreCheckForReview,
+  withdrawPreCheck,
   uploadEvidence,
 } from "../api/client";
 import AttachmentPreview from "./AttachmentPreview";
 import { useToast } from "./Toast";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
+import { UndoIcon, SendIcon } from "./Icons";
+import { useConfirm } from "./ConfirmDialog";
 
-const PRECHECK_EDIT_ROLES = ["MIGRATION_ENGINEER", "MIGRATION_MANAGER"];
+// ADMIN included by explicit product decision -- admins have full access to pre-checks too.
+const PRECHECK_EDIT_ROLES = ["ADMIN", "MIGRATION_ENGINEER", "MIGRATION_MANAGER"];
 
 const STATUS_BADGE = {
   NOT_STARTED: { color: "gray", label: "Not Started" },
@@ -100,9 +104,11 @@ function ItemRow({ item, locked, serverId, editingAs, onSaved }) {
         ...patch,
       });
       onSaved(updated);
-      showToast(`${item.itemName} saved.`);
+      showToast(`${item.itemName} saved.`, "success");
     } catch (err) {
-      setError(err.response?.data?.message || "Failed to save.");
+      const msg = err.response?.data?.message || `Couldn't save ${item.itemName}. Please try again.`;
+      setError(msg);
+      showToast(msg, "error");
     }
   };
 
@@ -114,7 +120,9 @@ function ItemRow({ item, locked, serverId, editingAs, onSaved }) {
   const uploadFile = async (file) => {
     if (!file) return;
     if (file.size > MAX_EVIDENCE_FILE_SIZE_MB * 1024 * 1024) {
-      setError(`"${file.name}" is larger than the ${MAX_EVIDENCE_FILE_SIZE_MB}MB attachment limit.`);
+      const msg = `"${file.name}" is larger than the ${MAX_EVIDENCE_FILE_SIZE_MB}MB attachment limit.`;
+      setError(msg);
+      showToast(msg, "error");
       return;
     }
     setUploading(true);
@@ -123,7 +131,9 @@ function ItemRow({ item, locked, serverId, editingAs, onSaved }) {
       const result = await uploadEvidence(file);
       await save({ evidenceFilePath: result.filePath, evidenceFileName: result.fileName });
     } catch (err) {
-      setError("File upload failed.");
+      const msg = err.response?.data?.message || `Couldn't upload "${file.name}". Please try again.`;
+      setError(msg);
+      showToast(msg, "error");
     } finally {
       setUploading(false);
     }
@@ -272,6 +282,7 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const showToast = useToast();
+  const confirm = useConfirm();
 
   // Email, not display name -- names collide across employees, email doesn't.
   const submittedByName = AUTH_CONFIGURED
@@ -325,6 +336,17 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
 
   const items = submission.items;
   const locked = submission.status === "SUBMITTED" || !canEdit;
+
+  // A mistakenly-submitted pre-check can be withdrawn (un-submitted) by the person who
+  // submitted/started it or the project's Migration Manager -- but only while it's still SUBMITTED
+  // and editable by this role. The backend additionally refuses if an approver already approved.
+  const emailLc = currentUser?.email?.toLowerCase();
+  const isSubmitter = emailLc && submission.submittedBy?.toLowerCase() === emailLc;
+  const isOwner = emailLc && submission.startedByEmail?.toLowerCase() === emailLc;
+  const isProjectMM = emailLc && server.migrationManagerName?.toLowerCase() === emailLc;
+  const isAdmin = currentUser?.role === "ADMIN";
+  const canWithdraw =
+    submission.status === "SUBMITTED" && canEdit && (!AUTH_CONFIGURED || isSubmitter || isOwner || isProjectMM || isAdmin);
   const completedCount = items.filter(isItemComplete).length;
   const allCompleted = items.length > 0 && completedCount === items.length;
   const allHaveEvidence = items
@@ -344,25 +366,58 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
   };
 
   const handleSubmit = async () => {
-    if (!submittedByName) {
-      setError("Enter your name before submitting for Migration Manager review.");
+    // Perfect check: collect every blocking reason and surface them all at once, rather than one at
+    // a time, so the user knows exactly what's left before the form can be submitted.
+    const problems = [];
+    if (!submittedByName) problems.push("enter your name");
+    if (!hasMigrationManager) problems.push("assign a Migration Manager to this server");
+    if (!allCompleted) problems.push("select a status for every item");
+    if (!allHaveEvidence) problems.push("attach evidence for every item");
+    if (!allHaveNotes) problems.push("add a note for every item");
+    if (problems.length > 0) {
+      const msg = `Can't submit yet — ${problems.join(", ")}.`;
+      setError(msg);
+      showToast(msg, "error");
       return;
     }
-    if (!hasMigrationManager) {
-      setError("Assign a Migration Manager to this server before submitting for review.");
-      return;
-    }
-    if (!window.confirm("Submit for Migration Manager review? This will lock the form and no further edits will be possible.")) {
-      return;
-    }
+    const ok = await confirm({
+      title: "Submit for review?",
+      message: "This locks the form for Migration Manager review — no further edits until it's approved or withdrawn.",
+      confirmLabel: "Submit",
+    });
+    if (!ok) return;
     setBusy(true);
     setError(null);
     try {
       await submitPreCheckForReview(serverId, { submittedBy: submittedByName });
-      showToast("Submitted for Migration Manager review.");
+      showToast("Pre-check submitted for Migration Manager review.", "success");
       load();
     } catch (err) {
-      setError(err.response?.data?.message || "Failed to submit for Migration Manager review.");
+      const msg = err.response?.data?.message || "Something went wrong submitting for review. Please try again.";
+      setError(msg);
+      showToast(msg, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleWithdraw = async () => {
+    const ok = await confirm({
+      title: "Withdraw submission?",
+      message: "It returns to draft so you can fix it and resubmit. This only works while no approver has approved it yet.",
+      confirmLabel: "Withdraw",
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await withdrawPreCheck(serverId);
+      showToast("Submission withdrawn — you can edit and resubmit.", "success");
+      load();
+    } catch (err) {
+      const msg = err.response?.data?.message || "Couldn't withdraw the submission. Please try again.";
+      setError(msg);
+      showToast(msg, "error");
     } finally {
       setBusy(false);
     }
@@ -395,6 +450,27 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
             <span className="progress-label">
               Submitted by {submission.submittedBy} on {new Date(submission.submittedAt).toLocaleString()}
             </span>
+          )}
+          {canWithdraw && (
+            <button
+              className="btn secondary"
+              onClick={handleWithdraw}
+              disabled={busy}
+              style={{ padding: "4px 12px", fontSize: 12.5 }}
+              title="Un-submit so you can fix a mistake and resubmit (only works before any approval)."
+            >
+              {busy ? (
+                <>
+                  <span className="spinner" style={{ marginRight: 6 }} />
+                  Withdrawing…
+                </>
+              ) : (
+                <>
+                  <UndoIcon />
+                  Withdraw
+                </>
+              )}
+            </button>
           )}
           {!canEdit && submission.status !== "SUBMITTED" && (
             <span className="progress-label">You have view-only access to this pre-check.</span>
@@ -468,7 +544,17 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
                 onClick={handleSubmit}
                 disabled={busy || !allCompleted || !allHaveEvidence || !allHaveNotes || !hasMigrationManager || !submittedByName}
               >
-                Submit for Migration Manager Review
+                {busy ? (
+                  <>
+                    <span className="spinner" style={{ marginRight: 8 }} />
+                    Submitting…
+                  </>
+                ) : (
+                  <>
+                    <SendIcon />
+                    Submit for Migration Manager Review
+                  </>
+                )}
               </button>
             </div>
           </div>

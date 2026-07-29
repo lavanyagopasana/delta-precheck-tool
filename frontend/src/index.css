@@ -848,11 +848,105 @@ input[type="checkbox"]:disabled {
   font-weight: 500;
   box-shadow: var(--shadow-md);
   animation: toast-in 0.2s ease;
+  border-left: 4px solid transparent;
+  max-width: 380px;
 }
+
+/* Typed toasts -- success (green), error (red), info (neutral default). */
+.toast--success { border-left-color: var(--color-green); }
+.toast--error { border-left-color: var(--color-red); }
+.toast--info { border-left-color: var(--color-primary); }
 
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- Confirm dialog (custom window.confirm replacement) ---------- */
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 21, 34, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1100;
+  animation: confirm-fade 0.12s ease;
+}
+
+.confirm-card {
+  background: var(--color-surface, #fff);
+  border-radius: var(--radius-md, 12px);
+  box-shadow: 0 20px 50px rgba(17, 21, 34, 0.3);
+  width: 100%;
+  max-width: 440px;
+  padding: 24px 24px 18px;
+  animation: confirm-pop 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.confirm-body {
+  display: flex;
+  gap: 15px;
+  align-items: flex-start;
+}
+
+.confirm-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.confirm-title {
+  margin: 2px 0 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text, #111522);
+}
+
+.confirm-message {
+  margin: 8px 0 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--color-text-muted, #5b6478);
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+@keyframes confirm-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes confirm-pop {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Inline spinner -- used e.g. on the pre-check Submit button while a request is in flight. */
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spinner-rotate 0.6s linear infinite;
+  vertical-align: -2px;
+}
+
+@keyframes spinner-rotate {
+  to { transform: rotate(360deg); }
 }
 
 /* ---------- Modal ---------- */
