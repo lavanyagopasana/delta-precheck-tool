@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   getEscalations,
   createEscalation,
@@ -317,67 +318,71 @@ function TicketForm({ projects, servers, existingTicketNumbers, onCreated, exist
 }
 
 function ResolveControl({ escalation, onResolved }) {
-  const [resolving, setResolving] = useState(false);
+  const [open, setOpen] = useState(false);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const showToast = useToast();
 
   if (escalation.status !== "OPEN") return null;
 
-  if (!resolving) {
-    return (
-      <button
-        className="btn secondary"
-        style={{ padding: "6px 10px" }}
-        title="Mark resolved"
-        aria-label="Mark resolved"
-        onClick={(e) => {
-          e.stopPropagation();
-          setResolving(true);
-        }}
-      >
-        <CheckIcon size={18} style={{ marginRight: 0 }} />
-      </button>
-    );
-  }
-
   const handleConfirm = async () => {
     if (!notes.trim()) return;
     setSaving(true);
     try {
       await resolveEscalation(escalation.id, notes.trim());
-      showToast(`Ticket ${escalation.ticketNumber} resolved.`);
+      showToast(`Ticket ${escalation.ticketNumber} resolved.`, "success");
+      setOpen(false);
+      setNotes("");
       onResolved();
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to resolve ticket.", "error");
     } finally {
       setSaving(false);
-      setResolving(false);
     }
   };
 
   return (
-    <div
-      style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 220, margin: "0 auto" }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <label className="sr-only" htmlFor={`resolve-notes-${escalation.id}`}>Resolution notes</label>
-      <textarea
-        id={`resolve-notes-${escalation.id}`}
-        rows={2}
-        placeholder="What was done to resolve it?"
-        value={notes}
-        onChange={(e) => setNotes(e.target.value)}
-        style={{ resize: "vertical" }}
-        autoFocus
-      />
-      <div style={{ display: "flex", gap: 6 }}>
-        <button className="btn" style={{ padding: "4px 10px", fontSize: 12 }} onClick={handleConfirm} disabled={!notes.trim() || saving}>
-          Confirm
-        </button>
-        <button className="btn secondary" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setResolving(false)} disabled={saving}>
-          Cancel
-        </button>
-      </div>
-    </div>
+    <>
+      <button
+        className="btn success"
+        style={{ padding: "6px 10px" }}
+        title="Mark resolved"
+        aria-label="Mark resolved"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        <CheckIcon size={18} style={{ marginRight: 0 }} />
+      </button>
+
+      {open && (
+        <Modal title={`Resolve ticket ${escalation.ticketNumber}`} onClose={() => setOpen(false)} width={460} closeIcon>
+          <div onClick={(e) => e.stopPropagation()}>
+            <label htmlFor={`resolve-notes-${escalation.id}`} style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+              Resolution reason <span style={{ color: "var(--color-red)" }}>*</span>
+            </label>
+            <textarea
+              id={`resolve-notes-${escalation.id}`}
+              rows={3}
+              placeholder="What was done to resolve it?"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              style={{ width: "100%", resize: "vertical" }}
+              autoFocus
+            />
+            <div className="form-actions" style={{ justifyContent: "flex-end", gap: 8 }}>
+              <button type="button" className="btn secondary" onClick={() => setOpen(false)} disabled={saving}>
+                Cancel
+              </button>
+              <button type="button" className="btn success" onClick={handleConfirm} disabled={!notes.trim() || saving}>
+                {saving ? "Resolving..." : "Resolve"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
   );
 }
 
@@ -386,7 +391,11 @@ export default function EscalationsPage() {
   const [servers, setServers] = useState([]);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("ALL");
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const projectParam = searchParams.get("project");
+  const statusParam = searchParams.get("status");
+  const [filter, setFilter] = useState(statusParam === "OPEN" || statusParam === "RESOLVED" ? statusParam : "ALL");
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const showToast = useToast();
@@ -424,10 +433,33 @@ export default function EscalationsPage() {
 
   if (loading) return <p>Loading tickets...</p>;
 
-  const filtered = escalations.filter((e) => filter === "ALL" || e.status === filter);
+  // When arriving from a project (Dashboard "tickets" badge), scope to that project's servers.
+  const projectServerIds = projectParam
+    ? new Set(servers.filter((s) => String(s.projectId) === String(projectParam)).map((s) => s.serverId))
+    : null;
+  const projectName = projectParam
+    ? projects.find((p) => String(p.id) === String(projectParam))?.name
+    : null;
+  const filtered = escalations.filter(
+    (e) =>
+      (filter === "ALL" || e.status === filter) &&
+      (!projectServerIds || projectServerIds.has(e.serverId))
+  );
 
   return (
     <div>
+      {projectParam && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <span className="badge gray">Project: {projectName || projectParam}</span>
+          <button
+            className="btn secondary"
+            style={{ padding: "4px 10px", fontSize: 12 }}
+            onClick={() => navigate("/escalations")}
+          >
+            Show all tickets
+          </button>
+        </div>
+      )}
       <DataTable
         title="Jira Tickets Tracking"
         rows={filtered}

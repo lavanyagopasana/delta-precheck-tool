@@ -25,6 +25,10 @@ export const getServerReadiness = (serverId) =>
   client.get(`/servers/${serverId}/readiness`).then((r) => r.data);
 export const assignServerProject = (serverId, projectId) =>
   client.post(`/servers/${serverId}/project`, { projectId }).then((r) => r.data);
+export const startDelta = (serverId) =>
+  client.post(`/servers/${serverId}/delta/start`).then((r) => r.data);
+export const finishDelta = (serverId) =>
+  client.post(`/servers/${serverId}/delta/finish`).then((r) => r.data);
 
 export const getProjects = () => client.get("/projects").then((r) => r.data);
 export const getProjectDetail = (id) => client.get(`/projects/${id}`).then((r) => r.data);

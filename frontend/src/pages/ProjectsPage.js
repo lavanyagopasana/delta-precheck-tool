@@ -37,38 +37,23 @@ export default function ProjectsPage() {
   // (engineers, admins) need to pick one from the roster.
   const creatorIsManager = AUTH_CONFIGURED && currentUser?.role === "MIGRATION_MANAGER";
 
-  // Mirrors ProjectService.canDelete so the button only shows when the backend would allow it:
-  // admin, the managing Migration Manager, or the creator while nothing has been APPROVED yet (a
-  // just-submitted project is still deletable by its creator -- only an actual approval locks it).
-  // The server re-checks and also blocks Delta-initiated projects.
+  // Mirrors ProjectService.canDelete: admins can always delete. Everyone else (creator / managing
+  // Migration Manager) can delete ONLY an empty project -- no servers imported yet (serverCount 0).
+  // Once a CSV is uploaded, deletion is admin-only.
   const canDeleteProject = (p) => {
     if (!AUTH_CONFIGURED) return true;
     const email = currentUser?.email?.toLowerCase();
     const role = currentUser?.role;
     if (!email || !role) return false;
     if (role === "ADMIN") return true;
-    if (role === "MIGRATION_MANAGER" && p.migrationManagerName?.toLowerCase() === email) return true;
-    const approvalStarted = p.migrationManagerApprovalsDone > 0 || p.devApprovalsDone > 0;
-    if (p.createdBy?.toLowerCase() === email && !approvalStarted) return true;
-    return false;
+    if (p.serverCount > 0) return false;
+    if (p.createdBy?.toLowerCase() === email) return true;
+    return role === "MIGRATION_MANAGER" && p.migrationManagerName?.toLowerCase() === email;
   };
 
-  // Mirrors ProjectService.canEditDetails: admin, the current MM, the creator, or an assigned
-  // engineer can edit the project's details (name / product type / Migration Manager).
-  const canEditProject = (p) => {
-    if (!AUTH_CONFIGURED) return true;
-    const email = currentUser?.email?.toLowerCase();
-    const role = currentUser?.role;
-    if (!email || !role) return false;
-    if (role === "ADMIN") return true;
-    if (role === "MIGRATION_MANAGER") return p.migrationManagerName?.toLowerCase() === email;
-    if (role === "MIGRATION_ENGINEER")
-      return (
-        p.createdBy?.toLowerCase() === email ||
-        (p.engineerEmails || []).some((x) => x?.toLowerCase() === email)
-      );
-    return false;
-  };
+  // Editing follows the exact same rule as deleting (see canDeleteProject): admins always;
+  // otherwise only an empty project by its creator or Migration Manager.
+  const canEditProject = canDeleteProject;
 
   const [editing, setEditing] = useState(null);
   const [editName, setEditName] = useState("");
@@ -109,7 +94,7 @@ export default function ProjectsPage() {
   const handleDelete = async (p) => {
     const ok = await confirm({
       title: `Delete project "${p.name}"?`,
-      message: `This permanently removes its ${p.serverCount} server(s) and all their pre-checks, sign-offs, workspace pairs, and escalations. This cannot be undone.`,
+      message: `This permanently removes its ${p.serverCount} server(s) and all their pre-checks, sign-offs, migration pairs, and tickets. This cannot be undone.`,
       confirmLabel: "Delete Project",
       danger: true,
     });

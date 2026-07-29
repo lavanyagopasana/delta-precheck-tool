@@ -37,7 +37,7 @@ export default function WorkspacePairsPanel({
 
   useEffect(load, [serverId]);
 
-  if (loading) return <p>Loading workspace pairs...</p>;
+  if (loading) return <p>Loading migration pairs...</p>;
 
   return (
     <div>
@@ -63,7 +63,7 @@ export default function WorkspacePairsPanel({
 
       {showCsvImport && canImport && (
         <CsvImportPanel
-          title="Import workspace pairs from CSV"
+          title="Import migration pairs from CSV"
           columns={SAMPLE_CSV_COLUMNS}
           sampleRow={SAMPLE_ROW}
           onUpload={(file) => importWorkspacePairsCsv(serverId, file)}
@@ -73,11 +73,11 @@ export default function WorkspacePairsPanel({
 
       <div style={{ marginTop: 24 }}>
         <DataTable
-          title="Workspace Pairs"
+          title="Migration Pairs"
           rows={data.pairs}
           rowKey={(p) => p.id}
-          searchPlaceholder="Filter workspace pairs..."
-          emptyMessage={canImport ? "No workspace pairs yet. Import a CSV above." : "No workspace pairs yet."}
+          searchPlaceholder="Filter migration pairs..."
+          emptyMessage={canImport ? "No migration pairs yet. Import a CSV above." : "No migration pairs yet."}
           columns={[
             { key: "sourceEmail", label: "Source Email" },
             { key: "sourcePath", label: "Source Path", render: (p) => p.sourcePath || "-" },

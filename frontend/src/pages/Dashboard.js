@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getDashboardSummary, getProjects } from "../api/client";
+import DashboardCharts from "../components/DashboardCharts";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -40,6 +41,8 @@ export default function Dashboard() {
   const totalServers = projects.reduce((sum, p) => sum + (p.serverCount || 0), 0);
   const readyServers = projects.reduce((sum, p) => sum + (p.readyServerCount || 0), 0);
   const openEscalations = projects.reduce((sum, p) => sum + (p.openEscalationCount || 0), 0);
+  // A project is ready to decommission once every one of its servers has finished its Delta.
+  const decommissionReady = projects.filter((p) => p.decommissionReady).length;
 
   // Anything with an open ticket or an approval sitting in someone's queue -- the two things
   // that actually need a human to act, as opposed to routine in-progress work.
@@ -61,8 +64,8 @@ export default function Dashboard() {
         A quick look at migration progress across every project.
       </p>
 
-      <div className="card-row">
-        <div className="stat-card" style={{ cursor: "pointer" }} onClick={() => navigate("/projects")}>
+      <div className="card-row card-row--nowrap">
+        <div className="stat-card">
           <div className="value">{projects.length}</div>
           <div className="label">Projects</div>
         </div>
@@ -74,17 +77,23 @@ export default function Dashboard() {
           <div className="value" style={{ color: "var(--color-green)" }}>{readyServers}</div>
           <div className="label">Delta Ready</div>
         </div>
-        <div className="stat-card" style={{ cursor: "pointer" }} onClick={() => navigate("/approvals")}>
+        <div className="stat-card">
           <div className="value" style={{ color: summary.totalApprovalRequests > 0 ? "var(--color-yellow)" : undefined }}>
             {summary.totalApprovalRequests}
           </div>
           <div className="label">Pending Approvals</div>
         </div>
-        <div className="stat-card" style={{ cursor: "pointer" }} onClick={() => navigate("/escalations")}>
+        <div className="stat-card">
           <div className="value" style={{ color: openEscalations > 0 ? "var(--color-red)" : "var(--color-green)" }}>
             {openEscalations}
           </div>
-          <div className="label">Open Escalations</div>
+          <div className="label">Open Tickets</div>
+        </div>
+        <div className="stat-card">
+          <div className="value" style={{ color: decommissionReady > 0 ? "var(--color-green)" : undefined }}>
+            {decommissionReady}
+          </div>
+          <div className="label">Ready To Decommission</div>
         </div>
       </div>
 
@@ -105,14 +114,30 @@ export default function Dashboard() {
                 <span style={{ fontWeight: 600, fontSize: 13.5 }}>{p.name}</span>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                   {p.openEscalationCount > 0 && (
-                    <span className="badge red">
-                      {p.openEscalationCount} escalation{p.openEscalationCount === 1 ? "" : "s"}
-                    </span>
+                    <button
+                      type="button"
+                      className="badge red attention-action"
+                      title="View this project's open tickets"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/escalations?project=${p.id}&status=OPEN`);
+                      }}
+                    >
+                      {p.openEscalationCount} ticket{p.openEscalationCount === 1 ? "" : "s"}
+                    </button>
                   )}
                   {p.pendingApprovals > 0 && (
-                    <span className="badge yellow">
+                    <button
+                      type="button"
+                      className="badge yellow attention-action"
+                      title="View this project's pending approvals"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/approvals?project=${p.id}&status=PENDING`);
+                      }}
+                    >
                       {p.pendingApprovals} pending approval{p.pendingApprovals === 1 ? "" : "s"}
-                    </span>
+                    </button>
                   )}
                 </div>
               </div>
@@ -120,6 +145,8 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      <DashboardCharts projects={projects} />
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { getSignOffApprovals, approveSignOff, declineSignOff } from "../api/client";
 import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
@@ -193,9 +193,14 @@ function ActionsCell({ approval, onActed }) {
 
 export default function ApprovalsPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const projectParam = searchParams.get("project");
+  const statusParam = searchParams.get("status");
   const [approvals, setApprovals] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("ALL");
+  const [filter, setFilter] = useState(
+    ["PENDING", "APPROVED", "DECLINED"].includes(statusParam) ? statusParam : "ALL"
+  );
   const [preCheckFor, setPreCheckFor] = useState(null);
 
   const load = () => {
@@ -215,10 +220,29 @@ export default function ApprovalsPage() {
     bySever.get(a.serverId).push(a);
   });
   const rows = Array.from(bySever.values()).map(primaryRowFor);
-  const filtered = rows.filter((a) => filter === "ALL" || a.status === filter);
+  const projectName = projectParam
+    ? rows.find((a) => String(a.projectId) === String(projectParam))?.projectName
+    : null;
+  const filtered = rows.filter(
+    (a) =>
+      (filter === "ALL" || a.status === filter) &&
+      (!projectParam || String(a.projectId) === String(projectParam))
+  );
 
   return (
     <div>
+      {projectParam && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <span className="badge gray">Project: {projectName || projectParam}</span>
+          <button
+            className="btn secondary"
+            style={{ padding: "4px 10px", fontSize: 12 }}
+            onClick={() => navigate("/approvals")}
+          >
+            Show all approvals
+          </button>
+        </div>
+      )}
       <DataTable
         title="Approvals"
         rows={filtered}

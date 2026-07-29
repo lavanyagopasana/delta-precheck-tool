@@ -29,4 +29,7 @@ public class ProjectSummaryDto {
     private LocalDateTime lastPreCheckSubmittedAt;
     private String createdBy;
     private LocalDateTime createdAt;
+    // True when the project has servers and every one of them has its Delta finished -- the whole
+    // project's migration is done, so it's ready to be decommissioned.
+    private boolean decommissionReady;
 }

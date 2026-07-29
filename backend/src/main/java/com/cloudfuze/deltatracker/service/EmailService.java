@@ -75,15 +75,14 @@ public class EmailService {
     public void notifyMigrationManagerPreCheckSubmitted(String projectName, String serverName, int workspacePairCount,
                                                          String submittedBy, String chainStatus, String managerEmail) {
         String subject = "Pre-check submitted: " + serverName + " (" + projectName + ")";
-        List<String[]> fields = fieldRows(projectName, serverName, workspacePairCount, submittedBy, chainStatus);
+        List<String[]> fields = fieldRows(projectName, serverName, workspacePairCount, submittedBy);
 
         String html = renderEmail("Pre-Check Submitted", "AWAITING REVIEW", false,
                 "A pre-check has been submitted and is awaiting your review.", fields, "Review", approvalsUrl());
         String text = "Hi,\n\n"
                 + "A pre-check has been submitted and is awaiting your review.\n\n"
                 + fieldsBlock(projectName, serverName, workspacePairCount, submittedBy)
-                + "Approval chain: " + chainStatus + "\n\n"
-                + "Review: " + approvalsUrl();
+                + "\nReview: " + approvalsUrl();
 
         send(new String[] { managerEmail }, subject, html, text);
     }
@@ -96,15 +95,14 @@ public class EmailService {
             return;
         }
         String subject = "Approval required (" + roleLabel + "): " + serverName + " (" + projectName + ")";
-        List<String[]> fields = fieldRows(projectName, serverName, workspacePairCount, submittedBy, chainStatus);
+        List<String[]> fields = fieldRows(projectName, serverName, workspacePairCount, submittedBy);
 
         String html = renderEmail("Approval Required -- " + roleLabel, "AWAITING " + roleLabel.toUpperCase(), false,
                 roleLabel + " approval is needed for this server.", fields, "Review", approvalsUrl());
         String text = "Hi,\n\n"
                 + roleLabel + " approval is needed for this server.\n\n"
                 + fieldsBlock(projectName, serverName, workspacePairCount, submittedBy)
-                + "Approval chain: " + chainStatus + "\n\n"
-                + "Review: " + approvalsUrl();
+                + "\nReview: " + approvalsUrl();
 
         send(recipientEmails.toArray(new String[0]), subject, html, text);
     }
@@ -113,27 +111,25 @@ public class EmailService {
                                                   String preCheckSubmittedBy, String approvalChainSummary,
                                                   String managerEmail) {
         String subject = "Delta Ready: " + serverName + " (" + projectName + ")";
-        List<String[]> fields = fieldRows(projectName, serverName, workspacePairCount, preCheckSubmittedBy, approvalChainSummary);
+        List<String[]> fields = fieldRows(projectName, serverName, workspacePairCount, preCheckSubmittedBy);
 
         String html = renderEmail("Delta Ready", "DELTA READY", true,
                 "All required approvals are complete for server \"" + serverName + "\" -- it's cleared for Delta migration.",
                 fields, "Open Approvals", approvalsUrl());
         String text = "Hi,\n\n"
                 + "All required approvals are complete for server \"" + serverName + "\" -- it's cleared for Delta migration.\n\n"
-                + fieldsBlock(projectName, serverName, workspacePairCount, preCheckSubmittedBy)
-                + "Approval chain: " + approvalChainSummary;
+                + fieldsBlock(projectName, serverName, workspacePairCount, preCheckSubmittedBy).stripTrailing();
 
         send(new String[] { managerEmail }, subject, html, text);
     }
 
     private List<String[]> fieldRows(String projectName, String serverName, int workspacePairCount,
-                                      String submittedBy, String chainStatus) {
+                                      String submittedBy) {
         List<String[]> fields = new ArrayList<>();
         fields.add(new String[] { "Project", projectName });
         fields.add(new String[] { "Server", serverName });
         fields.add(new String[] { "Workspace pairs", String.valueOf(workspacePairCount) });
         fields.add(new String[] { "Pre-check submitted by", orDash(submittedBy) });
-        fields.add(new String[] { "Approval chain", chainStatus });
         return fields;
     }
 

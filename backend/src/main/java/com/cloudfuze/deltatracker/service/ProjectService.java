@@ -173,15 +173,17 @@ public class ProjectService {
         return buildSummary(saved, serverRepository.findAll());
     }
 
-    // Edit a project's details (name, product type, Migration Manager). Allowed for admins, the
-    // project's current Migration Manager, its creator, or an assigned engineer -- so a wrong
-    // Migration Manager can be fixed. Changing the Migration Manager re-points any still-pending
-    // MM sign-off rows to the new person; it's blocked once the (old) MM has already approved a
-    // server, since that would invalidate a real approval (withdraw/roll it back first).
+    // Edit a project's details (name, product type, Migration Manager). Same permission as delete:
+    // admins always; otherwise only an empty project (no servers imported yet) by its creator or
+    // Migration Manager. Changing the Migration Manager rolls any in-progress chain back to the
+    // manager step (only reachable for admins, since non-admins can only edit an empty project).
     public ProjectSummaryDto updateDetails(Long id, ProjectUpdateRequest request,
                                            String callerEmail, AppUserRole callerRole) {
         Project project = findOrThrow(id);
-        if (!canEditDetails(project, callerEmail, callerRole)) {
+        List<Server> servers = serverRepository.findAll().stream()
+                .filter(s -> s.getProject() != null && s.getProject().getId().equals(id))
+                .toList();
+        if (!canDelete(project, servers, callerEmail, callerRole)) {
             throw new ApiException(HttpStatus.FORBIDDEN, "You don't have permission to edit this project.");
         }
 
@@ -200,9 +202,6 @@ public class ProjectService {
                 ? project.getMigrationManagerName() != null
                 : !newManager.equalsIgnoreCase(project.getMigrationManagerName());
         if (mmChanged) {
-            List<Server> servers = serverRepository.findAll().stream()
-                    .filter(s -> s.getProject() != null && s.getProject().getId().equals(id))
-                    .toList();
             for (Server server : servers) {
                 List<SignOff> chain = signOffRepository.findByServerId(server.getId());
                 if (chain.isEmpty()) {
@@ -244,33 +243,12 @@ public class ProjectService {
         return buildSummary(saved, serverRepository.findAll());
     }
 
-    private boolean canEditDetails(Project project, String callerEmail, AppUserRole callerRole) {
-        if (callerEmail == null) {
-            return true; // auth not configured
-        }
-        if (callerRole == null) {
-            return false;
-        }
-        if (callerRole == AppUserRole.ADMIN) {
-            return true;
-        }
-        if (callerRole == AppUserRole.MIGRATION_MANAGER) {
-            return callerEmail.equalsIgnoreCase(project.getMigrationManagerName());
-        }
-        if (callerRole == AppUserRole.MIGRATION_ENGINEER) {
-            return callerEmail.equalsIgnoreCase(project.getCreatedBy())
-                    || project.getEngineerEmails().stream().anyMatch(callerEmail::equalsIgnoreCase);
-        }
-        return false;
-    }
-
     // Deleting a project cascades to everything hanging off its servers (pre-check items + their
     // evidence files, the submission, the sign-off chain, escalations, and workspace pairs). Two
     // guards apply:
-    //   1. Authorization (canDelete): admin, the managing Migration Manager, or the creator -- but
-    //      the creator loses the right once an approver has actually approved a server (not merely on
-    //      submit), so an engineer can still undo a just-submitted project yet can't wipe one once
-    //      other roles' approvals are riding on it.
+    //   1. Authorization (canDelete): admins can always delete. Everyone else (the creator or the
+    //      managing Migration Manager) can delete ONLY while the project is empty -- no servers
+    //      imported yet (created by mistake). Once a CSV is uploaded, deletion is admin-only.
     //   2. Audit protection: a project with a Delta-initiated server is a completed migration record
     //      and is never deletable -- not even by an admin (delete it in the DB if truly necessary).
     public void delete(Long id, String callerEmail, AppUserRole callerRole) {
@@ -316,30 +294,22 @@ public class ProjectService {
         if (callerRole == null) {
             return false;
         }
+        // Admins can always delete.
         if (callerRole == AppUserRole.ADMIN) {
             return true;
         }
-        if (callerRole == AppUserRole.MIGRATION_MANAGER
-                && callerEmail.equalsIgnoreCase(project.getMigrationManagerName())) {
-            return true;
+        // Non-admins can delete ONLY a project that has had no action taken yet -- i.e. no servers
+        // imported (a project created by mistake). The moment a CSV is uploaded (servers exist),
+        // deletion becomes admin-only. For that empty case, the project's creator or its Migration
+        // Manager may remove it.
+        if (!servers.isEmpty()) {
+            return false;
         }
         if (callerEmail.equalsIgnoreCase(project.getCreatedBy())) {
-            // The creator (typically an engineer) can still delete their own project even after a
-            // pre-check is submitted -- right up until an approver actually approves. Once any
-            // sign-off is approved/skipped (or Delta initiated), deleting would erase someone else's
-            // approval, so the right is withdrawn and only the managing MM / admin can delete.
-            boolean anyApprovalStarted = servers.stream().anyMatch(this::approvalHasStarted);
-            return !anyApprovalStarted;
-        }
-        return false;
-    }
-
-    private boolean approvalHasStarted(Server server) {
-        if (server.getDeltaInitiatedAt() != null) {
             return true;
         }
-        return signOffRepository.findByServerId(server.getId()).stream()
-                .anyMatch(so -> so.getStatus() == SignOffStatus.APPROVED || so.getStatus() == SignOffStatus.SKIPPED);
+        return callerRole == AppUserRole.MIGRATION_MANAGER
+                && callerEmail.equalsIgnoreCase(project.getMigrationManagerName());
     }
 
     private Project findOrThrow(Long id) {
@@ -477,6 +447,9 @@ public class ProjectService {
         dto.setLastPreCheckSubmittedAt(lastPreCheckSubmittedAt);
         dto.setCreatedBy(project.getCreatedBy());
         dto.setCreatedAt(project.getCreatedAt());
+        // Ready to decommission once the project has servers and every one of them has Delta finished.
+        dto.setDecommissionReady(!servers.isEmpty()
+                && servers.stream().allMatch(s -> s.getDeltaFinishedAt() != null));
         return dto;
     }
 }

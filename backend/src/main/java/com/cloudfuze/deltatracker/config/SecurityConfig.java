@@ -130,6 +130,9 @@ public class SecurityConfig {
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER, AppUserRole.DEV_LEAD, AppUserRole.QA_LEAD))
                         .requestMatchers(HttpMethod.POST, "/api/pairs/import", "/api/servers/*/pairs/import").access(roleRequired(
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER, AppUserRole.MIGRATION_MANAGER))
+                        // Post-Delta lifecycle (Start / Finish the migration) -- engineer-driven, admins too.
+                        .requestMatchers(HttpMethod.POST, "/api/servers/*/delta/**").access(roleRequired(
+                                AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER))
                         // Deleting a project is gated here to the roles that could ever be allowed; the
                         // per-project ownership check (creator / managing MM / admin) and the
                         // Delta-initiated audit guard are enforced in ProjectService.delete.

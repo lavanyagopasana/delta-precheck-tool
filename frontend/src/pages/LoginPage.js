@@ -52,7 +52,7 @@ const STEPS = [
   {
     icon: <ChecklistIcon />,
     title: "Submit the pre-check",
-    detail: "Complete the checklist with evidence for every workspace pair on the server.",
+    detail: "Complete the checklist with evidence for every migration pair on the server.",
   },
   {
     icon: <ApprovalChainIcon />,

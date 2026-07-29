@@ -52,10 +52,49 @@ const BASE_LINKS = [
 
 const ADMIN_LINK = { to: "/admin", icon: "admin", label: "Admin" };
 
+const ROLE_LETTER = {
+  ADMIN: "A",
+  MIGRATION_MANAGER: "M",
+  MIGRATION_ENGINEER: "E",
+  QA_LEAD: "Q",
+  DEV_LEAD: "D",
+};
+const ROLE_LABEL = {
+  ADMIN: "Admin",
+  MIGRATION_MANAGER: "Migration Manager",
+  MIGRATION_ENGINEER: "Migration Engineer",
+  QA_LEAD: "QA Lead",
+  DEV_LEAD: "Dev Lead",
+};
+
+const SignOutIcon = () => (
+  <svg
+    width="15"
+    height="15"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    style={{ marginRight: 8, verticalAlign: "-2px" }}
+  >
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+    <polyline points="16 17 21 12 16 7" />
+    <line x1="21" y1="12" x2="9" y2="12" />
+  </svg>
+);
+
 function AccountInfo() {
   const { accounts } = useMsal();
+  const currentUser = useCurrentUser();
   const account = accounts[0];
   if (!account) return null;
+
+  const role = currentUser?.role;
+  const roleLetter = ROLE_LETTER[role] || (role ? role.charAt(0).toUpperCase() : "?");
+  const roleLabel = ROLE_LABEL[role] || role || "No role";
 
   // MSAL's logoutRedirect() either shows Microsoft's hosted "pick an account" page (when multiple
   // accounts share this browser's AAD session) or crashes entirely if given an onRedirectNavigate
@@ -76,15 +115,39 @@ function AccountInfo() {
         borderTop: "1px solid rgba(255, 255, 255, 0.08)",
       }}
     >
-      <div style={{ fontSize: 12.5, color: "#fff", fontWeight: 600, marginBottom: 2 }}>{account.name}</div>
-      <div style={{ fontSize: 11.5, color: "rgba(255, 255, 255, 0.68)", marginBottom: 10, wordBreak: "break-all" }}>
-        {account.username}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <span
+          title={roleLabel}
+          aria-label={roleLabel}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 34,
+            height: 34,
+            borderRadius: "50%",
+            flexShrink: 0,
+            background: "rgba(255, 255, 255, 0.16)",
+            color: "#fff",
+            fontWeight: 700,
+            fontSize: 14,
+          }}
+        >
+          {roleLetter}
+        </span>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 12.5, color: "#fff", fontWeight: 600 }}>{account.name}</div>
+          <div style={{ fontSize: 11.5, color: "rgba(255, 255, 255, 0.68)", wordBreak: "break-all" }}>
+            {account.username}
+          </div>
+        </div>
       </div>
       <button
         className="btn secondary"
         style={{ width: "100%", justifyContent: "center" }}
         onClick={handleSignOut}
       >
+        <SignOutIcon />
         Sign out
       </button>
     </div>
