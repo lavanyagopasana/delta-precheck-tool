@@ -20,6 +20,7 @@ import com.cloudfuze.deltatracker.repository.ServerRepository;
 import com.cloudfuze.deltatracker.repository.WorkspacePairRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -47,19 +48,22 @@ public class ServerService {
     private final PreCheckSubmissionRepository preCheckSubmissionRepository;
     private final TicketService ticketService;
     private final ProjectRepository projectRepository;
+    private final EmailService emailService;
 
     public ServerService(ServerRepository serverRepository,
                           WorkspacePairRepository workspacePairRepository,
                           PreCheckItemRepository preCheckItemRepository,
                           PreCheckSubmissionRepository preCheckSubmissionRepository,
                           TicketService ticketService,
-                          ProjectRepository projectRepository) {
+                          ProjectRepository projectRepository,
+                          EmailService emailService) {
         this.serverRepository = serverRepository;
         this.workspacePairRepository = workspacePairRepository;
         this.preCheckItemRepository = preCheckItemRepository;
         this.preCheckSubmissionRepository = preCheckSubmissionRepository;
         this.ticketService = ticketService;
         this.projectRepository = projectRepository;
+        this.emailService = emailService;
     }
 
     public Server findOrThrow(Long id) {
@@ -138,7 +142,9 @@ public class ServerService {
         }
         server.setDeltaStartedAt(LocalDateTime.now());
         server.setDeltaStartedBy(actorEmail);
-        return buildReadiness(serverRepository.save(server), true);
+        Server saved = serverRepository.save(server);
+        notifyManager(saved, true);
+        return buildReadiness(saved, true);
     }
 
     public ServerReadinessDto finishDelta(Long serverId, String actorEmail) {
@@ -151,7 +157,27 @@ public class ServerService {
         }
         server.setDeltaFinishedAt(LocalDateTime.now());
         server.setDeltaFinishedBy(actorEmail);
-        return buildReadiness(serverRepository.save(server), true);
+        Server saved = serverRepository.save(server);
+        notifyManager(saved, false);
+        return buildReadiness(saved, true);
+    }
+
+    // Notifies the project's Migration Manager that the engineer has started (started=true) or
+    // finished (started=false) the Delta migration for this server. No-op if the server has no
+    // project or no Migration Manager assigned.
+    private void notifyManager(Server server, boolean started) {
+        Project project = server.getProject();
+        if (project == null || !StringUtils.hasText(project.getMigrationManagerName())) {
+            return;
+        }
+        int pairCount = (int) workspacePairRepository.countByServerId(server.getId());
+        if (started) {
+            emailService.notifyMigrationManagerDeltaStarted(project.getName(), server.getName(), pairCount,
+                    server.getDeltaStartedBy(), server.getDeltaStartedAt(), project.getMigrationManagerName());
+        } else {
+            emailService.notifyMigrationManagerDeltaFinished(project.getName(), server.getName(), pairCount,
+                    server.getDeltaFinishedBy(), server.getDeltaFinishedAt(), project.getMigrationManagerName());
+        }
     }
 
     private ServerReadinessDto buildReadiness(Server server, boolean includePairs) {

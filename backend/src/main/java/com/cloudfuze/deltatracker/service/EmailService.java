@@ -84,10 +84,11 @@ public class EmailService {
         String subject = "Pre-check submitted: " + serverName + " (" + projectName + ")";
         List<String[]> fields = fieldRows(projectName, serverName, workspacePairCount, submittedBy);
 
-        String html = renderEmail("Pre-Check Submitted", "AWAITING REVIEW", false,
-                "A pre-check has been submitted and is awaiting your review.", fields, "Review", approvalsUrl());
+        String lede = "The pre-check for this server has been submitted and is awaiting your review and approval.";
+        String html = renderEmail("Pre-Check Submitted", "AWAITING YOUR APPROVAL", false,
+                lede, fields, "Review", approvalsUrl());
         String text = "Hi,\n\n"
-                + "A pre-check has been submitted and is awaiting your review.\n\n"
+                + lede + "\n\n"
                 + fieldsBlock(projectName, serverName, workspacePairCount, submittedBy)
                 + "\nReview: " + approvalsUrl();
 
@@ -102,13 +103,17 @@ public class EmailService {
                     roleLabel, serverName, roleLabel);
             return;
         }
-        String subject = "Approval required (" + roleLabel + "): " + serverName + " (" + projectName + ")";
+        // Recipient is the person whose turn it is to approve, so the email deliberately does NOT name
+        // their role ("Dev Lead", "QA Lead", ...) -- it just asks for their review/approval. roleLabel
+        // is retained only for the server-side log line above.
+        String subject = "Approval required: " + serverName + " (" + projectName + ")";
         List<String[]> fields = fieldRows(projectName, serverName, workspacePairCount, submittedBy);
 
-        String html = renderEmail("Approval Required -- " + roleLabel, "AWAITING " + roleLabel.toUpperCase(), false,
-                roleLabel + " approval is needed for this server.", fields, "Review", approvalsUrl());
+        String lede = "This server's pre-check is awaiting your review and approval.";
+        String html = renderEmail("Approval Required", "AWAITING YOUR APPROVAL", false,
+                lede, fields, "Review", approvalsUrl());
         String text = "Hi,\n\n"
-                + roleLabel + " approval is needed for this server.\n\n"
+                + lede + "\n\n"
                 + fieldsBlock(projectName, serverName, workspacePairCount, submittedBy)
                 + "\nReview: " + approvalsUrl();
 
@@ -121,12 +126,68 @@ public class EmailService {
         String subject = "Delta Ready: " + serverName + " (" + projectName + ")";
         List<String[]> fields = fieldRows(projectName, serverName, workspacePairCount, preCheckSubmittedBy);
 
+        String lede = "All required approvals have been granted for this server \u2014 it is now cleared for Delta migration.";
         String html = renderEmail("Delta Ready", "DELTA READY", true,
-                "All required approvals are complete for server \"" + serverName + "\" -- it's cleared for Delta migration.",
-                fields, "Open Approvals", approvalsUrl());
+                lede, fields, "Open Approvals", approvalsUrl());
         String text = "Hi,\n\n"
-                + "All required approvals are complete for server \"" + serverName + "\" -- it's cleared for Delta migration.\n\n"
+                + lede + "\n\n"
                 + fieldsBlock(projectName, serverName, workspacePairCount, preCheckSubmittedBy).stripTrailing();
+
+        send(new String[] { managerEmail }, subject, html, text);
+    }
+
+    // Sent to the Migration Manager when a Migration Engineer clicks Start on a Delta-Ready server --
+    // i.e. the Delta migration is now underway. Recipient is the manager, so no role is named.
+    @Async(AsyncConfig.EMAIL_EXECUTOR)
+    public void notifyMigrationManagerDeltaStarted(String projectName, String serverName, int workspacePairCount,
+                                                   String startedBy, LocalDateTime startedAt, String managerEmail) {
+        String subject = "Delta Initiated: " + serverName + " (" + projectName + ")";
+        List<String[]> fields = new ArrayList<>();
+        fields.add(new String[] { "Project", projectName });
+        fields.add(new String[] { "Server", serverName });
+        fields.add(new String[] { "Workspace pairs", String.valueOf(workspacePairCount) });
+        fields.add(new String[] { "Initiated by", orDash(startedBy) });
+        fields.add(new String[] { "Initiated at", startedAt.format(DATE_FORMATTER) });
+
+        String lede = "The Delta migration for this server has been initiated and is now in progress.";
+        String html = renderEmail("Delta Migration Initiated", "IN PROGRESS", false,
+                lede, fields, "Open Dashboard", frontendUrl);
+        String text = "Hi,\n\n"
+                + lede + "\n\n"
+                + "Project: " + projectName + "\n"
+                + "Server: " + serverName + "\n"
+                + "Workspace pairs: " + workspacePairCount + "\n"
+                + "Initiated by: " + orDash(startedBy) + "\n"
+                + "Initiated at: " + startedAt.format(DATE_FORMATTER) + "\n\n"
+                + "Open dashboard: " + frontendUrl;
+
+        send(new String[] { managerEmail }, subject, html, text);
+    }
+
+    // Sent to the Migration Manager when a Migration Engineer clicks Finish -- the Delta migration for
+    // the server is complete. Recipient is the manager, so no role is named.
+    @Async(AsyncConfig.EMAIL_EXECUTOR)
+    public void notifyMigrationManagerDeltaFinished(String projectName, String serverName, int workspacePairCount,
+                                                    String finishedBy, LocalDateTime finishedAt, String managerEmail) {
+        String subject = "Delta Finished: " + serverName + " (" + projectName + ")";
+        List<String[]> fields = new ArrayList<>();
+        fields.add(new String[] { "Project", projectName });
+        fields.add(new String[] { "Server", serverName });
+        fields.add(new String[] { "Workspace pairs", String.valueOf(workspacePairCount) });
+        fields.add(new String[] { "Completed by", orDash(finishedBy) });
+        fields.add(new String[] { "Completed at", finishedAt.format(DATE_FORMATTER) });
+
+        String lede = "The Delta migration for this server has been completed.";
+        String html = renderEmail("Delta Migration Finished", "COMPLETED", true,
+                lede, fields, "Open Dashboard", frontendUrl);
+        String text = "Hi,\n\n"
+                + lede + "\n\n"
+                + "Project: " + projectName + "\n"
+                + "Server: " + serverName + "\n"
+                + "Workspace pairs: " + workspacePairCount + "\n"
+                + "Completed by: " + orDash(finishedBy) + "\n"
+                + "Completed at: " + finishedAt.format(DATE_FORMATTER) + "\n\n"
+                + "Open dashboard: " + frontendUrl;
 
         send(new String[] { managerEmail }, subject, html, text);
     }
