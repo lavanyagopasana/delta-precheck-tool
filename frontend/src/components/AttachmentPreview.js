@@ -58,6 +58,9 @@ export default function AttachmentPreview({ filePath, fileName, caption, variant
           <img
             src={url}
             alt={displayName}
+            width={isFull ? 30 : 26}
+            height={isFull ? 30 : 26}
+            loading="lazy"
             style={{ width: isFull ? 30 : 26, height: isFull ? 30 : 26, objectFit: "cover", borderRadius: 4, flexShrink: 0 }}
           />
         ) : (
@@ -149,7 +152,7 @@ export default function AttachmentPreview({ filePath, fileName, caption, variant
             </div>
             <div style={{ padding: 14, overflow: "auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
               {isImage ? (
-                <img src={url} alt={displayName} style={{ maxWidth: "78vw", maxHeight: "72vh", objectFit: "contain" }} />
+                <img src={url} alt={displayName} loading="lazy" style={{ maxWidth: "78vw", maxHeight: "72vh", objectFit: "contain" }} />
               ) : (
                 <iframe title={displayName} src={url} style={{ width: "70vw", height: "68vh", border: "none" }} />
               )}

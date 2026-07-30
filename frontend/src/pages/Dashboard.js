@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getDashboardSummary, getProjects } from "../api/client";
 import DashboardCharts from "../components/DashboardCharts";
@@ -24,6 +24,43 @@ export default function Dashboard() {
 
   useEffect(load, []);
 
+  // Derived dashboard aggregates -- memoized so they only recompute when `projects` changes, not on
+  // every render. Expressions are unchanged from their previous inline form.
+  const totalServers = useMemo(
+    () => projects.reduce((sum, p) => sum + (p.serverCount || 0), 0),
+    [projects]
+  );
+  const readyServers = useMemo(
+    () => projects.reduce((sum, p) => sum + (p.readyServerCount || 0), 0),
+    [projects]
+  );
+  const openEscalations = useMemo(
+    () => projects.reduce((sum, p) => sum + (p.openEscalationCount || 0), 0),
+    [projects]
+  );
+  // A project is ready to decommission once every one of its servers has finished its Delta.
+  const decommissionReady = useMemo(
+    () => projects.filter((p) => p.decommissionReady).length,
+    [projects]
+  );
+
+  // Anything with an open ticket or an approval sitting in someone's queue -- the two things
+  // that actually need a human to act, as opposed to routine in-progress work.
+  const attentionItems = useMemo(
+    () =>
+      projects
+        .map((p) => ({
+          ...p,
+          pendingApprovals: (p.migrationManagerApprovalsPending || 0) + (p.devApprovalsPending || 0),
+        }))
+        .filter((p) => p.pendingApprovals > 0 || p.openEscalationCount > 0)
+        .sort(
+          (a, b) =>
+            b.openEscalationCount - a.openEscalationCount || b.pendingApprovals - a.pendingApprovals
+        ),
+    [projects]
+  );
+
   if (loading && !summary) return <p>Loading dashboard...</p>;
   if (error) {
     return (
@@ -37,25 +74,6 @@ export default function Dashboard() {
     );
   }
   if (!summary) return null;
-
-  const totalServers = projects.reduce((sum, p) => sum + (p.serverCount || 0), 0);
-  const readyServers = projects.reduce((sum, p) => sum + (p.readyServerCount || 0), 0);
-  const openEscalations = projects.reduce((sum, p) => sum + (p.openEscalationCount || 0), 0);
-  // A project is ready to decommission once every one of its servers has finished its Delta.
-  const decommissionReady = projects.filter((p) => p.decommissionReady).length;
-
-  // Anything with an open ticket or an approval sitting in someone's queue -- the two things
-  // that actually need a human to act, as opposed to routine in-progress work.
-  const attentionItems = projects
-    .map((p) => ({
-      ...p,
-      pendingApprovals: (p.migrationManagerApprovalsPending || 0) + (p.devApprovalsPending || 0),
-    }))
-    .filter((p) => p.pendingApprovals > 0 || p.openEscalationCount > 0)
-    .sort(
-      (a, b) =>
-        b.openEscalationCount - a.openEscalationCount || b.pendingApprovals - a.pendingApprovals
-    );
 
   return (
     <div>
@@ -120,7 +138,7 @@ export default function Dashboard() {
                       title="View this project's open tickets"
                       onClick={(e) => {
                         e.stopPropagation();
-                        navigate(`/escalations?project=${p.id}&status=OPEN`);
+                        navigate(`/tickets?project=${p.id}&status=OPEN`);
                       }}
                     >
                       {p.openEscalationCount} ticket{p.openEscalationCount === 1 ? "" : "s"}

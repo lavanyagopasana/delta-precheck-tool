@@ -10,7 +10,10 @@ import com.cloudfuze.deltatracker.repository.SignOffRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Optional;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 @Service
 @Transactional(readOnly = true)
@@ -35,24 +38,30 @@ public class DashboardService {
         // (see SignOffService.createChainIfAbsent), so a PENDING Dev row only reflects a genuinely
         // open request once Migration Manager has actually approved -- otherwise it just hasn't been
         // reached yet and shouldn't be counted as "pending" alongside requests really awaiting action.
-        for (Server server : serverRepository.findAll()) {
-            Optional<SignOffStatus> mmStatus = signOffRepository
-                    .findByServerIdAndRole(server.getId(), SignOffRole.MIGRATION_LEAD)
-                    .map(SignOff::getStatus);
-            Optional<SignOffStatus> devStatus = signOffRepository
-                    .findByServerIdAndRole(server.getId(), SignOffRole.DEV_LEAD)
-                    .map(SignOff::getStatus);
+        // Prefetch all sign-offs once and group by server (one row per server+role), instead of two
+        // findByServerIdAndRole queries per server. Same values -- purely fewer round-trips.
+        Map<Long, EnumMap<SignOffRole, SignOffStatus>> statusByServer = new HashMap<>();
+        for (SignOff so : signOffRepository.findAll()) {
+            statusByServer
+                    .computeIfAbsent(so.getServer().getId(), k -> new EnumMap<>(SignOffRole.class))
+                    .put(so.getRole(), so.getStatus());
+        }
 
-            if (mmStatus.filter(status -> status == SignOffStatus.APPROVED).isPresent()) {
+        for (Server server : serverRepository.findAll()) {
+            EnumMap<SignOffRole, SignOffStatus> roles =
+                    statusByServer.getOrDefault(server.getId(), new EnumMap<>(SignOffRole.class));
+            SignOffStatus mmStatus = roles.get(SignOffRole.MIGRATION_LEAD);
+            SignOffStatus devStatus = roles.get(SignOffRole.DEV_LEAD);
+
+            if (mmStatus == SignOffStatus.APPROVED) {
                 migrationManagerDone++;
-            } else if (mmStatus.filter(status -> status == SignOffStatus.PENDING).isPresent()) {
+            } else if (mmStatus == SignOffStatus.PENDING) {
                 migrationManagerPending++;
             }
 
-            if (devStatus.filter(status -> status == SignOffStatus.APPROVED).isPresent()) {
+            if (devStatus == SignOffStatus.APPROVED) {
                 devDone++;
-            } else if (devStatus.filter(status -> status == SignOffStatus.PENDING).isPresent()
-                    && mmStatus.filter(status -> status == SignOffStatus.APPROVED).isPresent()) {
+            } else if (devStatus == SignOffStatus.PENDING && mmStatus == SignOffStatus.APPROVED) {
                 devPending++;
             }
         }

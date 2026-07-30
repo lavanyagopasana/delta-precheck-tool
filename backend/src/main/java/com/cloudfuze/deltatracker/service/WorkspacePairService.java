@@ -11,6 +11,10 @@ import com.cloudfuze.deltatracker.repository.ProjectRepository;
 import com.cloudfuze.deltatracker.repository.ServerRepository;
 import com.cloudfuze.deltatracker.repository.WorkspacePairRepository;
 import com.cloudfuze.deltatracker.util.CsvUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +33,22 @@ import java.util.Map;
 @Service
 @Transactional
 public class WorkspacePairService {
+
+    private static final Logger log = LoggerFactory.getLogger(WorkspacePairService.class);
+
+    // Hard cap on how many pairs the display-list endpoint returns in one response. Pairs are
+    // CSV-imported and a single server can hold thousands, so the list is bounded (NOT paginated --
+    // the response stays a plain array to avoid a UI-breaking shape change). Aggregate/count paths
+    // are deliberately left uncapped. Flagged for real pagination in a future pass.
+    private static final int MAX_DISPLAY_ROWS = 500;
+
+    // Per-field length caps -- must match the WorkspacePair @Column lengths. Checked per row before
+    // save so an oversized cell becomes a "Row N: <field> exceeds maximum length" entry in errors[]
+    // like every other row failure, instead of a DataIntegrityViolationException that aborts the
+    // whole import with a generic 409.
+    private static final int MAX_EMAIL_LEN = 255;
+    private static final int MAX_PATH_LEN = 1000;
+    private static final int MAX_COMBINATION_LEN = 200;
 
     private static final Map<String, List<String>> COLUMN_ALIASES = Map.of(
             "server_name", List.of("servername", "server"),
@@ -58,7 +78,15 @@ public class WorkspacePairService {
     }
 
     public List<WorkspacePairDto> listByServer(Long serverId) {
-        return workspacePairRepository.findByServerId(serverId).stream()
+        long total = workspacePairRepository.countByServerId(serverId);
+        if (total > MAX_DISPLAY_ROWS) {
+            log.warn("Workspace pairs for server {} exceed the display cap ({} > {}); returning the first {} "
+                            + "by id. This endpoint needs real pagination.",
+                    serverId, total, MAX_DISPLAY_ROWS, MAX_DISPLAY_ROWS);
+        }
+        return workspacePairRepository
+                .findByServerId(serverId, PageRequest.of(0, MAX_DISPLAY_ROWS, Sort.by(Sort.Direction.ASC, "id")))
+                .stream()
                 .map(WorkspacePairDto::fromEntity)
                 .toList();
     }
@@ -90,8 +118,10 @@ public class WorkspacePairService {
 
         WorkspacePairImportResultDto result = new WorkspacePairImportResultDto();
         List<String> errors = new ArrayList<>();
+        List<String> duplicates = new ArrayList<>();
         int created = 0;
         int updated = 0;
+        int duplicate = 0;
 
         for (int rowNum = 1; rowNum < lines.size(); rowNum++) {
             String line = lines.get(rowNum);
@@ -99,23 +129,22 @@ public class WorkspacePairService {
                 continue;
             }
             List<String> fields = CsvUtils.parseLine(line);
-            Boolean isNew = processRow(server, fields, columnIndex, rowNum, errors);
-            if (isNew == null) {
-                continue;
-            }
-            if (isNew) {
-                created++;
-            } else {
-                updated++;
+            switch (processRow(server, fields, columnIndex, rowNum, errors, duplicates)) {
+                case CREATED -> created++;
+                case UPDATED -> updated++;
+                case DUPLICATE -> duplicate++;
+                case SKIPPED -> { /* reason already recorded in errors */ }
             }
         }
 
-        server.setTotalPairCount(workspacePairRepository.findByServerId(server.getId()).size());
+        server.setTotalPairCount((int) workspacePairRepository.countByServerId(server.getId()));
         serverRepository.save(server);
 
         result.setTotalRows(lines.size() - 1);
         result.setCreatedCount(created);
         result.setUpdatedCount(updated);
+        result.setDuplicateCount(duplicate);
+        result.setDuplicates(duplicates);
         result.setErrors(errors);
         return result;
     }
@@ -151,9 +180,11 @@ public class WorkspacePairService {
 
         WorkspacePairImportResultDto result = new WorkspacePairImportResultDto();
         List<String> errors = new ArrayList<>();
+        List<String> duplicates = new ArrayList<>();
         Map<String, Server> serverCache = new HashMap<>();
         int created = 0;
         int updated = 0;
+        int duplicate = 0;
 
         for (int rowNum = 1; rowNum < lines.size(); rowNum++) {
             String line = lines.get(rowNum);
@@ -178,62 +209,92 @@ public class WorkspacePairService {
                                 return newServer;
                             }));
 
-            Boolean isNew = processRow(server, fields, columnIndex, rowNum, errors);
-            if (isNew == null) {
-                continue;
-            }
-            if (isNew) {
-                created++;
-            } else {
-                updated++;
+            switch (processRow(server, fields, columnIndex, rowNum, errors, duplicates)) {
+                case CREATED -> created++;
+                case UPDATED -> updated++;
+                case DUPLICATE -> duplicate++;
+                case SKIPPED -> { /* reason already recorded in errors */ }
             }
         }
 
         for (Server server : serverCache.values()) {
-            server.setTotalPairCount(workspacePairRepository.findByServerId(server.getId()).size());
+            server.setTotalPairCount((int) workspacePairRepository.countByServerId(server.getId()));
             serverRepository.save(server);
         }
 
         result.setTotalRows(lines.size() - 1);
         result.setCreatedCount(created);
         result.setUpdatedCount(updated);
+        result.setDuplicateCount(duplicate);
+        result.setDuplicates(duplicates);
         result.setErrors(errors);
         return result;
     }
 
+    private enum RowOutcome { CREATED, UPDATED, DUPLICATE, SKIPPED }
+
     /**
-     * Processes a single CSV data row against the given server. Returns true if a new pair was
-     * created, false if an existing pair was updated, or null if the row was invalid and skipped
-     * (with the reason appended to {@code errors}).
+     * Processes a single CSV data row against the given server:
+     * <ul>
+     *   <li>{@code SKIPPED} — the row was invalid; the reason is appended to {@code errors}.</li>
+     *   <li>{@code DUPLICATE} — an identical pair (same source/destination email + path AND the same
+     *       combination) already exists for this server; nothing is written and a human-readable line
+     *       is appended to {@code duplicates}. This is what lets a re-uploaded file report "already
+     *       imported" instead of silently doing nothing.</li>
+     *   <li>{@code UPDATED} — the source/destination match an existing pair but the combination
+     *       changed, so only the combination is updated.</li>
+     *   <li>{@code CREATED} — a brand-new pair was inserted.</li>
+     * </ul>
      */
-    private Boolean processRow(Server server, List<String> fields, Map<String, Integer> columnIndex,
-                                int rowNum, List<String> errors) {
+    private RowOutcome processRow(Server server, List<String> fields, Map<String, Integer> columnIndex,
+                                  int rowNum, List<String> errors, List<String> duplicates) {
         String sourceEmail = valueOf(fields, columnIndex, "source_email");
         String destinationEmail = valueOf(fields, columnIndex, "destination_email");
         if (!StringUtils.hasText(sourceEmail) || !StringUtils.hasText(destinationEmail)) {
             errors.add("Row " + (rowNum + 1) + ": source_email and destination_email are required");
-            return null;
+            return RowOutcome.SKIPPED;
         }
 
         String sourcePath = orEmpty(valueOf(fields, columnIndex, "source_path"));
         String destinationPath = orEmpty(valueOf(fields, columnIndex, "destination_path"));
         String combination = valueOf(fields, columnIndex, "combination");
 
+        String overLong = firstOverLengthField(sourceEmail, destinationEmail, sourcePath, destinationPath, combination);
+        if (overLong != null) {
+            errors.add("Row " + (rowNum + 1) + ": " + overLong + " exceeds maximum length");
+            return RowOutcome.SKIPPED;
+        }
+
         WorkspacePair pair = workspacePairRepository
                 .findByServerIdAndSourceEmailAndSourcePathAndDestinationEmailAndDestinationPath(
                         server.getId(), sourceEmail, sourcePath, destinationEmail, destinationPath)
                 .orElse(null);
 
-        boolean isNew = pair == null;
-        if (isNew) {
-            pair = new WorkspacePair(server, sourceEmail, destinationEmail);
+        if (pair != null) {
+            // Source + destination already exist. If the combination also matches, it's a byte-for-byte
+            // duplicate of an already-imported row -> skip and report, don't touch it.
+            if (sameValue(pair.getCombination(), combination)) {
+                duplicates.add("Row " + (rowNum + 1) + ": " + sourceEmail + " \u2192 " + destinationEmail
+                        + " already exists (skipped)");
+                return RowOutcome.DUPLICATE;
+            }
+            pair.setCombination(combination);
+            workspacePairRepository.save(pair);
+            return RowOutcome.UPDATED;
         }
+
+        pair = new WorkspacePair(server, sourceEmail, destinationEmail);
         pair.setSourcePath(sourcePath);
         pair.setDestinationPath(destinationPath);
         pair.setCombination(combination);
         workspacePairRepository.save(pair);
+        return RowOutcome.CREATED;
+    }
 
-        return isNew;
+    // Null-safe, trimmed, case-insensitive equality -- used to decide whether an incoming row's
+    // combination matches the stored one (i.e. the whole row is a duplicate).
+    private boolean sameValue(String a, String b) {
+        return orEmpty(a).trim().equalsIgnoreCase(orEmpty(b).trim());
     }
 
     private Map<String, Integer> resolveColumns(List<String> header) {
@@ -260,6 +321,21 @@ public class WorkspacePairService {
 
     private String orEmpty(String value) {
         return value == null ? "" : value;
+    }
+
+    // Returns the name of the first field whose value exceeds its column length, or null if all fit.
+    private String firstOverLengthField(String sourceEmail, String destinationEmail, String sourcePath,
+                                        String destinationPath, String combination) {
+        if (over(sourceEmail, MAX_EMAIL_LEN)) return "source_email";
+        if (over(destinationEmail, MAX_EMAIL_LEN)) return "destination_email";
+        if (over(sourcePath, MAX_PATH_LEN)) return "source_path";
+        if (over(destinationPath, MAX_PATH_LEN)) return "destination_path";
+        if (over(combination, MAX_COMBINATION_LEN)) return "combination";
+        return null;
+    }
+
+    private boolean over(String value, int max) {
+        return value != null && value.length() > max;
     }
 
     private String valueOf(List<String> fields, Map<String, Integer> columnIndex, String column) {

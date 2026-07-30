@@ -1,0 +1,11 @@
+[ {
+  "id" : 1,
+  "serverId" : 1,
+  "serverName" : "SRV-ALPHA-1",
+  "projectId" : 1,
+  "projectName" : "Alpha Project",
+  "ticketUrl" : "https://jira.example.com/browse/JIRA-101",
+  "createdBy" : "alice@cloudfuze.com",
+  "createdAt" : "2026-01-07T15:00:00",
+  "status" : "OPEN"
+} ]

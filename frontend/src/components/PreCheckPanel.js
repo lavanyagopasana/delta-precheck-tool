@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   getServerReadiness,
@@ -14,6 +14,7 @@ import { useCurrentUser } from "../auth/CurrentUserContext";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
 import { UndoIcon, SendIcon } from "./Icons";
 import { useConfirm } from "./ConfirmDialog";
+import { MAX_EVIDENCE_FILE_SIZE_MB } from "../constants";
 
 // ADMIN included by explicit product decision -- admins have full access to pre-checks too.
 const PRECHECK_EDIT_ROLES = ["ADMIN", "MIGRATION_ENGINEER", "MIGRATION_MANAGER"];
@@ -71,8 +72,6 @@ const STATUS_VISUAL_DEFAULT = { border: "var(--color-green)", badge: "green", bg
 function statusVisual(status) {
   return STATUS_VISUAL[status] || STATUS_VISUAL_DEFAULT;
 }
-
-const MAX_EVIDENCE_FILE_SIZE_MB = 20;
 
 function evidenceDisplayName(item) {
   if (item.evidenceFileName) return item.evidenceFileName;
@@ -289,19 +288,29 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
     ? currentUser?.email || currentUser?.name || ""
     : submittedByInput.trim();
 
-  const load = () => {
+  // load() reads submittedByName to fetch the viewer-scoped submission, but must fire ONLY on
+  // serverId change -- never on every keystroke of the (non-auth) name field, which would refetch
+  // and clobber the form on each character. So the name is read through a ref (always the latest
+  // value at call time) instead of being a dependency, and load is memoized on serverId alone. This
+  // keeps the exhaustive-deps rule satisfied without suppression and without changing when load runs.
+  const submittedByNameRef = useRef(submittedByName);
+  submittedByNameRef.current = submittedByName;
+
+  const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    Promise.all([getServerReadiness(serverId), getPreCheckSubmission(serverId, submittedByName)])
+    Promise.all([getServerReadiness(serverId), getPreCheckSubmission(serverId, submittedByNameRef.current)])
       .then(([serverData, submissionData]) => {
         setServer(serverData);
         setSubmission(submissionData);
       })
       .catch((err) => setError(err.response?.data?.message || "Failed to load the pre-check form."))
       .finally(() => setLoading(false));
-  };
+  }, [serverId]);
 
-  useEffect(load, [serverId]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   if (loading) return <p>Loading pre-check form...</p>;
   if (!server || !submission) {

@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { getAllowedUsers, upsertAllowedUser, removeAllowedUser, importUsersCsv } from "../api/client";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { useToast } from "../components/Toast";
 import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
-import { TrashIcon } from "../components/Icons";
+import { TrashIcon, EditIcon } from "../components/Icons";
 import { useConfirm } from "../components/ConfirmDialog";
 
 const ROLE_OPTIONS = [
@@ -17,6 +17,16 @@ const ROLE_OPTIONS = [
 
 const roleLabel = (role) => ROLE_OPTIONS.find((r) => r.value === role)?.label || role;
 
+// Consistent accent color per role, reused by the summary strip and the row indicators.
+const ROLE_COLOR = {
+  ADMIN: "var(--color-red)",
+  MIGRATION_MANAGER: "var(--color-primary)",
+  DEV_LEAD: "var(--color-yellow)",
+  QA_LEAD: "var(--color-green)",
+  MIGRATION_ENGINEER: "var(--color-text-muted)",
+};
+const roleColor = (role) => ROLE_COLOR[role] || "var(--color-text-muted)";
+
 export default function AdminUsersPage() {
   const currentUser = useCurrentUser();
   const showToast = useToast();
@@ -28,6 +38,10 @@ export default function AdminUsersPage() {
   const [role, setRole] = useState("MIGRATION_ENGINEER");
   const [saving, setSaving] = useState(false);
   const [removingEmail, setRemovingEmail] = useState(null);
+  const [editUser, setEditUser] = useState(null);
+  const [editRole, setEditRole] = useState("MIGRATION_ENGINEER");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState(null);
   const [csvModalOpen, setCsvModalOpen] = useState(false);
   const [csvFile, setCsvFile] = useState(null);
   const [csvRole, setCsvRole] = useState("MIGRATION_ENGINEER");
@@ -46,6 +60,14 @@ export default function AdminUsersPage() {
   };
 
   useEffect(load, []);
+
+  const counts = useMemo(() => {
+    const c = { total: users.length, ADMIN: 0, MIGRATION_MANAGER: 0, DEV_LEAD: 0, QA_LEAD: 0, MIGRATION_ENGINEER: 0 };
+    users.forEach((u) => {
+      if (c[u.role] !== undefined) c[u.role] += 1;
+    });
+    return c;
+  }, [users]);
 
   const handleAdd = async (e) => {
     e.preventDefault();
@@ -92,21 +114,35 @@ export default function AdminUsersPage() {
     }
   };
 
-  const handleRoleChange = async (user, newRole) => {
-    if (newRole === user.role) return;
-    const ok = await confirm({
-      title: "Change role?",
-      message: `Change ${user.email}'s role from ${roleLabel(user.role)} to ${roleLabel(newRole)}?`,
-      confirmLabel: "Change Role",
-    });
-    if (!ok) return;
-    setError(null);
+  const openEdit = (user) => {
+    setEditUser(user);
+    setEditRole(user.role);
+    setEditError(null);
+  };
+
+  const closeEdit = () => {
+    setEditUser(null);
+    setEditError(null);
+  };
+
+  const handleEditSave = async (e) => {
+    e.preventDefault();
+    if (!editUser) return;
+    if (editRole === editUser.role) {
+      closeEdit();
+      return;
+    }
+    setEditSaving(true);
+    setEditError(null);
     try {
-      await upsertAllowedUser({ email: user.email, role: newRole });
-      showToast(`${user.email} is now ${roleLabel(newRole)}.`);
+      await upsertAllowedUser({ email: editUser.email, role: editRole });
+      showToast(`${editUser.email} is now ${roleLabel(editRole)}.`);
+      closeEdit();
       load();
     } catch (err) {
-      setError(err.response?.data?.message || "Failed to update role.");
+      setEditError(err.response?.data?.message || "Failed to update role.");
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -145,25 +181,58 @@ export default function AdminUsersPage() {
         Only people added here can sign in, even if their email is @cloudfuze.com.
       </p>
 
+      <div className="card-row card-row--nowrap" style={{ marginBottom: 20 }}>
+        <div className="stat-card">
+          <div className="value">{counts.total}</div>
+          <div className="label">Total Users</div>
+        </div>
+        <div className="stat-card">
+          <div className="value" style={{ color: roleColor("ADMIN") }}>{counts.ADMIN}</div>
+          <div className="label">Admins</div>
+        </div>
+        <div className="stat-card">
+          <div className="value" style={{ color: roleColor("MIGRATION_MANAGER") }}>{counts.MIGRATION_MANAGER}</div>
+          <div className="label">Migration Managers</div>
+        </div>
+        <div className="stat-card">
+          <div className="value" style={{ color: roleColor("DEV_LEAD") }}>{counts.DEV_LEAD}</div>
+          <div className="label">Dev Leads</div>
+        </div>
+        <div className="stat-card">
+          <div className="value" style={{ color: roleColor("QA_LEAD") }}>{counts.QA_LEAD}</div>
+          <div className="label">QA Leads</div>
+        </div>
+        <div className="stat-card">
+          <div className="value" style={{ color: roleColor("MIGRATION_ENGINEER") }}>{counts.MIGRATION_ENGINEER}</div>
+          <div className="label">Engineers</div>
+        </div>
+      </div>
+
       <div className="card">
-        <strong style={{ fontSize: 14 }}>Add or update a user</strong>
-        <form onSubmit={handleAdd} style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <input
-            type="text"
-            placeholder="name@cloudfuze.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{ width: 260 }}
-          />
-          <select value={role} onChange={(e) => setRole(e.target.value)}>
-            {ROLE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+        <strong style={{ fontSize: 14 }}>Add a user</strong>
+        <form onSubmit={handleAdd} style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--color-text-muted)" }}>Email</label>
+            <input
+              type="text"
+              placeholder="name@cloudfuze.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              style={{ width: 260 }}
+            />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--color-text-muted)" }}>Role</label>
+            <select value={role} onChange={(e) => setRole(e.target.value)}>
+              {ROLE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <button className="btn" type="submit" disabled={saving || !email.trim()}>
-            {saving ? "Saving..." : "Add / Update"}
+            {saving ? "Adding..." : "Add"}
           </button>
         </form>
       </div>
@@ -192,25 +261,22 @@ export default function AdminUsersPage() {
             key: "role",
             label: "Role",
             filterValue: (u) => roleLabel(u.role),
-            render: (u) => {
-              const isSelf = currentUser?.email?.toLowerCase() === u.email.toLowerCase();
-              return (
-                <select
-                  value={u.role}
-                  onChange={(e) => handleRoleChange(u, e.target.value)}
-                  disabled={isSelf}
-                  title={isSelf ? "You can't change your own role -- another admin must." : undefined}
-                >
-                  {ROLE_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              );
-            },
+            render: (u) => (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 9,
+                    height: 9,
+                    borderRadius: "50%",
+                    flexShrink: 0,
+                    background: roleColor(u.role),
+                  }}
+                />
+                {roleLabel(u.role)}
+              </span>
+            ),
           },
-          { key: "addedBy", label: "Added By", render: (u) => u.addedBy || "-" },
           {
             key: "addedAt",
             label: "Added",
@@ -224,25 +290,68 @@ export default function AdminUsersPage() {
             render: (u) => {
               const isSelf = currentUser?.email?.toLowerCase() === u.email.toLowerCase();
               return (
-                <button
-                  className="btn secondary"
-                  style={{ padding: "6px 10px" }}
-                  onClick={() => handleRemove(u)}
-                  disabled={removingEmail === u.email || isSelf}
-                  title={isSelf ? "You can't remove your own access -- another admin must." : "Remove user"}
-                  aria-label="Remove user"
-                >
-                  {removingEmail === u.email ? (
-                    <span className="spinner" />
-                  ) : (
-                    <TrashIcon size={18} style={{ marginRight: 0 }} />
-                  )}
-                </button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btn secondary"
+                    style={{ padding: "6px 10px" }}
+                    onClick={() => openEdit(u)}
+                    disabled={isSelf}
+                    title={isSelf ? "You can't change your own role -- another admin must." : "Edit role"}
+                    aria-label="Edit role"
+                  >
+                    <EditIcon size={18} style={{ marginRight: 0 }} />
+                  </button>
+                  <button
+                    className="btn secondary"
+                    style={{ padding: "6px 10px" }}
+                    onClick={() => handleRemove(u)}
+                    disabled={removingEmail === u.email || isSelf}
+                    title={isSelf ? "You can't remove your own access -- another admin must." : "Remove user"}
+                    aria-label="Remove user"
+                  >
+                    {removingEmail === u.email ? (
+                      <span className="spinner" />
+                    ) : (
+                      <TrashIcon size={18} style={{ marginRight: 0 }} />
+                    )}
+                  </button>
+                </div>
               );
             },
           },
         ]}
       />
+
+      {editUser && (
+        <Modal title="Edit role" onClose={closeEdit} width={420} closeIcon>
+          <form onSubmit={handleEditSave}>
+            <p style={{ marginTop: 0, marginBottom: 14, color: "var(--color-text-muted)", fontSize: 13 }}>
+              {editUser.email}
+            </p>
+            <div style={{ marginBottom: 8 }}>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Role</label>
+              <select value={editRole} onChange={(e) => setEditRole(e.target.value)} style={{ width: "100%" }}>
+                {ROLE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {editError && <div className="inline-hint" style={{ marginBottom: 12 }}>{editError}</div>}
+
+            <div className="form-actions" style={{ justifyContent: "flex-end", gap: 8 }}>
+              <button type="button" className="btn secondary" onClick={closeEdit} disabled={editSaving}>
+                Cancel
+              </button>
+              <button type="submit" className="btn" disabled={editSaving || editRole === editUser.role}>
+                {editSaving ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {csvModalOpen && (
         <Modal title="Add Users via CSV" onClose={closeCsvModal} width={420} closeIcon>

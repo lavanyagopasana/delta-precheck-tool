@@ -47,7 +47,7 @@ public class ProjectController {
     }
 
     @PatchMapping("/{id}/assignments")
-    public ProjectSummaryDto updateAssignments(@PathVariable Long id, @RequestBody ProjectAssignmentRequest request) {
+    public ProjectSummaryDto updateAssignments(@PathVariable Long id, @Valid @RequestBody ProjectAssignmentRequest request) {
         return projectService.updateAssignments(id, request);
     }
 

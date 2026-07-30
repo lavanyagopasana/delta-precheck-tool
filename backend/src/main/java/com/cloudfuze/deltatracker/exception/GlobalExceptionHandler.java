@@ -3,6 +3,7 @@ package com.cloudfuze.deltatracker.exception;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -36,6 +37,17 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> handleMalformedRequest(HttpMessageNotReadableException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body(HttpStatus.BAD_REQUEST, "Malformed request body"));
+    }
+
+    // Two users acting on the same row concurrently: whoever flushes second loses the @Version race.
+    // Surface a 409 with a reload-and-retry message rather than a generic 500, so the frontend can
+    // tell the user their view was stale instead of showing "Something went wrong". Catches both
+    // Spring's ObjectOptimisticLockingFailureException (Hibernate flush path) and JPA's own
+    // OptimisticLockException (direct EntityManager flush).
+    @ExceptionHandler({OptimisticLockingFailureException.class, jakarta.persistence.OptimisticLockException.class})
+    public ResponseEntity<Map<String, Object>> handleOptimisticLock(Exception ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(body(HttpStatus.CONFLICT, "This was changed by someone else while you were working on it. Reload and try again."));
     }
 
     // Backstop for constraint violations (duplicate keys, etc.) that slip past an application-level

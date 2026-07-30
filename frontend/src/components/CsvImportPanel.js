@@ -1,11 +1,35 @@
 import React, { useRef, useState } from "react";
+import Modal from "./Modal";
 
-export default function CsvImportPanel({ title, columns, sampleRow, onUpload, onImported }) {
+export default function CsvImportPanel({ title, columns, sampleRow, onUpload, onImported, sampleFileName }) {
   const [showSchema, setShowSchema] = useState(false);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [showDuplicates, setShowDuplicates] = useState(false);
   const fileInputRef = useRef(null);
+
+  // Build the same header + example row shown under "View CSV format" as a downloadable file, so
+  // users can start from a correctly-shaped template instead of hand-typing the columns.
+  const downloadSample = () => {
+    const escape = (v) => {
+      const s = String(v ?? "");
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = `${columns.map(escape).join(",")}\n${sampleRow.map(escape).join(",")}\n`;
+    const fileName =
+      sampleFileName ||
+      `${(title || "sample").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-sample.csv`;
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
@@ -16,6 +40,8 @@ export default function CsvImportPanel({ title, columns, sampleRow, onUpload, on
     try {
       const res = await onUpload(file);
       setResult(res);
+      // Auto-open the duplicates popup so a re-uploaded file makes it obvious which rows were skipped.
+      if (res?.duplicates?.length) setShowDuplicates(true);
       onImported();
     } catch (err) {
       setError(err.response?.data?.message || "Import failed.");
@@ -32,6 +58,9 @@ export default function CsvImportPanel({ title, columns, sampleRow, onUpload, on
         <div style={{ display: "flex", gap: 10 }}>
           <button className="btn secondary" onClick={() => setShowSchema((s) => !s)}>
             {showSchema ? "Hide" : "View"} CSV format
+          </button>
+          <button className="btn secondary" onClick={downloadSample}>
+            Download sample CSV
           </button>
           <label className="btn" style={{ cursor: importing ? "not-allowed" : "pointer" }}>
             {importing ? "Importing..." : "Upload CSV"}
@@ -70,8 +99,19 @@ export default function CsvImportPanel({ title, columns, sampleRow, onUpload, on
 
       {result && (
         <div className="inline-success" style={{ marginTop: 14, display: "block" }}>
-          Imported {result.totalRows} row(s): {result.createdCount} created, {result.updatedCount} updated.
-          {result.errors.length > 0 && (
+          Imported {result.totalRows} row(s): {result.createdCount} created, {result.updatedCount} updated
+          {result.duplicateCount > 0 && `, ${result.duplicateCount} duplicate(s) skipped`}.
+          {result.duplicateCount > 0 && (
+            <button
+              type="button"
+              className="btn secondary"
+              style={{ padding: "4px 10px", marginLeft: 10, fontSize: 12 }}
+              onClick={() => setShowDuplicates(true)}
+            >
+              View duplicates
+            </button>
+          )}
+          {result.errors?.length > 0 && (
             <ul style={{ color: "var(--color-red)", marginTop: 6 }}>
               {result.errors.map((e, i) => (
                 <li key={i}>{e}</li>
@@ -81,6 +121,25 @@ export default function CsvImportPanel({ title, columns, sampleRow, onUpload, on
         </div>
       )}
       {error && <div className="inline-hint" style={{ marginTop: 14 }}>{error}</div>}
+
+      {showDuplicates && result?.duplicates?.length > 0 && (
+        <Modal title="Duplicate rows skipped" onClose={() => setShowDuplicates(false)} width={520} closeIcon>
+          <p style={{ marginTop: 0, color: "var(--color-text-muted)", fontSize: 13 }}>
+            These rows already existed exactly as-is, so they were not added again. Everything else in
+            the file was imported.
+          </p>
+          <ul style={{ margin: 0, paddingLeft: 18, maxHeight: 320, overflowY: "auto" }}>
+            {result.duplicates.map((d, i) => (
+              <li key={i} style={{ fontSize: 13, marginBottom: 4 }}>{d}</li>
+            ))}
+          </ul>
+          <div className="form-actions" style={{ justifyContent: "flex-end", marginTop: 16 }}>
+            <button type="button" className="btn" onClick={() => setShowDuplicates(false)}>
+              Close
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

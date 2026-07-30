@@ -8,6 +8,7 @@ import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
 import { TrashIcon, PlusIcon, EditIcon } from "../components/Icons";
 import { useConfirm } from "../components/ConfirmDialog";
+import { emailLocalPart } from "../utils/format";
 
 const PRODUCT_TYPE_OPTIONS = [
   { value: "MESSAGE", label: "Message" },
@@ -317,12 +318,19 @@ export default function ProjectsPage() {
             label: "Migration Manager",
             sortable: false,
             filterable: false,
-            render: (p) => (p.migrationManagers?.length ? p.migrationManagers.join(", ") : "Not assigned yet"),
+            render: (p) =>
+              p.migrationManagers?.length ? (
+                <span title={p.migrationManagers.join(", ")}>
+                  {p.migrationManagers.map(emailLocalPart).join(", ")}
+                </span>
+              ) : (
+                "Not assigned yet"
+              ),
           },
           {
             key: "createdBy",
             label: "Created By",
-            render: (p) => p.createdBy || "-",
+            render: (p) => (p.createdBy ? <span title={p.createdBy}>{emailLocalPart(p.createdBy)}</span> : "-"),
           },
           {
             key: "actions",

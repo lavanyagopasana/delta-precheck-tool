@@ -1,5 +1,6 @@
 package com.cloudfuze.deltatracker.service;
 
+import com.cloudfuze.deltatracker.config.CacheConfig;
 import com.cloudfuze.deltatracker.dto.AppUserDto;
 import com.cloudfuze.deltatracker.dto.AppUserImportResultDto;
 import com.cloudfuze.deltatracker.entity.AppUser;
@@ -9,6 +10,9 @@ import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
 import com.cloudfuze.deltatracker.repository.AppUserRepository;
 import com.cloudfuze.deltatracker.util.CsvUtils;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -43,8 +47,11 @@ public class AppUserService {
     @Value("${azure.auto-provision-domain:cloudfuze.com}")
     private String autoProvisionDomain;
 
-    public AppUserService(AppUserRepository appUserRepository) {
+    private final CacheManager cacheManager;
+
+    public AppUserService(AppUserRepository appUserRepository, CacheManager cacheManager) {
         this.appUserRepository = appUserRepository;
+        this.cacheManager = cacheManager;
     }
 
     public List<AppUserDto> list() {
@@ -53,8 +60,22 @@ public class AppUserService {
                 .toList();
     }
 
+    // Master/lookup data: read constantly (roster dropdowns, notification recipient lists), written
+    // rarely. Cached per-role; every write path below evicts the whole cache so a role change or a
+    // newly-added user is reflected immediately, never served stale.
+    @Cacheable(CacheConfig.ROSTER_EMAILS_CACHE)
     public List<String> emailsForRole(AppUserRole role) {
         return appUserRepository.findByRole(role).stream().map(AppUser::getEmail).toList();
+    }
+
+    // Drop the whole roster cache whenever the app_users table changes. Called from every write
+    // path (manual rather than @CacheEvict so it also fires for the internal importCsv -> upsert
+    // self-call, which a proxy-based annotation would silently miss).
+    private void evictRosterCache() {
+        Cache cache = cacheManager.getCache(CacheConfig.ROSTER_EMAILS_CACHE);
+        if (cache != null) {
+            cache.clear();
+        }
     }
 
     public Optional<AppUserRole> roleOf(String email) {
@@ -84,6 +105,7 @@ public class AppUserService {
             return;
         }
         appUserRepository.save(new AppUser(email, AppUserRole.MIGRATION_ENGINEER, "auto (" + autoProvisionDomain + ")"));
+        evictRosterCache();
     }
 
     public void requireAdmin(String email) {
@@ -119,7 +141,9 @@ public class AppUserService {
 
         AppUser user = existing.orElseGet(() -> new AppUser(email, role, actingAdminEmail));
         user.setRole(role);
-        return AppUserDto.fromEntity(appUserRepository.save(user));
+        AppUserDto saved = AppUserDto.fromEntity(appUserRepository.save(user));
+        evictRosterCache();
+        return saved;
     }
 
     // One email per row. A header row is auto-detected if any cell normalizes to "email"; otherwise
@@ -220,5 +244,6 @@ public class AppUserService {
         }
 
         appUserRepository.delete(user);
+        evictRosterCache();
     }
 }

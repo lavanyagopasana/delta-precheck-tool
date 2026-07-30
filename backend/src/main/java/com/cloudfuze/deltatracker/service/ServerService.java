@@ -45,20 +45,20 @@ public class ServerService {
     private final WorkspacePairRepository workspacePairRepository;
     private final PreCheckItemRepository preCheckItemRepository;
     private final PreCheckSubmissionRepository preCheckSubmissionRepository;
-    private final EscalationService escalationService;
+    private final TicketService ticketService;
     private final ProjectRepository projectRepository;
 
     public ServerService(ServerRepository serverRepository,
                           WorkspacePairRepository workspacePairRepository,
                           PreCheckItemRepository preCheckItemRepository,
                           PreCheckSubmissionRepository preCheckSubmissionRepository,
-                          EscalationService escalationService,
+                          TicketService ticketService,
                           ProjectRepository projectRepository) {
         this.serverRepository = serverRepository;
         this.workspacePairRepository = workspacePairRepository;
         this.preCheckItemRepository = preCheckItemRepository;
         this.preCheckSubmissionRepository = preCheckSubmissionRepository;
-        this.escalationService = escalationService;
+        this.ticketService = ticketService;
         this.projectRepository = projectRepository;
     }
 
@@ -160,7 +160,7 @@ public class ServerService {
         int total = pairs.size();
         int ready = server.getStatus() == PairStatus.DELTA_READY ? total : 0;
         int notReady = total - ready;
-        long openEscalations = escalationService.countOpenForServer(server.getId());
+        long openEscalations = ticketService.countOpenForServer(server.getId());
 
         ServerReadinessDto dto = new ServerReadinessDto();
         dto.setServerId(server.getId());

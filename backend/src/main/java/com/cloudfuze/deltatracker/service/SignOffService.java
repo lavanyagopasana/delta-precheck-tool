@@ -20,6 +20,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -30,8 +31,7 @@ public class SignOffService {
 
     // Approvals happen in this fixed order: Migration Manager, then Dev, then QA. Each role can
     // only act once everyone ahead of it in the sequence has approved.
-    private static final List<SignOffRole> APPROVAL_SEQUENCE =
-            List.of(SignOffRole.MIGRATION_LEAD, SignOffRole.DEV_LEAD, SignOffRole.QA_LEAD);
+    private static final List<SignOffRole> APPROVAL_SEQUENCE = SignOffRole.APPROVAL_SEQUENCE;
 
     private final SignOffRepository signOffRepository;
     private final ServerService serverService;
@@ -39,20 +39,20 @@ public class SignOffService {
     private final AppUserService appUserService;
     private final PreCheckSubmissionRepository preCheckSubmissionRepository;
     private final WorkspacePairRepository workspacePairRepository;
-    private final EscalationService escalationService;
+    private final TicketService ticketService;
 
     public SignOffService(SignOffRepository signOffRepository, ServerService serverService,
                            EmailService emailService, AppUserService appUserService,
                            PreCheckSubmissionRepository preCheckSubmissionRepository,
                            WorkspacePairRepository workspacePairRepository,
-                           EscalationService escalationService) {
+                           TicketService ticketService) {
         this.signOffRepository = signOffRepository;
         this.serverService = serverService;
         this.emailService = emailService;
         this.appUserService = appUserService;
         this.preCheckSubmissionRepository = preCheckSubmissionRepository;
         this.workspacePairRepository = workspacePairRepository;
-        this.escalationService = escalationService;
+        this.ticketService = ticketService;
     }
 
     // Kicks off the Migration Manager -> Dev Lead -> QA Lead approval chain the moment a pre-check
@@ -138,7 +138,8 @@ public class SignOffService {
             qaSignOff.setApprovedAt(LocalDateTime.now());
             signOffRepository.save(qaSignOff);
             finalizeDelta(server);
-            return toApprovalDto(signOff, server, signOffRepository.findByServerId(serverId), actorEmail);
+            return toApprovalDto(signOff, server, signOffRepository.findByServerId(serverId), actorEmail,
+                computeServerStats(server));
         }
 
         int index = APPROVAL_SEQUENCE.indexOf(role);
@@ -156,10 +157,11 @@ public class SignOffService {
                         next.setApprovedAt(null);
                         signOffRepository.save(next);
                     });
-            notifyNextApprover(server, nextRole, signOffRepository.findByServerId(serverId));
+            notifyNextApprover(server, nextRole);
         }
 
-        return toApprovalDto(signOff, server, signOffRepository.findByServerId(serverId), actorEmail);
+        return toApprovalDto(signOff, server, signOffRepository.findByServerId(serverId), actorEmail,
+                computeServerStats(server));
     }
 
     // Declining bounces the request back one step for rework: the role right before this one (in
@@ -194,7 +196,8 @@ public class SignOffService {
                     });
         }
 
-        return toApprovalDto(signOff, server, signOffRepository.findByServerId(serverId), actorEmail);
+        return toApprovalDto(signOff, server, signOffRepository.findByServerId(serverId), actorEmail,
+                computeServerStats(server));
     }
 
     // Only servers whose pre-check has actually been submitted show up here -- a server with no
@@ -203,13 +206,21 @@ public class SignOffService {
         List<SignOff> all = signOffRepository.findAll();
         Map<Long, List<SignOff>> byServer = all.stream()
                 .collect(Collectors.groupingBy(s -> s.getServer().getId()));
+        // Pairs / open escalations / submission are server-level, not row-level -- compute them once
+        // per server instead of once per sign-off row (previously 3x redundant per server). Same
+        // values, far fewer queries.
+        Map<Long, ServerStats> statsByServer = new HashMap<>();
 
         return all.stream()
                 .filter(s -> isVisible(s.getServer(), callerEmail, callerRole))
                 .sorted(Comparator
                         .comparing((SignOff s) -> s.getStatus() == SignOffStatus.PENDING ? 0 : 1)
                         .thenComparing(SignOff::getSignedAt, Comparator.reverseOrder()))
-                .map(s -> toApprovalDto(s, s.getServer(), byServer.get(s.getServer().getId()), callerEmail))
+                .map(s -> {
+                    Server srv = s.getServer();
+                    ServerStats stats = statsByServer.computeIfAbsent(srv.getId(), k -> computeServerStats(srv));
+                    return toApprovalDto(s, srv, byServer.get(srv.getId()), callerEmail, stats);
+                })
                 .toList();
     }
 
@@ -350,15 +361,10 @@ public class SignOffService {
     }
 
     private String roleLabel(SignOffRole role) {
-        return switch (role) {
-            case MIGRATION_LEAD -> "Migration Manager";
-            case QA_LEAD -> "QA Lead";
-            case DEV_LEAD -> "Dev Lead";
-        };
+        return role.label();
     }
 
     private void finalizeDelta(Server server) {
-        List<SignOff> signOffs = signOffRepository.findByServerId(server.getId());
         String requestedBy = preCheckSubmissionRepository.findByServerId(server.getId())
                 .map(sub -> sub.getSubmittedBy())
                 .filter(s -> s != null && !s.isBlank())
@@ -375,21 +381,13 @@ public class SignOffService {
         if (project != null && StringUtils.hasText(project.getMigrationManagerName())) {
             int workspacePairCount = workspacePairRepository.findByServerId(saved.getId()).size();
             emailService.notifyMigrationManagerDeltaReady(project.getName(), saved.getName(), workspacePairCount,
-                    requestedBy, approvalChainSummary(signOffs), project.getMigrationManagerName());
+                    requestedBy, project.getMigrationManagerName());
         }
-    }
-
-    private String approvalChainSummary(List<SignOff> serverSignOffs) {
-        boolean qaSkipped = serverSignOffs.stream()
-                .anyMatch(s -> s.getRole() == SignOffRole.QA_LEAD && s.getStatus() == SignOffStatus.SKIPPED);
-        return qaSkipped
-                ? "Migration Manager -> Dev Lead -- approved (QA Lead not required)"
-                : "Migration Manager -> Dev Lead -> QA Lead -- all approved";
     }
 
     // Emails whoever's pool holds the next role in the sequence that an approval is now waiting on
     // them. Migration Manager is a specific person; Dev/QA Lead are pools of two, either can act.
-    private void notifyNextApprover(Server server, SignOffRole nextRole, List<SignOff> serverSignOffs) {
+    private void notifyNextApprover(Server server, SignOffRole nextRole) {
         Project project = server.getProject();
         if (project == null) {
             return;
@@ -405,29 +403,39 @@ public class SignOffService {
                 .map(sub -> sub.getSubmittedBy())
                 .orElse(null);
         emailService.notifyApprovalRequired(roleLabel(nextRole), project.getName(), server.getName(),
-                workspacePairCount, submittedBy, overallStatusLabel(serverSignOffs), recipients);
+                workspacePairCount, submittedBy, recipients);
     }
 
     // Called right after a pre-check is submitted (chain already created) to let the Migration
     // Manager know it's waiting on them, in the same format as every other approval-chain email.
     public void notifyPreCheckSubmitted(Server server, String submittedBy, String migrationManagerEmail) {
-        List<SignOff> serverSignOffs = signOffRepository.findByServerId(server.getId());
         int workspacePairCount = workspacePairRepository.findByServerId(server.getId()).size();
         Project project = server.getProject();
         String projectName = project != null ? project.getName() : "-";
         emailService.notifyMigrationManagerPreCheckSubmitted(projectName, server.getName(), workspacePairCount,
-                submittedBy, overallStatusLabel(serverSignOffs), migrationManagerEmail);
+                submittedBy, migrationManagerEmail);
     }
 
-    private void applyServerStats(SignOffApprovalDto dto, Server server) {
+    // Server-level stats used to build a SignOffApprovalDto. Computed once per server (see
+    // computeServerStats) so a server's pairs/escalations/submission aren't re-queried for each of
+    // its three sign-off rows.
+    private record ServerStats(long openEscalations, int totalPairs, String submittedBy, LocalDateTime submittedAt) {
+    }
+
+    private ServerStats computeServerStats(Server server) {
+        long openEscalations = ticketService.countOpenForServer(server.getId());
+        int totalPairs = workspacePairRepository.findByServerId(server.getId()).size();
+        return preCheckSubmissionRepository.findByServerId(server.getId())
+                .map(sub -> new ServerStats(openEscalations, totalPairs, sub.getSubmittedBy(), sub.getSubmittedAt()))
+                .orElseGet(() -> new ServerStats(openEscalations, totalPairs, null, null));
+    }
+
+    private void applyServerStats(SignOffApprovalDto dto, Server server, ServerStats stats) {
         dto.setServerId(server.getId());
         dto.setServerName(server.getName());
-
-        long openEscalations = escalationService.countOpenForServer(server.getId());
-        int totalPairs = workspacePairRepository.findByServerId(server.getId()).size();
-        dto.setTotalPairs(totalPairs);
-        dto.setOpenEscalationCount(openEscalations);
-        dto.setReadinessStatus(ServerReadinessDto.computeReadinessStatus(server.getStatus(), openEscalations));
+        dto.setTotalPairs(stats.totalPairs());
+        dto.setOpenEscalationCount(stats.openEscalations());
+        dto.setReadinessStatus(ServerReadinessDto.computeReadinessStatus(server.getStatus(), stats.openEscalations()));
 
         if (server.getProject() != null) {
             dto.setProjectId(server.getProject().getId());
@@ -436,18 +444,16 @@ public class SignOffService {
     }
 
     private SignOffApprovalDto toApprovalDto(SignOff signOff, Server server, List<SignOff> serverSignOffs,
-                                              String actorEmail) {
+                                              String actorEmail, ServerStats stats) {
         SignOffApprovalDto dto = new SignOffApprovalDto();
         dto.setId(signOff.getId());
-        applyServerStats(dto, server);
+        applyServerStats(dto, server, stats);
 
         dto.setRole(signOff.getRole());
         dto.setAssignedName(signOff.getSignedBy());
         dto.setStatus(signOff.getStatus());
-        preCheckSubmissionRepository.findByServerId(server.getId()).ifPresent(sub -> {
-            dto.setSubmittedBy(sub.getSubmittedBy());
-            dto.setSubmittedAt(sub.getSubmittedAt());
-        });
+        dto.setSubmittedBy(stats.submittedBy());
+        dto.setSubmittedAt(stats.submittedAt());
         dto.setApprovedBy(signOff.getApprovedBy());
         dto.setApprovedAt(signOff.getApprovedAt());
         dto.setOverallStatus(overallStatusLabel(serverSignOffs));

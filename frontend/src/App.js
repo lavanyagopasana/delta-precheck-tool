@@ -1,20 +1,23 @@
-import React, { useEffect, useState } from "react";
+import React, { Suspense, lazy, useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthenticatedTemplate, UnauthenticatedTemplate, useMsal } from "@azure/msal-react";
 import NavBar from "./components/NavBar";
 import { ToastProvider } from "./components/Toast";
 import { ConfirmProvider } from "./components/ConfirmDialog";
-import Dashboard from "./pages/Dashboard";
-import ProjectsPage from "./pages/ProjectsPage";
-import ProjectDetailsPage from "./pages/ProjectDetailsPage";
-import ServerPreCheckPage from "./pages/ServerPreCheckPage";
-import EscalationsPage from "./pages/EscalationsPage";
-import ApprovalsPage from "./pages/ApprovalsPage";
-import AdminUsersPage from "./pages/AdminUsersPage";
-import LoginPage from "./pages/LoginPage";
 import { AUTH_CONFIGURED, ALLOWED_EMAIL_DOMAIN } from "./auth/authConfig";
 import { CurrentUserContext } from "./auth/CurrentUserContext";
 import { getCurrentUser } from "./api/client";
+
+// Route components are code-split: each becomes its own lazily-loaded chunk so the initial bundle
+// only carries the shell (NavBar, providers) plus whichever route the user actually lands on.
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const ProjectsPage = lazy(() => import("./pages/ProjectsPage"));
+const ProjectDetailsPage = lazy(() => import("./pages/ProjectDetailsPage"));
+const ServerPreCheckPage = lazy(() => import("./pages/ServerPreCheckPage"));
+const TicketsPage = lazy(() => import("./pages/TicketsPage"));
+const ApprovalsPage = lazy(() => import("./pages/ApprovalsPage"));
+const AdminUsersPage = lazy(() => import("./pages/AdminUsersPage"));
+const LoginPage = lazy(() => import("./pages/LoginPage"));
 
 // Local-only sign-out (matches NavBar.js): MSAL's logoutRedirect() either shows Microsoft's
 // hosted "pick an account" page, or crashes outright if given an onRedirectNavigate callback
@@ -133,6 +136,12 @@ function AccessGate({ children }) {
   return <CurrentUserContext.Provider value={me}>{children}</CurrentUserContext.Provider>;
 }
 
+// Shown while a lazily-loaded route chunk is being fetched -- matches the app's existing inline
+// loading copy (e.g. "Loading dashboard...") rather than a blank screen.
+function RouteFallback() {
+  return <p style={{ textAlign: "center", marginTop: 80 }}>Loading...</p>;
+}
+
 function AppShell() {
   return (
     <BrowserRouter>
@@ -141,15 +150,17 @@ function AppShell() {
         <div className="app-shell">
           <NavBar />
           <div className="main-content">
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/projects" element={<ProjectsPage />} />
-              <Route path="/projects/:id" element={<ProjectDetailsPage />} />
-              <Route path="/servers/:serverId/precheck" element={<ServerPreCheckPage />} />
-              <Route path="/escalations" element={<EscalationsPage />} />
-              <Route path="/approvals" element={<ApprovalsPage />} />
-              <Route path="/admin" element={<AdminUsersPage />} />
-            </Routes>
+            <Suspense fallback={<RouteFallback />}>
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/projects" element={<ProjectsPage />} />
+                <Route path="/projects/:id" element={<ProjectDetailsPage />} />
+                <Route path="/servers/:serverId/precheck" element={<ServerPreCheckPage />} />
+                <Route path="/tickets" element={<TicketsPage />} />
+                <Route path="/approvals" element={<ApprovalsPage />} />
+                <Route path="/admin" element={<AdminUsersPage />} />
+              </Routes>
+            </Suspense>
           </div>
         </div>
         </ConfirmProvider>
@@ -166,7 +177,9 @@ export default function App() {
   return (
     <>
       <UnauthenticatedTemplate>
-        <LoginPage />
+        <Suspense fallback={<RouteFallback />}>
+          <LoginPage />
+        </Suspense>
       </UnauthenticatedTemplate>
       <AuthenticatedTemplate>
         <AccessGate>

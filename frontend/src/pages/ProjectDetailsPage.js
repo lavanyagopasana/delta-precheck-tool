@@ -201,6 +201,7 @@ export default function ProjectDetailsPage() {
           title={`Import servers + migration pairs into ${project.name}`}
           columns={SAMPLE_CSV_COLUMNS_GLOBAL}
           sampleRow={SAMPLE_ROW_GLOBAL}
+          sampleFileName="servers-migration-pairs-sample.csv"
           onUpload={(file) => importWorkspacePairsCsvGlobal(file, project.id)}
           onImported={load}
         />

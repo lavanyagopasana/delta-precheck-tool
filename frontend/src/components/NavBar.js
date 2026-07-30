@@ -3,10 +3,9 @@ import { NavLink } from "react-router-dom";
 import { useMsal } from "@azure/msal-react";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
 import { useCurrentUser } from "../auth/CurrentUserContext";
-import { getOpenEscalationCount } from "../api/client";
+import { getOpenTicketCount } from "../api/client";
+import { TICKET_POLL_MS } from "../constants";
 import cloudfuzeLogo from "../assets/cloudfuze-logo.svg";
-
-const ESCALATION_POLL_MS = 30000;
 
 const ICONS = {
   dashboard: (
@@ -47,7 +46,7 @@ const BASE_LINKS = [
   { to: "/", end: true, icon: "dashboard", label: "Dashboard" },
   { to: "/projects", icon: "projects", label: "Projects" },
   { to: "/approvals", icon: "approvals", label: "Approvals" },
-  { to: "/escalations", icon: "escalations", label: "Jira Tickets Tracking" },
+  { to: "/tickets", icon: "escalations", label: "Ticket Tracker" },
 ];
 
 const ADMIN_LINK = { to: "/admin", icon: "admin", label: "Admin" };
@@ -165,14 +164,14 @@ export default function NavBar() {
   useEffect(() => {
     let cancelled = false;
     const poll = () => {
-      getOpenEscalationCount()
+      getOpenTicketCount()
         .then((count) => {
           if (!cancelled) setOpenEscalationCount(count);
         })
         .catch(() => {});
     };
     poll();
-    const interval = setInterval(poll, ESCALATION_POLL_MS);
+    const interval = setInterval(poll, TICKET_POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -183,11 +182,11 @@ export default function NavBar() {
     <div className="sidebar">
       <div className="brand">
         <div className="brand-mark">
-          <img src={cloudfuzeLogo} alt="CloudFuze" />
+          <img src={cloudfuzeLogo} alt="CloudFuze" width="56" height="30" />
         </div>
         <div className="brand-text">
-          <strong>Delta Pre-Check</strong>
-          <span>Tool</span>
+          <strong>Delta Migration</strong>
+          <span>Readiness Tracker</span>
         </div>
       </div>
       <div className="sidebar-body">
@@ -201,7 +200,7 @@ export default function NavBar() {
             >
               <span className="nav-icon">{ICONS[link.icon]}</span>
               {link.label}
-              {link.to === "/escalations" && openEscalationCount > 0 && (
+              {link.to === "/tickets" && openEscalationCount > 0 && (
                 <span className="nav-badge">{openEscalationCount}</span>
               )}
             </NavLink>

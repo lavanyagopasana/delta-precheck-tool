@@ -1,11 +1,13 @@
 package com.cloudfuze.deltatracker.service;
 
+import com.cloudfuze.deltatracker.config.AsyncConfig;
 import jakarta.mail.internet.MimeMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -44,6 +46,10 @@ public class EmailService {
         this.mailSender = mailSender;
     }
 
+    // @Async: SMTP send runs on the emailExecutor pool, not the request thread. Caller (SignOffService/
+    // PreCheckSubmissionService) computes all args synchronously inside its transaction, so nothing here
+    // touches a lazy entity -- these methods take only primitives/strings and are safe off-thread.
+    @Async(AsyncConfig.EMAIL_EXECUTOR)
     public void notifyMigrationEngineersDeltaInitiated(String serverName, String initiatedBy, LocalDateTime initiatedAt,
                                                         List<String> migrationEngineerEmails) {
         if (migrationEngineerEmails.isEmpty()) {
@@ -72,8 +78,9 @@ public class EmailService {
         send(migrationEngineerEmails.toArray(new String[0]), subject, html, text);
     }
 
+    @Async(AsyncConfig.EMAIL_EXECUTOR)
     public void notifyMigrationManagerPreCheckSubmitted(String projectName, String serverName, int workspacePairCount,
-                                                         String submittedBy, String chainStatus, String managerEmail) {
+                                                         String submittedBy, String managerEmail) {
         String subject = "Pre-check submitted: " + serverName + " (" + projectName + ")";
         List<String[]> fields = fieldRows(projectName, serverName, workspacePairCount, submittedBy);
 
@@ -87,8 +94,9 @@ public class EmailService {
         send(new String[] { managerEmail }, subject, html, text);
     }
 
+    @Async(AsyncConfig.EMAIL_EXECUTOR)
     public void notifyApprovalRequired(String roleLabel, String projectName, String serverName, int workspacePairCount,
-                                        String submittedBy, String chainStatus, List<String> recipientEmails) {
+                                        String submittedBy, List<String> recipientEmails) {
         if (recipientEmails.isEmpty()) {
             log.warn("Approval required ({}) for \"{}\" but no {} is configured -- no email sent.",
                     roleLabel, serverName, roleLabel);
@@ -107,9 +115,9 @@ public class EmailService {
         send(recipientEmails.toArray(new String[0]), subject, html, text);
     }
 
+    @Async(AsyncConfig.EMAIL_EXECUTOR)
     public void notifyMigrationManagerDeltaReady(String projectName, String serverName, int workspacePairCount,
-                                                  String preCheckSubmittedBy, String approvalChainSummary,
-                                                  String managerEmail) {
+                                                  String preCheckSubmittedBy, String managerEmail) {
         String subject = "Delta Ready: " + serverName + " (" + projectName + ")";
         List<String[]> fields = fieldRows(projectName, serverName, workspacePairCount, preCheckSubmittedBy);
 

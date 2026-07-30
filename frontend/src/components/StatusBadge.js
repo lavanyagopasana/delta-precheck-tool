@@ -22,18 +22,7 @@ export function ReadinessDot({ status }) {
   );
 }
 
-export function EscalationStatusBadge({ status }) {
+export function TicketStatusBadge({ status }) {
   const color = status === "OPEN" ? "red" : "green";
   return <span className={`badge ${color}`}>{status}</span>;
-}
-
-const PRIORITY_STYLE = {
-  LOW: { color: "gray", label: "Low" },
-  MEDIUM: { color: "yellow", label: "Medium" },
-  HIGH: { color: "red", label: "High" },
-};
-
-export function PriorityBadge({ priority }) {
-  const style = PRIORITY_STYLE[priority] || { color: "gray", label: priority };
-  return <span className={`badge ${style.color}`}>{style.label}</span>;
 }

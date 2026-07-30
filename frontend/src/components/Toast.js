@@ -1,19 +1,29 @@
-import React, { createContext, useCallback, useContext, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
 const ToastContext = createContext(() => {});
 
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
   const idRef = useRef(0);
+  // Track every pending auto-dismiss timer so they can all be cleared if the provider unmounts,
+  // avoiding a setState-after-unmount on a stray timeout.
+  const timersRef = useRef(new Set());
 
   // showToast(message) or showToast(message, "success" | "error" | "info"). Errors linger a bit
   // longer since they usually carry something the user needs to read and act on.
   const showToast = useCallback((message, type = "info") => {
     const id = ++idRef.current;
     setToasts((prev) => [...prev, { id, message, type }]);
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
+      timersRef.current.delete(timer);
     }, type === "error" ? 6000 : 3000);
+    timersRef.current.add(timer);
+  }, []);
+
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => timers.forEach(clearTimeout);
   }, []);
 
   return (

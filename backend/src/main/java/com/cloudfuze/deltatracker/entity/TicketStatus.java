@@ -1,6 +1,6 @@
 package com.cloudfuze.deltatracker.entity;
 
-public enum EscalationStatus {
+public enum TicketStatus {
     OPEN,
     RESOLVED
 }

@@ -6,6 +6,8 @@ import Modal from "../components/Modal";
 import PreCheckPanel from "../components/PreCheckPanel";
 import { useToast } from "../components/Toast";
 import { useConfirm } from "../components/ConfirmDialog";
+import { apiErrorMessage } from "../utils/apiError";
+import { emailLocalPart } from "../utils/format";
 
 const ROLE_LABELS = {
   MIGRATION_LEAD: "Migration Manager",
@@ -31,8 +33,7 @@ function primaryRowFor(rows) {
   );
 }
 
-function OverallStepper({ approval, allApprovals }) {
-  const siblings = allApprovals.filter((a) => a.serverId === approval.serverId);
+function OverallStepper({ approval, siblings }) {
   const stepFor = (role) => siblings.find((s) => s.role === role);
 
   return (
@@ -198,15 +199,21 @@ export default function ApprovalsPage() {
   const statusParam = searchParams.get("status");
   const [approvals, setApprovals] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [filter, setFilter] = useState(
     ["PENDING", "APPROVED", "DECLINED"].includes(statusParam) ? statusParam : "ALL"
   );
+  const [projectFilter, setProjectFilter] = useState(projectParam || "ALL");
   const [preCheckFor, setPreCheckFor] = useState(null);
 
   const load = () => {
     setLoading(true);
     getSignOffApprovals()
-      .then(setApprovals)
+      .then((data) => {
+        setApprovals(data);
+        setLoadError(null);
+      })
+      .catch((err) => setLoadError(apiErrorMessage(err, "Failed to load approvals.")))
       .finally(() => setLoading(false));
   };
 
@@ -214,35 +221,43 @@ export default function ApprovalsPage() {
 
   if (loading) return <p>Loading approvals...</p>;
 
+  if (loadError) {
+    return (
+      <div>
+        <h2>Approvals</h2>
+        <div className="inline-hint">{loadError}</div>
+        <button className="btn secondary" style={{ marginTop: 12 }} onClick={load}>
+          Retry
+        </button>
+      </div>
+    );
+  }
+
   const bySever = new Map();
   approvals.forEach((a) => {
     if (!bySever.has(a.serverId)) bySever.set(a.serverId, []);
     bySever.get(a.serverId).push(a);
   });
   const rows = Array.from(bySever.values()).map(primaryRowFor);
-  const projectName = projectParam
-    ? rows.find((a) => String(a.projectId) === String(projectParam))?.projectName
-    : null;
+  // Project filter options are derived from the approvals themselves -- no extra API call needed.
+  const projectOptions = Array.from(
+    approvals
+      .reduce((m, a) => {
+        if (a.projectId != null && !m.has(a.projectId)) m.set(a.projectId, a.projectName || String(a.projectId));
+        return m;
+      }, new Map())
+      .entries()
+  )
+    .map(([id, name]) => ({ id, name }))
+    .sort((x, y) => x.name.localeCompare(y.name));
   const filtered = rows.filter(
     (a) =>
       (filter === "ALL" || a.status === filter) &&
-      (!projectParam || String(a.projectId) === String(projectParam))
+      (projectFilter === "ALL" || String(a.projectId) === String(projectFilter))
   );
 
   return (
     <div>
-      {projectParam && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-          <span className="badge gray">Project: {projectName || projectParam}</span>
-          <button
-            className="btn secondary"
-            style={{ padding: "4px 10px", fontSize: 12 }}
-            onClick={() => navigate("/approvals")}
-          >
-            Show all approvals
-          </button>
-        </div>
-      )}
       <DataTable
         title="Approvals"
         rows={filtered}
@@ -251,12 +266,22 @@ export default function ApprovalsPage() {
         searchPlaceholder="Filter approvals..."
         emptyMessage="No approval requests yet."
         toolbarRight={
-          <select value={filter} onChange={(e) => setFilter(e.target.value)} style={{ minWidth: 150 }}>
-            <option value="ALL">All statuses</option>
-            <option value="PENDING">Pending</option>
-            <option value="APPROVED">Approved</option>
-            <option value="DECLINED">Declined</option>
-          </select>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ minWidth: 150 }}>
+              <option value="ALL">All projects</option>
+              {projectOptions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <select value={filter} onChange={(e) => setFilter(e.target.value)} style={{ minWidth: 150 }}>
+              <option value="ALL">All statuses</option>
+              <option value="PENDING">Pending</option>
+              <option value="APPROVED">Approved</option>
+              <option value="DECLINED">Declined</option>
+            </select>
+          </div>
         }
         columns={[
           { key: "projectName", label: "Project", render: (a) => a.projectName || "-" },
@@ -275,7 +300,7 @@ export default function ApprovalsPage() {
             label: "Submitted By",
             render: (a) => (
               <div>
-                <div style={{ fontSize: 13, whiteSpace: "nowrap" }}>{a.submittedBy || "-"}</div>
+                <div style={{ fontSize: 13, whiteSpace: "nowrap" }} title={a.submittedBy || undefined}>{a.submittedBy ? emailLocalPart(a.submittedBy) : "-"}</div>
                 {a.submittedAt && (
                   <div style={{ fontSize: 11, color: "var(--color-text-faint)", whiteSpace: "nowrap" }}>
                     {new Date(a.submittedAt).toLocaleString()}
@@ -290,7 +315,7 @@ export default function ApprovalsPage() {
             sortable: false,
             render: (a) => (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7 }}>
-                <OverallStepper approval={a} allApprovals={approvals} />
+                <OverallStepper approval={a} siblings={bySever.get(a.serverId) || []} />
                 <CurrentStatusText label={a.currentStatus} />
               </div>
             ),

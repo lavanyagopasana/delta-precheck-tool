@@ -18,6 +18,14 @@ public class SignOff {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // Optimistic-lock guard: two approvers acting on the same sign-off row concurrently would both
+    // read version N; the second flush to commit fails with an optimistic-lock exception (mapped to
+    // HTTP 409) instead of silently clobbering the first approval. Defaulted to 0 for rows that
+    // predate this column (the ALTER adds it with DEFAULT 0).
+    @Version
+    @Column(nullable = false)
+    private Long version = 0L;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "server_id", nullable = false)
     private Server server;

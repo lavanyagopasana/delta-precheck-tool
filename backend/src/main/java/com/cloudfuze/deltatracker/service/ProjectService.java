@@ -9,6 +9,7 @@ import com.cloudfuze.deltatracker.entity.AppUserRole;
 import com.cloudfuze.deltatracker.entity.PairStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckItem;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
+import com.cloudfuze.deltatracker.entity.WorkspacePair;
 import com.cloudfuze.deltatracker.entity.ProductType;
 import com.cloudfuze.deltatracker.entity.Project;
 import com.cloudfuze.deltatracker.entity.Server;
@@ -16,22 +17,27 @@ import com.cloudfuze.deltatracker.entity.SignOff;
 import com.cloudfuze.deltatracker.entity.SignOffRole;
 import com.cloudfuze.deltatracker.entity.SignOffStatus;
 import com.cloudfuze.deltatracker.entity.SubmissionStatus;
+import com.cloudfuze.deltatracker.entity.Ticket;
+import com.cloudfuze.deltatracker.entity.TicketStatus;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
-import com.cloudfuze.deltatracker.repository.EscalationRepository;
 import com.cloudfuze.deltatracker.repository.PreCheckItemRepository;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
 import com.cloudfuze.deltatracker.repository.ProjectRepository;
 import com.cloudfuze.deltatracker.repository.ServerRepository;
 import com.cloudfuze.deltatracker.repository.SignOffRepository;
+import com.cloudfuze.deltatracker.repository.TicketRepository;
 import com.cloudfuze.deltatracker.repository.WorkspacePairRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -40,18 +46,16 @@ import java.util.Set;
 @Transactional
 public class ProjectService {
 
-    // Same order as SignOffService.APPROVAL_SEQUENCE: Migration Manager, then Dev, then QA.
-    private static final List<SignOffRole> APPROVAL_SEQUENCE =
-            List.of(SignOffRole.MIGRATION_LEAD, SignOffRole.DEV_LEAD, SignOffRole.QA_LEAD);
+    // Canonical order lives on SignOffRole.APPROVAL_SEQUENCE (no longer duplicated here).
+    private static final List<SignOffRole> APPROVAL_SEQUENCE = SignOffRole.APPROVAL_SEQUENCE;
 
     private final ProjectRepository projectRepository;
     private final ServerRepository serverRepository;
     private final WorkspacePairRepository workspacePairRepository;
-    private final EscalationService escalationService;
     private final SignOffRepository signOffRepository;
     private final PreCheckSubmissionRepository preCheckSubmissionRepository;
     private final PreCheckItemRepository preCheckItemRepository;
-    private final EscalationRepository escalationRepository;
+    private final TicketRepository ticketRepository;
     private final FileStorageService fileStorageService;
     private final ServerService serverService;
     private final AppUserService appUserService;
@@ -59,22 +63,20 @@ public class ProjectService {
     public ProjectService(ProjectRepository projectRepository,
                            ServerRepository serverRepository,
                            WorkspacePairRepository workspacePairRepository,
-                           EscalationService escalationService,
                            SignOffRepository signOffRepository,
                            PreCheckSubmissionRepository preCheckSubmissionRepository,
                            PreCheckItemRepository preCheckItemRepository,
-                           EscalationRepository escalationRepository,
+                           TicketRepository ticketRepository,
                            FileStorageService fileStorageService,
                            ServerService serverService,
                            AppUserService appUserService) {
         this.projectRepository = projectRepository;
         this.serverRepository = serverRepository;
         this.workspacePairRepository = workspacePairRepository;
-        this.escalationService = escalationService;
         this.signOffRepository = signOffRepository;
         this.preCheckSubmissionRepository = preCheckSubmissionRepository;
         this.preCheckItemRepository = preCheckItemRepository;
-        this.escalationRepository = escalationRepository;
+        this.ticketRepository = ticketRepository;
         this.fileStorageService = fileStorageService;
         this.serverService = serverService;
         this.appUserService = appUserService;
@@ -109,9 +111,9 @@ public class ProjectService {
     // whichever role is next -- so the UI can show something more useful than a plain readiness dot.
     private void applyReadinessStage(ServerReadinessDto server) {
         Long serverId = server.getServerId();
-        SubmissionStatus submissionStatus = preCheckSubmissionRepository.findByServerId(serverId)
-                .map(PreCheckSubmission::getStatus)
-                .orElse(SubmissionStatus.NOT_STARTED);
+        // buildReadiness already resolved the submission status onto the DTO (never null) -- reuse it
+        // instead of re-querying the submission for every server.
+        SubmissionStatus submissionStatus = server.getSubmissionStatus();
         if (submissionStatus != SubmissionStatus.SUBMITTED) {
             server.setReadinessStage("NOT_SUBMITTED");
             server.setReadinessDetail("Pre-check isn't submitted yet");
@@ -134,11 +136,7 @@ public class ProjectService {
     }
 
     private static String roleLabel(SignOffRole role) {
-        return switch (role) {
-            case MIGRATION_LEAD -> "Migration Manager";
-            case DEV_LEAD -> "Dev Lead";
-            case QA_LEAD -> "QA Lead";
-        };
+        return role.label();
     }
 
     // A Migration Manager creating a project is automatically that project's manager -- no
@@ -277,7 +275,7 @@ public class ProjectService {
             preCheckSubmissionRepository.findByServerId(server.getId())
                     .ifPresent(preCheckSubmissionRepository::delete);
             signOffRepository.deleteAll(signOffRepository.findByServerId(server.getId()));
-            escalationRepository.deleteAll(escalationRepository.findByServerId(server.getId()));
+            ticketRepository.deleteAll(ticketRepository.findByServerId(server.getId()));
             // Workspace pairs cascade via Server's @OneToMany(orphanRemoval=true) on delete.
             serverRepository.delete(server);
         }
@@ -380,13 +378,34 @@ public class ProjectService {
                 .filter(s -> s.getProject() != null && s.getProject().getId().equals(project.getId()))
                 .toList();
 
-        long totalPairs = servers.stream()
-                .mapToLong(s -> workspacePairRepository.findByServerId(s.getId()).size())
-                .sum();
+        // Batch-load this project's server-level data in a handful of IN queries instead of ~5
+        // queries per server. Same values, same order-independent aggregates -- purely fewer trips.
+        List<Long> serverIds = servers.stream().map(Server::getId).toList();
+        Map<Long, Long> pairCountByServer = new HashMap<>();
+        Map<Long, Long> openEscalationByServer = new HashMap<>();
+        Map<Long, EnumMap<SignOffRole, SignOffStatus>> signOffByServer = new HashMap<>();
+        Map<Long, PreCheckSubmission> submissionByServer = new HashMap<>();
+        if (!serverIds.isEmpty()) {
+            for (WorkspacePair wp : workspacePairRepository.findByServerIdIn(serverIds)) {
+                pairCountByServer.merge(wp.getServer().getId(), 1L, Long::sum);
+            }
+            for (Ticket t : ticketRepository.findByServerIdIn(serverIds)) {
+                if (t.getStatus() == TicketStatus.OPEN) {
+                    openEscalationByServer.merge(t.getServer().getId(), 1L, Long::sum);
+                }
+            }
+            for (SignOff so : signOffRepository.findByServerIdIn(serverIds)) {
+                signOffByServer.computeIfAbsent(so.getServer().getId(), k -> new EnumMap<>(SignOffRole.class))
+                        .put(so.getRole(), so.getStatus());
+            }
+            for (PreCheckSubmission sub : preCheckSubmissionRepository.findByServerIdIn(serverIds)) {
+                submissionByServer.put(sub.getServer().getId(), sub);
+            }
+        }
+
+        long totalPairs = servers.stream().mapToLong(s -> pairCountByServer.getOrDefault(s.getId(), 0L)).sum();
         long readyServers = servers.stream().filter(s -> s.getStatus() == PairStatus.DELTA_READY).count();
-        long openEscalations = servers.stream()
-                .mapToLong(s -> escalationService.countOpenForServer(s.getId()))
-                .sum();
+        long openEscalations = servers.stream().mapToLong(s -> openEscalationByServer.getOrDefault(s.getId(), 0L)).sum();
         List<String> migrationManagers = project.getMigrationManagerName() != null
                 ? List.of(project.getMigrationManagerName())
                 : List.of();
@@ -399,28 +418,24 @@ public class ProjectService {
         long devDone = 0;
         long devPending = 0;
         for (Server s : servers) {
-            Optional<SignOffStatus> mmStatus = signOffRepository
-                    .findByServerIdAndRole(s.getId(), SignOffRole.MIGRATION_LEAD)
-                    .map(SignOff::getStatus);
-            Optional<SignOffStatus> devStatus = signOffRepository
-                    .findByServerIdAndRole(s.getId(), SignOffRole.DEV_LEAD)
-                    .map(SignOff::getStatus);
+            EnumMap<SignOffRole, SignOffStatus> roles = signOffByServer.get(s.getId());
+            SignOffStatus mmStatus = roles == null ? null : roles.get(SignOffRole.MIGRATION_LEAD);
+            SignOffStatus devStatus = roles == null ? null : roles.get(SignOffRole.DEV_LEAD);
 
-            if (mmStatus.filter(status -> status == SignOffStatus.APPROVED).isPresent()) {
+            if (mmStatus == SignOffStatus.APPROVED) {
                 migrationManagerDone++;
-            } else if (mmStatus.filter(status -> status == SignOffStatus.PENDING).isPresent()) {
+            } else if (mmStatus == SignOffStatus.PENDING) {
                 migrationManagerPending++;
             }
 
-            if (devStatus.filter(status -> status == SignOffStatus.APPROVED).isPresent()) {
+            if (devStatus == SignOffStatus.APPROVED) {
                 devDone++;
-            } else if (devStatus.filter(status -> status == SignOffStatus.PENDING).isPresent()
-                    && mmStatus.filter(status -> status == SignOffStatus.APPROVED).isPresent()) {
+            } else if (devStatus == SignOffStatus.PENDING && mmStatus == SignOffStatus.APPROVED) {
                 devPending++;
             }
         }
         LocalDateTime lastPreCheckSubmittedAt = servers.stream()
-                .map(s -> preCheckSubmissionRepository.findByServerId(s.getId()).orElse(null))
+                .map(s -> submissionByServer.get(s.getId()))
                 .filter(Objects::nonNull)
                 .filter(sub -> sub.getStatus() == SubmissionStatus.SUBMITTED)
                 .map(PreCheckSubmission::getSubmittedAt)

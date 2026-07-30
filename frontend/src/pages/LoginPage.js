@@ -129,7 +129,7 @@ export default function LoginPage() {
         <div className="login-form-glow bottom" aria-hidden="true" />
 
         <div className="card login-card">
-          <img src={cloudfuzeLogo} alt="CloudFuze" className="login-card-logo" />
+          <img src={cloudfuzeLogo} alt="CloudFuze" className="login-card-logo" width="74" height="40" />
           <div className="login-card-eyebrow">Delta Pre-Check Tool</div>
           <h2 style={{ justifyContent: "center", marginBottom: 4 }}>Welcome back</h2>
           <p style={{ color: "var(--color-text-muted)", fontSize: 13.5, marginTop: 0, marginBottom: 28 }}>

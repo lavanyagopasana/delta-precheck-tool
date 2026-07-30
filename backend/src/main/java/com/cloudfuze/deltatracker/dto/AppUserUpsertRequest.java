@@ -1,6 +1,7 @@
 package com.cloudfuze.deltatracker.dto;
 
 import com.cloudfuze.deltatracker.entity.AppUserRole;
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Getter;
@@ -10,7 +11,10 @@ import lombok.Setter;
 @Setter
 public class AppUserUpsertRequest {
 
+    // @Email added: this value becomes both the allowlist identity and an EmailService recipient, so
+    // a malformed string here would silently produce undeliverable notifications.
     @NotBlank
+    @Email(message = "Enter a valid email address")
     private String email;
 
     @NotNull

@@ -4,6 +4,7 @@ import com.cloudfuze.deltatracker.dto.PreCheckItemDto;
 import com.cloudfuze.deltatracker.dto.PreCheckItemUpdateRequest;
 import com.cloudfuze.deltatracker.entity.ItemStatus;
 import com.cloudfuze.deltatracker.service.PreCheckItemService;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -26,7 +27,7 @@ public class PreCheckItemController {
     @PostMapping("/{itemId}")
     public PreCheckItemDto update(@PathVariable Long serverId,
                                    @PathVariable Long itemId,
-                                   @RequestBody PreCheckItemUpdateRequest request) {
+                                   @Valid @RequestBody PreCheckItemUpdateRequest request) {
         return preCheckItemService.update(serverId, itemId, request);
     }
 

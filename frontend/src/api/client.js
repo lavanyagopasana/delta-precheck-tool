@@ -23,8 +23,6 @@ export const getDashboardSummary = () => client.get("/dashboard/summary").then((
 export const getServers = () => client.get("/servers").then((r) => r.data);
 export const getServerReadiness = (serverId) =>
   client.get(`/servers/${serverId}/readiness`).then((r) => r.data);
-export const assignServerProject = (serverId, projectId) =>
-  client.post(`/servers/${serverId}/project`, { projectId }).then((r) => r.data);
 export const startDelta = (serverId) =>
   client.post(`/servers/${serverId}/delta/start`).then((r) => r.data);
 export const finishDelta = (serverId) =>
@@ -72,10 +70,6 @@ export const SAMPLE_CSV_COLUMNS_GLOBAL = ["server_name", ...SAMPLE_CSV_COLUMNS];
 
 export const updatePreCheckItem = (serverId, itemId, payload) =>
   client.post(`/servers/${serverId}/precheck-items/${itemId}`, payload).then((r) => r.data);
-export const checkAllPreCheckItems = (serverId, status, updatedBy) =>
-  client
-    .post(`/servers/${serverId}/precheck-items/check-all`, null, { params: { status, updatedBy } })
-    .then((r) => r.data);
 
 export const getPreCheckSubmission = (serverId, viewerEmail) =>
   client.get(`/servers/${serverId}/precheck-submission`, { params: { viewerEmail } }).then((r) => r.data);
@@ -108,15 +102,17 @@ export const importUsersCsv = (file, role) => {
     .then((r) => r.data);
 };
 
-export const getEscalations = () => client.get("/escalations").then((r) => r.data);
-export const getOpenEscalationCount = () =>
-  client.get("/escalations/open-count").then((r) => r.data.count);
-export const createEscalation = (payload) => client.post("/escalations", payload).then((r) => r.data);
-export const resolveEscalation = (id, resolutionNotes) =>
-  client.patch(`/escalations/${id}/resolve`, { resolutionNotes }).then((r) => r.data);
-export const updateEscalation = (id, payload) =>
-  client.put(`/escalations/${id}`, payload).then((r) => r.data);
-export const removeEscalation = (id) => client.delete(`/escalations/${id}`).then((r) => r.data);
+export const getTickets = () => client.get("/tickets").then((r) => r.data);
+export const getOpenTicketCount = () =>
+  client.get("/tickets/open-count").then((r) => r.data.count);
+export const validateTicketUrl = (url) =>
+  client.post("/tickets/validate-url", { url }).then((r) => r.data);
+export const createTicket = (payload) => client.post("/tickets", payload).then((r) => r.data);
+export const resolveTicket = (id) =>
+  client.patch(`/tickets/${id}/resolve`).then((r) => r.data);
+export const updateTicket = (id, payload) =>
+  client.put(`/tickets/${id}`, payload).then((r) => r.data);
+export const removeTicket = (id) => client.delete(`/tickets/${id}`).then((r) => r.data);
 
 export const approveSignOff = (serverId, role, approverEmail, qaRequired) =>
   client.post(`/servers/${serverId}/signoffs/${role}/approve`, { approverEmail, qaRequired }).then((r) => r.data);

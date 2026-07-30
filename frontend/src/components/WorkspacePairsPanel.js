@@ -66,6 +66,7 @@ export default function WorkspacePairsPanel({
           title="Import migration pairs from CSV"
           columns={SAMPLE_CSV_COLUMNS}
           sampleRow={SAMPLE_ROW}
+          sampleFileName="migration-pairs-sample.csv"
           onUpload={(file) => importWorkspacePairsCsv(serverId, file)}
           onImported={load}
         />

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 
 // Lightweight inline-SVG charts for the Dashboard -- no charting dependency, themed with the app's
 // own CSS tokens. A donut (pie) supporting a progress ring or multi-segment split, plus a set of
@@ -90,7 +90,7 @@ function Donut({ title, segments, total, center, centerSub, remainderLabel, size
 }
 
 function ProjectBars({ projects }) {
-  const withServers = projects.filter((p) => (p.serverCount || 0) > 0);
+  const withServers = useMemo(() => projects.filter((p) => (p.serverCount || 0) > 0), [projects]);
   return (
     <div style={{ width: "100%" }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: INK, marginBottom: 14 }}>
@@ -128,15 +128,22 @@ function ProjectBars({ projects }) {
 }
 
 export default function DashboardCharts({ projects }) {
-  const totalServers = projects.reduce((s, p) => s + (p.serverCount || 0), 0);
-  const readyServers = projects.reduce((s, p) => s + (p.readyServerCount || 0), 0);
-  const approvalsDone = projects.reduce(
-    (s, p) => s + (p.migrationManagerApprovalsDone || 0) + (p.devApprovalsDone || 0),
-    0
+  // Chart aggregates memoized on `projects` -- expressions unchanged from their inline form.
+  const totalServers = useMemo(() => projects.reduce((s, p) => s + (p.serverCount || 0), 0), [projects]);
+  const readyServers = useMemo(() => projects.reduce((s, p) => s + (p.readyServerCount || 0), 0), [projects]);
+  const approvalsDone = useMemo(
+    () => projects.reduce(
+      (s, p) => s + (p.migrationManagerApprovalsDone || 0) + (p.devApprovalsDone || 0),
+      0
+    ),
+    [projects]
   );
-  const approvalsPending = projects.reduce(
-    (s, p) => s + (p.migrationManagerApprovalsPending || 0) + (p.devApprovalsPending || 0),
-    0
+  const approvalsPending = useMemo(
+    () => projects.reduce(
+      (s, p) => s + (p.migrationManagerApprovalsPending || 0) + (p.devApprovalsPending || 0),
+      0
+    ),
+    [projects]
   );
   const approvalsTotal = approvalsDone + approvalsPending;
 
