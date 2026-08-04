@@ -2,6 +2,26 @@
 
 Why things are the way they are. Newest first.
 
+## 2026-07-30 — Corrected Azure app registration (the 2026-07-27 pair was stale)
+
+The client ID `a55e053f-bfe9-4b4a-8b74-362649f82cf0` / tenant ID
+`66d8848d-26b6-4147-8124-127624d7b3a6` baked in on 2026-07-27 (see entry below) turned out to be
+wrong — a teammate (Abhinav Surattu) confirmed via the Azure Portal that the actual app
+registration for this project, named **"delta migration readiness tracker"**, is client ID
+`4145c1b2-a596-4d84-bede-6e2ca276c9c7`, tenant ID `807d6772-847c-40e2-9bec-e2c930b3a42e`. This was
+discovered because `frontend/.env.local` had *already* been pointed at this correct pair (source
+unclear), while the backend defaults and docs still had the stale one — so login failed with
+"account does not exist in tenant" for anyone whose `.env.local` had been reset to match the
+(wrong) documented default. Updated `application.properties`, `CLAUDE.md`, and this file to the
+corrected pair.
+
+**Known follow-up, not yet resolved:** this tenant's directory name is `filefuze`, and this single
+tenant registration only accepts accounts that exist in that Entra ID directory. A `cloudfuze.com`
+account (e.g. `lavanya.gopasana@cloudfuze.com`) is rejected by Microsoft itself, before this app's
+own auth logic runs, unless that account is first added as an external/guest user in the
+`filefuze` tenant. This is a directory-membership issue to resolve with whoever administers that
+tenant — not something fixable by changing this app's code or config.
+
 ## 2026-07-27 — Repo pushed to GitHub; new Azure app registration baked in as defaults
 
 **Repo is now live** at `github.com/lavanyagopasana/delta-precheck-tool` (`main` branch) — `git

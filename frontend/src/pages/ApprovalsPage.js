@@ -21,9 +21,9 @@ const STEPS = [
   { role: "QA_LEAD", short: "QA", full: "QA Lead" },
 ];
 
-// The API returns one row per (server, role) -- three rows per server. For the table we only
-// want one row per server: whichever role is currently active. If the whole chain is approved,
-// that's the QA row; if it's blocked by an early decline, show the declined step.
+// The API returns one row per (combination, role) -- three rows per combination. For the table we
+// only want one row per combination: whichever role is currently active. If the whole chain is
+// approved, that's the QA row; if it's blocked by an early decline, show the declined step.
 function primaryRowFor(rows) {
   return (
     rows.find((r) => r.turnReady) ||
@@ -100,15 +100,17 @@ function ActionsCell({ approval, onActed }) {
 
   const roleLabel = ROLE_LABELS[approval.role] || approval.role;
 
+  const label = `${approval.serverName} / ${approval.combinationName}`;
+
   const runApprove = async (qaRequired) => {
     setActing(true);
     setAskingQa(false);
     try {
-      await approveSignOff(approval.serverId, approval.role, undefined, qaRequired);
+      await approveSignOff(approval.combinationId, approval.role, undefined, qaRequired);
       showToast(
         qaRequired === false
-          ? `Approved for ${approval.serverName} -- QA Lead not required, marked Delta Ready.`
-          : `Approved for ${approval.serverName}.`
+          ? `Approved for ${label} -- QA Lead not required, marked Delta Ready.`
+          : `Approved for ${label}.`
       );
       onActed();
     } catch (err) {
@@ -125,7 +127,7 @@ function ActionsCell({ approval, onActed }) {
     }
     const ok = await confirm({
       title: `Approve as ${roleLabel}?`,
-      message: `You're approving the pre-check for ${approval.serverName}.`,
+      message: `You're approving the pre-check for ${label}.`,
       confirmLabel: "Approve",
     });
     if (!ok) return;
@@ -135,15 +137,15 @@ function ActionsCell({ approval, onActed }) {
   const handleReject = async () => {
     const ok = await confirm({
       title: `Reject as ${roleLabel}?`,
-      message: `This sends ${approval.serverName} back a step for rework.`,
+      message: `This sends ${label} back a step for rework.`,
       confirmLabel: "Reject",
       danger: true,
     });
     if (!ok) return;
     setActing(true);
     try {
-      await declineSignOff(approval.serverId, approval.role);
-      showToast(`Rejected for ${approval.serverName}.`);
+      await declineSignOff(approval.combinationId, approval.role);
+      showToast(`Rejected for ${label}.`);
       onActed();
     } catch (err) {
       showToast(err.response?.data?.message || "Failed to reject.");
@@ -176,7 +178,7 @@ function ActionsCell({ approval, onActed }) {
       {askingQa && (
         <Modal title="QA Lead approval needed?" onClose={() => setAskingQa(false)} width={420}>
           <p style={{ fontSize: 13.5, color: "var(--color-text-muted)", marginTop: 0 }}>
-            Does <strong>{approval.serverName}</strong> also need QA Lead approval before it's Delta Ready?
+            Does <strong>{label}</strong> also need QA Lead approval before it's Delta Ready?
           </p>
           <div className="form-actions" style={{ justifyContent: "flex-end", gap: 8 }}>
             <button className="btn secondary" onClick={() => runApprove(false)} disabled={acting}>
@@ -233,12 +235,12 @@ export default function ApprovalsPage() {
     );
   }
 
-  const bySever = new Map();
+  const byCombination = new Map();
   approvals.forEach((a) => {
-    if (!bySever.has(a.serverId)) bySever.set(a.serverId, []);
-    bySever.get(a.serverId).push(a);
+    if (!byCombination.has(a.combinationId)) byCombination.set(a.combinationId, []);
+    byCombination.get(a.combinationId).push(a);
   });
-  const rows = Array.from(bySever.values()).map(primaryRowFor);
+  const rows = Array.from(byCombination.values()).map(primaryRowFor);
   // Project filter options are derived from the approvals themselves -- no extra API call needed.
   const projectOptions = Array.from(
     approvals
@@ -261,8 +263,10 @@ export default function ApprovalsPage() {
       <DataTable
         title="Approvals"
         rows={filtered}
-        rowKey={(a) => a.serverId}
-        onRowClick={(a) => a.projectId && navigate(`/projects/${a.projectId}?server=${a.serverId}`)}
+        rowKey={(a) => a.combinationId}
+        onRowClick={(a) =>
+          a.serverId && navigate(`/servers/${a.serverId}?combination=${encodeURIComponent(a.combinationName)}`)
+        }
         searchPlaceholder="Filter approvals..."
         emptyMessage="No approval requests yet."
         toolbarRight={
@@ -287,10 +291,11 @@ export default function ApprovalsPage() {
           { key: "projectName", label: "Project", render: (a) => a.projectName || "-" },
           {
             key: "serverName",
-            label: "Server",
+            label: "Server / Combination",
             render: (a) => (
               <div>
                 <div style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{a.serverName}</div>
+                <div style={{ fontSize: 12, color: "var(--color-text-muted)", whiteSpace: "nowrap" }}>{a.combinationName}</div>
                 <div style={{ fontSize: 11.5, color: "var(--color-text-faint)" }}>{a.totalPairs} pair(s)</div>
               </div>
             ),
@@ -315,7 +320,7 @@ export default function ApprovalsPage() {
             sortable: false,
             render: (a) => (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7 }}>
-                <OverallStepper approval={a} siblings={bySever.get(a.serverId) || []} />
+                <OverallStepper approval={a} siblings={byCombination.get(a.combinationId) || []} />
                 <CurrentStatusText label={a.currentStatus} />
               </div>
             ),
@@ -350,12 +355,12 @@ export default function ApprovalsPage() {
 
       {preCheckFor && (
         <Modal
-          title={`Pre-Check — ${preCheckFor.serverName}`}
+          title={`Pre-Check — ${preCheckFor.serverName} / ${preCheckFor.combinationName}`}
           onClose={() => setPreCheckFor(null)}
           width={860}
           closeIcon
         >
-          <PreCheckPanel serverId={preCheckFor.serverId} showBackNav={false} showHeader={false} />
+          <PreCheckPanel combinationId={preCheckFor.combinationId} showBackNav={false} showHeader={false} />
         </Modal>
       )}
     </div>

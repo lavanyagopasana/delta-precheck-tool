@@ -19,6 +19,7 @@ import com.cloudfuze.deltatracker.entity.SignOffStatus;
 import com.cloudfuze.deltatracker.entity.SubmissionStatus;
 import com.cloudfuze.deltatracker.entity.Ticket;
 import com.cloudfuze.deltatracker.entity.TicketStatus;
+import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
 import com.cloudfuze.deltatracker.repository.PreCheckItemRepository;
@@ -27,8 +28,10 @@ import com.cloudfuze.deltatracker.repository.ProjectRepository;
 import com.cloudfuze.deltatracker.repository.ServerRepository;
 import com.cloudfuze.deltatracker.repository.SignOffRepository;
 import com.cloudfuze.deltatracker.repository.TicketRepository;
+import com.cloudfuze.deltatracker.repository.WorkspaceCombinationRepository;
 import com.cloudfuze.deltatracker.repository.WorkspacePairRepository;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,6 +44,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional
@@ -52,34 +56,43 @@ public class ProjectService {
     private final ProjectRepository projectRepository;
     private final ServerRepository serverRepository;
     private final WorkspacePairRepository workspacePairRepository;
+    private final WorkspaceCombinationRepository workspaceCombinationRepository;
     private final SignOffRepository signOffRepository;
     private final PreCheckSubmissionRepository preCheckSubmissionRepository;
     private final PreCheckItemRepository preCheckItemRepository;
     private final TicketRepository ticketRepository;
     private final FileStorageService fileStorageService;
     private final ServerService serverService;
+    private final WorkspaceCombinationService workspaceCombinationService;
     private final AppUserService appUserService;
+    private final JdbcTemplate jdbcTemplate;
 
     public ProjectService(ProjectRepository projectRepository,
                            ServerRepository serverRepository,
                            WorkspacePairRepository workspacePairRepository,
+                           WorkspaceCombinationRepository workspaceCombinationRepository,
                            SignOffRepository signOffRepository,
                            PreCheckSubmissionRepository preCheckSubmissionRepository,
                            PreCheckItemRepository preCheckItemRepository,
                            TicketRepository ticketRepository,
                            FileStorageService fileStorageService,
                            ServerService serverService,
-                           AppUserService appUserService) {
+                           WorkspaceCombinationService workspaceCombinationService,
+                           AppUserService appUserService,
+                           JdbcTemplate jdbcTemplate) {
         this.projectRepository = projectRepository;
         this.serverRepository = serverRepository;
         this.workspacePairRepository = workspacePairRepository;
+        this.workspaceCombinationRepository = workspaceCombinationRepository;
         this.signOffRepository = signOffRepository;
         this.preCheckSubmissionRepository = preCheckSubmissionRepository;
         this.preCheckItemRepository = preCheckItemRepository;
         this.ticketRepository = ticketRepository;
         this.fileStorageService = fileStorageService;
         this.serverService = serverService;
+        this.workspaceCombinationService = workspaceCombinationService;
         this.appUserService = appUserService;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     // email == null means auth isn't configured (or caller identity is unknown) -- in that case
@@ -106,33 +119,58 @@ public class ProjectService {
         return dto;
     }
 
-    // Stage is READY only once the pre-check is submitted AND all three roles have approved.
-    // NOT_SUBMITTED covers the pre-check step itself; IN_PROGRESS covers the approval chain, naming
-    // whichever role is next -- so the UI can show something more useful than a plain readiness dot.
+    // Stage is READY only once the server has at least one combination AND every one of them is
+    // fully approved (pre-check submitted, all three roles cleared). NOT_SUBMITTED covers a server
+    // with no combinations yet, or none of them submitted; IN_PROGRESS names whichever
+    // combination/role is next -- so the UI can show something more useful than a plain readiness
+    // dot. Each combination now carries its own independent lifecycle (see WorkspaceCombination).
     private void applyReadinessStage(ServerReadinessDto server) {
-        Long serverId = server.getServerId();
-        // buildReadiness already resolved the submission status onto the DTO (never null) -- reuse it
-        // instead of re-querying the submission for every server.
-        SubmissionStatus submissionStatus = server.getSubmissionStatus();
-        if (submissionStatus != SubmissionStatus.SUBMITTED) {
+        List<WorkspaceCombination> combinations = workspaceCombinationRepository.findByServerId(server.getServerId());
+        if (combinations.isEmpty()) {
             server.setReadinessStage("NOT_SUBMITTED");
-            server.setReadinessDetail("Pre-check isn't submitted yet");
+            server.setReadinessDetail("No combinations imported yet");
             return;
         }
-        for (SignOffRole role : APPROVAL_SEQUENCE) {
+
+        List<Long> combinationIds = combinations.stream().map(WorkspaceCombination::getId).toList();
+        Map<Long, PreCheckSubmission> submissionByCombination = preCheckSubmissionRepository
+                .findByCombinationIdIn(combinationIds).stream()
+                .collect(Collectors.toMap(s -> s.getCombination().getId(), s -> s));
+        Map<Long, List<SignOff>> chainByCombination = signOffRepository.findByCombinationIdIn(combinationIds).stream()
+                .collect(Collectors.groupingBy(s -> s.getCombination().getId()));
+
+        int readyCount = 0;
+        String blockingDetail = null;
+        for (WorkspaceCombination combination : combinations) {
+            PreCheckSubmission submission = submissionByCombination.get(combination.getId());
+            if (submission == null || submission.getStatus() != SubmissionStatus.SUBMITTED) {
+                if (blockingDetail == null) {
+                    blockingDetail = "\"" + combination.getName() + "\" pre-check isn't submitted yet";
+                }
+                continue;
+            }
+            List<SignOff> chain = chainByCombination.getOrDefault(combination.getId(), List.of());
             // SKIPPED only ever appears on a QA Lead row, when the Dev Lead decided QA approval
-            // wasn't needed for this server -- it counts the same as approved for readiness purposes.
-            boolean approved = signOffRepository.findByServerIdAndRole(serverId, role)
-                    .filter(s -> s.getStatus() == SignOffStatus.APPROVED || s.getStatus() == SignOffStatus.SKIPPED)
-                    .isPresent();
-            if (!approved) {
-                server.setReadinessStage("IN_PROGRESS");
-                server.setReadinessDetail(roleLabel(role) + " not approved yet");
-                return;
+            // wasn't needed -- it counts the same as approved for readiness purposes.
+            SignOffRole nextRole = APPROVAL_SEQUENCE.stream()
+                    .filter(role -> chain.stream().noneMatch(s -> s.getRole() == role
+                            && (s.getStatus() == SignOffStatus.APPROVED || s.getStatus() == SignOffStatus.SKIPPED)))
+                    .findFirst()
+                    .orElse(null);
+            if (nextRole == null) {
+                readyCount++;
+            } else if (blockingDetail == null) {
+                blockingDetail = "\"" + combination.getName() + "\": " + roleLabel(nextRole) + " not approved yet";
             }
         }
-        server.setReadinessStage("READY");
-        server.setReadinessDetail(null);
+
+        if (readyCount == combinations.size()) {
+            server.setReadinessStage("READY");
+            server.setReadinessDetail(null);
+        } else {
+            server.setReadinessStage("IN_PROGRESS");
+            server.setReadinessDetail(blockingDetail);
+        }
     }
 
     private static String roleLabel(SignOffRole role) {
@@ -201,36 +239,38 @@ public class ProjectService {
                 : !newManager.equalsIgnoreCase(project.getMigrationManagerName());
         if (mmChanged) {
             for (Server server : servers) {
-                List<SignOff> chain = signOffRepository.findByServerId(server.getId());
-                if (chain.isEmpty()) {
-                    continue; // pre-check not submitted on this server -- no chain to touch
-                }
-                if (newManager == null) {
-                    throw new ApiException(HttpStatus.CONFLICT,
-                            "Can't clear the Migration Manager while server \"" + server.getName()
-                                    + "\" has an approval chain in progress -- assign a different manager instead.");
-                }
-                // Changing the manager rolls the approval chain back to the manager step WITHOUT
-                // touching the pre-check itself. Every sign-off returns to PENDING (prior approvals
-                // cleared, QA-required reset), the MM row is re-pointed to the new manager, and a
-                // finalized Delta is un-stamped. The pre-check stays SUBMITTED, so the chain simply
-                // continues fresh from the (new) Migration Manager -- no re-doing the pre-check.
-                for (SignOff signOff : chain) {
-                    signOff.setStatus(SignOffStatus.PENDING);
-                    signOff.setApprovedBy(null);
-                    signOff.setApprovedAt(null);
-                    signOff.setQaRequired(null);
-                    if (signOff.getRole() == SignOffRole.MIGRATION_LEAD) {
-                        signOff.setSignedBy(newManager);
+                for (WorkspaceCombination combination : workspaceCombinationRepository.findByServerId(server.getId())) {
+                    List<SignOff> chain = signOffRepository.findByCombinationId(combination.getId());
+                    if (chain.isEmpty()) {
+                        continue; // pre-check not submitted on this combination -- no chain to touch
                     }
-                    signOffRepository.save(signOff);
+                    if (newManager == null) {
+                        throw new ApiException(HttpStatus.CONFLICT,
+                                "Can't clear the Migration Manager while \"" + server.getName() + " / " + combination.getName()
+                                        + "\" has an approval chain in progress -- assign a different manager instead.");
+                    }
+                    // Changing the manager rolls the approval chain back to the manager step WITHOUT
+                    // touching the pre-check itself. Every sign-off returns to PENDING (prior approvals
+                    // cleared, QA-required reset), the MM row is re-pointed to the new manager, and a
+                    // finalized Delta is un-stamped. The pre-check stays SUBMITTED, so the chain simply
+                    // continues fresh from the (new) Migration Manager -- no re-doing the pre-check.
+                    for (SignOff signOff : chain) {
+                        signOff.setStatus(SignOffStatus.PENDING);
+                        signOff.setApprovedBy(null);
+                        signOff.setApprovedAt(null);
+                        signOff.setQaRequired(null);
+                        if (signOff.getRole() == SignOffRole.MIGRATION_LEAD) {
+                            signOff.setSignedBy(newManager);
+                        }
+                        signOffRepository.save(signOff);
+                    }
+                    if (combination.getDeltaInitiatedAt() != null) {
+                        combination.setDeltaInitiatedAt(null);
+                        combination.setDeltaInitiatedBy(null);
+                    }
+                    workspaceCombinationService.save(combination);
+                    workspaceCombinationService.recomputeStatus(combination);
                 }
-                if (server.getDeltaInitiatedAt() != null) {
-                    server.setDeltaInitiatedAt(null);
-                    server.setDeltaInitiatedBy(null);
-                }
-                serverService.save(server);
-                serverService.recomputeStatus(server);
             }
             project.setMigrationManagerName(newManager);
         }
@@ -260,26 +300,45 @@ public class ProjectService {
         }
 
         // The Delta-initiated audit guard protects everyone EXCEPT admins -- admins have full override
-        // and can delete a completed-migration project if they really mean to.
-        boolean anyDeltaInitiated = servers.stream().anyMatch(s -> s.getDeltaInitiatedAt() != null);
+        // and can delete a completed-migration project if they really mean to. Checked per
+        // combination now, not per server -- each combination has its own independent Delta lifecycle.
+        boolean anyDeltaInitiated = servers.stream()
+                .flatMap(s -> workspaceCombinationRepository.findByServerId(s.getId()).stream())
+                .anyMatch(c -> c.getDeltaInitiatedAt() != null);
         if (anyDeltaInitiated && callerRole != AppUserRole.ADMIN) {
             throw new ApiException(HttpStatus.CONFLICT,
-                    "This project has server(s) with Delta already initiated -- it's a completed migration "
+                    "This project has combination(s) with Delta already initiated -- it's a completed migration "
                             + "record and can't be deleted.");
         }
 
         for (Server server : servers) {
-            List<PreCheckItem> items = preCheckItemRepository.findByServerId(server.getId());
-            items.forEach(item -> fileStorageService.delete(item.getEvidenceFilePath()));
-            preCheckItemRepository.deleteAll(items);
-            preCheckSubmissionRepository.findByServerId(server.getId())
-                    .ifPresent(preCheckSubmissionRepository::delete);
-            signOffRepository.deleteAll(signOffRepository.findByServerId(server.getId()));
-            ticketRepository.deleteAll(ticketRepository.findByServerId(server.getId()));
+            List<WorkspaceCombination> combinations = workspaceCombinationRepository.findByServerId(server.getId());
+            for (WorkspaceCombination combination : combinations) {
+                List<PreCheckItem> items = preCheckItemRepository.findByCombinationId(combination.getId());
+                items.forEach(item -> fileStorageService.delete(item.getEvidenceFilePath()));
+                preCheckItemRepository.deleteAll(items);
+                preCheckSubmissionRepository.findByCombinationId(combination.getId())
+                        .ifPresent(preCheckSubmissionRepository::delete);
+                signOffRepository.deleteAll(signOffRepository.findByCombinationId(combination.getId()));
+                // Tickets belong to a combination now (not directly to the server) -- delete them
+                // before the combination row itself goes, or the FK would block it.
+                ticketRepository.deleteAll(ticketRepository.findByCombinationId(combination.getId()));
+            }
+            workspaceCombinationRepository.deleteAll(combinations);
+            deleteOrphanedEscalationRows(server.getId());
             // Workspace pairs cascade via Server's @OneToMany(orphanRemoval=true) on delete.
             serverRepository.delete(server);
         }
         projectRepository.delete(project);
+    }
+
+    // "escalations" is a leftover table from before this app's Escalation concept was renamed to
+    // Ticket (table "tickets") -- no entity maps to it anymore, but Hibernate's ddl-auto=update
+    // never drops old tables or their foreign keys, so a row left over from that era still blocks
+    // deleting the server it points at with a raw FK-constraint error. Plain JDBC since there's no
+    // JPA repository (and shouldn't be one) for a table nothing in the codebase otherwise touches.
+    private void deleteOrphanedEscalationRows(Long serverId) {
+        jdbcTemplate.update("DELETE FROM escalations WHERE server_id = ?", serverId);
     }
 
     // Mirrors the visibility model in isVisible(), plus the creator-until-submit rule. callerEmail
@@ -383,23 +442,31 @@ public class ProjectService {
         List<Long> serverIds = servers.stream().map(Server::getId).toList();
         Map<Long, Long> pairCountByServer = new HashMap<>();
         Map<Long, Long> openEscalationByServer = new HashMap<>();
-        Map<Long, EnumMap<SignOffRole, SignOffStatus>> signOffByServer = new HashMap<>();
-        Map<Long, PreCheckSubmission> submissionByServer = new HashMap<>();
+        List<WorkspaceCombination> combinations = new java.util.ArrayList<>();
+        Map<Long, List<WorkspaceCombination>> combinationsByServer = new HashMap<>();
+        Map<Long, EnumMap<SignOffRole, SignOffStatus>> signOffByCombination = new HashMap<>();
+        Map<Long, PreCheckSubmission> submissionByCombination = new HashMap<>();
         if (!serverIds.isEmpty()) {
             for (WorkspacePair wp : workspacePairRepository.findByServerIdIn(serverIds)) {
                 pairCountByServer.merge(wp.getServer().getId(), 1L, Long::sum);
             }
-            for (Ticket t : ticketRepository.findByServerIdIn(serverIds)) {
+            for (Ticket t : ticketRepository.findAllByCombinationServerIdIn(serverIds)) {
                 if (t.getStatus() == TicketStatus.OPEN) {
-                    openEscalationByServer.merge(t.getServer().getId(), 1L, Long::sum);
+                    openEscalationByServer.merge(t.getCombination().getServer().getId(), 1L, Long::sum);
                 }
             }
-            for (SignOff so : signOffRepository.findByServerIdIn(serverIds)) {
-                signOffByServer.computeIfAbsent(so.getServer().getId(), k -> new EnumMap<>(SignOffRole.class))
-                        .put(so.getRole(), so.getStatus());
-            }
-            for (PreCheckSubmission sub : preCheckSubmissionRepository.findByServerIdIn(serverIds)) {
-                submissionByServer.put(sub.getServer().getId(), sub);
+            combinations.addAll(workspaceCombinationRepository.findByServerIdIn(serverIds));
+            combinationsByServer.putAll(combinations.stream()
+                    .collect(Collectors.groupingBy(c -> c.getServer().getId())));
+            List<Long> combinationIds = combinations.stream().map(WorkspaceCombination::getId).toList();
+            if (!combinationIds.isEmpty()) {
+                for (SignOff so : signOffRepository.findByCombinationIdIn(combinationIds)) {
+                    signOffByCombination.computeIfAbsent(so.getCombination().getId(), k -> new EnumMap<>(SignOffRole.class))
+                            .put(so.getRole(), so.getStatus());
+                }
+                for (PreCheckSubmission sub : preCheckSubmissionRepository.findByCombinationIdIn(combinationIds)) {
+                    submissionByCombination.put(sub.getCombination().getId(), sub);
+                }
             }
         }
 
@@ -410,15 +477,17 @@ public class ProjectService {
                 ? List.of(project.getMigrationManagerName())
                 : List.of();
 
-        // See DashboardService.getSummary() for why Dev Lead's "pending" also requires Migration
-        // Manager to already be approved -- otherwise a not-yet-reached Dev row (created at the same
-        // time as Migration Manager's) gets miscounted as an open request.
+        // Counted per combination now, not per server -- a server can have several combinations,
+        // each with its own sign-off chain. See DashboardService.getSummary() for why Dev Lead's
+        // "pending" also requires Migration Manager to already be approved -- otherwise a
+        // not-yet-reached Dev row (created at the same time as Migration Manager's) gets miscounted
+        // as an open request.
         long migrationManagerDone = 0;
         long migrationManagerPending = 0;
         long devDone = 0;
         long devPending = 0;
-        for (Server s : servers) {
-            EnumMap<SignOffRole, SignOffStatus> roles = signOffByServer.get(s.getId());
+        for (WorkspaceCombination c : combinations) {
+            EnumMap<SignOffRole, SignOffStatus> roles = signOffByCombination.get(c.getId());
             SignOffStatus mmStatus = roles == null ? null : roles.get(SignOffRole.MIGRATION_LEAD);
             SignOffStatus devStatus = roles == null ? null : roles.get(SignOffRole.DEV_LEAD);
 
@@ -434,8 +503,8 @@ public class ProjectService {
                 devPending++;
             }
         }
-        LocalDateTime lastPreCheckSubmittedAt = servers.stream()
-                .map(s -> submissionByServer.get(s.getId()))
+        LocalDateTime lastPreCheckSubmittedAt = combinations.stream()
+                .map(c -> submissionByCombination.get(c.getId()))
                 .filter(Objects::nonNull)
                 .filter(sub -> sub.getStatus() == SubmissionStatus.SUBMITTED)
                 .map(PreCheckSubmission::getSubmittedAt)
@@ -462,9 +531,13 @@ public class ProjectService {
         dto.setLastPreCheckSubmittedAt(lastPreCheckSubmittedAt);
         dto.setCreatedBy(project.getCreatedBy());
         dto.setCreatedAt(project.getCreatedAt());
-        // Ready to decommission once the project has servers and every one of them has Delta finished.
-        dto.setDecommissionReady(!servers.isEmpty()
-                && servers.stream().allMatch(s -> s.getDeltaFinishedAt() != null));
+        // Ready to decommission once the project has servers, every one of them has at least one
+        // combination, and every combination has Delta finished.
+        dto.setDecommissionReady(!servers.isEmpty() && servers.stream().allMatch(s -> {
+            List<WorkspaceCombination> serverCombinations = combinationsByServer.getOrDefault(s.getId(), List.of());
+            return !serverCombinations.isEmpty()
+                    && serverCombinations.stream().allMatch(c -> c.getDeltaFinishedAt() != null);
+        }));
         return dto;
     }
 }

@@ -29,7 +29,6 @@ export default function ProjectsPage() {
   const [error, setError] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [name, setName] = useState("");
-  const [productType, setProductType] = useState("");
   const [migrationManagerName, setMigrationManagerName] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -130,7 +129,6 @@ export default function ProjectsPage() {
   const resetForm = () => {
     setShowModal(false);
     setName("");
-    setProductType("");
     setMigrationManagerName("");
     setError(null);
   };
@@ -138,13 +136,12 @@ export default function ProjectsPage() {
   const handleCreate = async (e) => {
     e.preventDefault();
     const trimmed = name.trim();
-    if (!trimmed || !productType || (!creatorIsManager && !migrationManagerName)) return;
+    if (!trimmed || (!creatorIsManager && !migrationManagerName)) return;
     setSaving(true);
     setError(null);
     try {
       const project = await createProject({
         name: trimmed,
-        productType,
         createdBy: createdByName,
         migrationManagerName: creatorIsManager ? null : migrationManagerName,
       });
@@ -180,45 +177,27 @@ export default function ProjectsPage() {
                   style={{ width: "100%" }}
                 />
               </div>
-              <div style={{ flex: "1 1 160px" }}>
-                <label htmlFor="project-product-type" style={{ display: "block", fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>
-                  Product Type <span style={{ color: "var(--color-red)" }}>*</span>
-                </label>
-                <select
-                  id="project-product-type"
-                  value={productType}
-                  onChange={(e) => setProductType(e.target.value)}
-                  style={{ width: "100%" }}
-                >
-                  <option value="">Select...</option>
-                  {PRODUCT_TYPE_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
 
-            {!creatorIsManager && (
-              <div style={{ marginTop: 14 }}>
-                <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>
-                  Migration Manager <span style={{ color: "var(--color-red)" }}>*</span>
-                </label>
-                <select
-                  value={migrationManagerName}
-                  onChange={(e) => setMigrationManagerName(e.target.value)}
-                  style={{ width: "100%", maxWidth: 300 }}
-                >
-                  <option value="">Select...</option>
-                  {roster.migrationManagers.map((email) => (
-                    <option key={email} value={email}>
-                      {email}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+              {!creatorIsManager && (
+                <div style={{ flex: "1 1 220px" }}>
+                  <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>
+                    Migration Manager <span style={{ color: "var(--color-red)" }}>*</span>
+                  </label>
+                  <select
+                    value={migrationManagerName}
+                    onChange={(e) => setMigrationManagerName(e.target.value)}
+                    style={{ width: "100%" }}
+                  >
+                    <option value="">Select...</option>
+                    {roster.migrationManagers.map((email) => (
+                      <option key={email} value={email}>
+                        {email}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
 
             {error && <div className="inline-hint" style={{ marginTop: 14 }}>{error}</div>}
 
@@ -226,7 +205,7 @@ export default function ProjectsPage() {
               <button
                 className="btn"
                 type="submit"
-                disabled={saving || !name.trim() || !productType || (!creatorIsManager && !migrationManagerName)}
+                disabled={saving || !name.trim() || (!creatorIsManager && !migrationManagerName)}
               >
                 {saving ? "Creating..." : "Create Project"}
               </button>
@@ -307,12 +286,7 @@ export default function ProjectsPage() {
         }
         columns={[
           { key: "name", label: "Project" },
-          {
-            key: "productType",
-            label: "Product Type",
-            render: (p) => (p.productType ? PRODUCT_TYPE_OPTIONS.find((o) => o.value === p.productType)?.label || p.productType : "-"),
-          },
-          { key: "serverCount", label: "No. of Servers", filterable: false },
+          { key: "serverCount", label: "No. Server URLs", filterable: false },
           {
             key: "migrationManagers",
             label: "Migration Manager",

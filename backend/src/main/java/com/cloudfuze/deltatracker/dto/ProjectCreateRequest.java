@@ -2,7 +2,6 @@ package com.cloudfuze.deltatracker.dto;
 
 import com.cloudfuze.deltatracker.entity.ProductType;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.Setter;
@@ -16,7 +15,8 @@ public class ProjectCreateRequest {
     @Size(max = 255, message = "Project name must be 255 characters or fewer")
     private String name;
 
-    @NotNull
+    // Not asked at creation time -- set later via the project's Edit form. The entity column is
+    // already nullable, so a project can genuinely have no product type until then.
     private ProductType productType;
 
     private String createdBy;

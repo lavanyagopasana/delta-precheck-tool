@@ -12,7 +12,10 @@ import java.util.List;
 public class PreCheckSubmissionDto {
 
     private Long id;
+    private Long combinationId;
+    private String combinationName;
     private Long serverId;
+    private String serverName;
     private SubmissionStatus status;
     private String submittedBy;
     private LocalDateTime submittedAt;

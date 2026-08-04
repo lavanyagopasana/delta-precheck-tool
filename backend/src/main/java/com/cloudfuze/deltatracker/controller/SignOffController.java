@@ -11,7 +11,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/servers/{serverId}/signoffs")
+@RequestMapping("/api/combinations/{combinationId}/signoffs")
 public class SignOffController {
 
     private final SignOffService signOffService;
@@ -21,17 +21,17 @@ public class SignOffController {
     }
 
     @PostMapping("/{role}/approve")
-    public SignOffApprovalDto approve(@PathVariable Long serverId, @PathVariable SignOffRole role,
+    public SignOffApprovalDto approve(@PathVariable Long combinationId, @PathVariable SignOffRole role,
                                        @AuthenticationPrincipal Jwt jwt,
                                        @Valid @RequestBody ApproveSignOffRequest request) {
-        return signOffService.approve(serverId, role, actorEmail(jwt, request), request.getQaRequired());
+        return signOffService.approve(combinationId, role, actorEmail(jwt, request), request.getQaRequired());
     }
 
     @PostMapping("/{role}/decline")
-    public SignOffApprovalDto decline(@PathVariable Long serverId, @PathVariable SignOffRole role,
+    public SignOffApprovalDto decline(@PathVariable Long combinationId, @PathVariable SignOffRole role,
                                        @AuthenticationPrincipal Jwt jwt,
                                        @Valid @RequestBody ApproveSignOffRequest request) {
-        return signOffService.decline(serverId, role, actorEmail(jwt, request));
+        return signOffService.decline(combinationId, role, actorEmail(jwt, request));
     }
 
     // The JWT is the authoritative identity whenever auth is configured; the request body's email

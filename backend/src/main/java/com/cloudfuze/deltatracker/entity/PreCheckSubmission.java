@@ -8,7 +8,7 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "precheck_submissions", uniqueConstraints = @UniqueConstraint(columnNames = {"server_id"}))
+@Table(name = "precheck_submissions", uniqueConstraints = @UniqueConstraint(columnNames = {"combination_id"}))
 @Getter
 @Setter
 @NoArgsConstructor
@@ -19,8 +19,8 @@ public class PreCheckSubmission {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "server_id", nullable = false)
-    private Server server;
+    @JoinColumn(name = "combination_id", nullable = false)
+    private WorkspaceCombination combination;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -35,8 +35,8 @@ public class PreCheckSubmission {
     @Column(name = "started_by_email")
     private String startedByEmail;
 
-    public PreCheckSubmission(Server server) {
-        this.server = server;
+    public PreCheckSubmission(WorkspaceCombination combination) {
+        this.combination = combination;
         this.status = SubmissionStatus.NOT_STARTED;
     }
 }

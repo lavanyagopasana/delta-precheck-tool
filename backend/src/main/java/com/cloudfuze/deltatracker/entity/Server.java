@@ -6,7 +6,6 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -27,29 +26,14 @@ public class Server {
     @Column(name = "total_pair_count", nullable = false)
     private int totalPairCount;
 
+    // Rollup of this server's WorkspaceCombinations' own statuses (WorkspaceCombinationService
+    // recomputes this on every change) -- DELTA_READY only once every combination is. Delta
+    // initiated/started/finished timestamps live on WorkspaceCombination now, not here: each
+    // combination has its own independent Delta lifecycle, so one server-wide timestamp can't
+    // represent them once a server has more than one combination.
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private PairStatus status = PairStatus.PENDING;
-
-    @Column(name = "delta_initiated_at")
-    private LocalDateTime deltaInitiatedAt;
-
-    @Column(name = "delta_initiated_by")
-    private String deltaInitiatedBy;
-
-    // Post-Delta lifecycle, driven by the engineer: after Delta is initiated they Start the actual
-    // migration, then mark it Finished. Both are timestamps stamped at click time (null until then).
-    @Column(name = "delta_started_at")
-    private LocalDateTime deltaStartedAt;
-
-    @Column(name = "delta_started_by")
-    private String deltaStartedBy;
-
-    @Column(name = "delta_finished_at")
-    private LocalDateTime deltaFinishedAt;
-
-    @Column(name = "delta_finished_by")
-    private String deltaFinishedBy;
 
     @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)

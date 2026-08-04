@@ -8,11 +8,11 @@ import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.entity.SignOff;
 import com.cloudfuze.deltatracker.entity.SignOffRole;
 import com.cloudfuze.deltatracker.entity.SignOffStatus;
+import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
 import com.cloudfuze.deltatracker.repository.SignOffRepository;
-import com.cloudfuze.deltatracker.repository.WorkspacePairRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,41 +34,40 @@ public class SignOffService {
     private static final List<SignOffRole> APPROVAL_SEQUENCE = SignOffRole.APPROVAL_SEQUENCE;
 
     private final SignOffRepository signOffRepository;
-    private final ServerService serverService;
+    private final WorkspaceCombinationService combinationService;
     private final EmailService emailService;
     private final AppUserService appUserService;
     private final PreCheckSubmissionRepository preCheckSubmissionRepository;
-    private final WorkspacePairRepository workspacePairRepository;
     private final TicketService ticketService;
 
-    public SignOffService(SignOffRepository signOffRepository, ServerService serverService,
+    public SignOffService(SignOffRepository signOffRepository, WorkspaceCombinationService combinationService,
                            EmailService emailService, AppUserService appUserService,
                            PreCheckSubmissionRepository preCheckSubmissionRepository,
-                           WorkspacePairRepository workspacePairRepository,
                            TicketService ticketService) {
         this.signOffRepository = signOffRepository;
-        this.serverService = serverService;
+        this.combinationService = combinationService;
         this.emailService = emailService;
         this.appUserService = appUserService;
         this.preCheckSubmissionRepository = preCheckSubmissionRepository;
-        this.workspacePairRepository = workspacePairRepository;
         this.ticketService = ticketService;
     }
 
-    // Kicks off the Migration Manager -> Dev Lead -> QA Lead approval chain the moment a pre-check
-    // is submitted. A no-op if the chain already exists (e.g. re-triggered on the same server).
-    // The Migration Manager step is a specific person (the project's manager); the Dev/QA steps
-    // aren't tied to one named person -- eligibility is checked live against whoever currently
-    // holds that role, since there are just two people in each pool and either can act.
-    public void createChainIfAbsent(Server server) {
-        if (!signOffRepository.findByServerId(server.getId()).isEmpty()) {
+    // Kicks off the Migration Manager -> Dev Lead -> QA Lead approval chain the moment a
+    // combination's pre-check is submitted. A no-op if the chain already exists (e.g. re-triggered
+    // on the same combination). The Migration Manager step is a specific person (the project's
+    // manager); the Dev/QA steps aren't tied to one named person -- eligibility is checked live
+    // against whoever currently holds that role, since there are just two people in each pool and
+    // either can act.
+    public void createChainIfAbsent(WorkspaceCombination combination) {
+        if (!signOffRepository.findByCombinationId(combination.getId()).isEmpty()) {
             return;
         }
-        String managerEmail = server.getProject() != null ? server.getProject().getMigrationManagerName() : null;
-        signOffRepository.save(new SignOff(server, SignOffRole.MIGRATION_LEAD,
+        String managerEmail = combination.getServer().getProject() != null
+                ? combination.getServer().getProject().getMigrationManagerName() : null;
+        signOffRepository.save(new SignOff(combination, SignOffRole.MIGRATION_LEAD,
                 managerEmail != null ? managerEmail : "Not assigned"));
-        signOffRepository.save(new SignOff(server, SignOffRole.DEV_LEAD, "Any Dev Lead"));
-        signOffRepository.save(new SignOff(server, SignOffRole.QA_LEAD, "Any QA Lead"));
+        signOffRepository.save(new SignOff(combination, SignOffRole.DEV_LEAD, "Any Dev Lead"));
+        signOffRepository.save(new SignOff(combination, SignOffRole.QA_LEAD, "Any QA Lead"));
     }
 
     // Tears down the approval chain when a pre-check is withdrawn (un-submitted) before anyone has
@@ -76,16 +75,16 @@ public class SignOffService {
     // (any role APPROVED or SKIPPED, or Delta already initiated): at that point a real approval
     // decision exists and the engineer must ask an approver to DECLINE instead of silently erasing
     // it. A stale DECLINED row (bounced back to the engineer) is fine to withdraw over.
-    public void removeChainForWithdrawal(Server server, boolean allowRollback) {
+    public void removeChainForWithdrawal(WorkspaceCombination combination, boolean allowRollback) {
         // allowRollback == true is the admin override: full rollback even of an approved chain or a
         // finalized Delta. For everyone else the normal guards apply -- you can only withdraw before
         // anyone has approved.
         if (!allowRollback) {
-            if (server.getDeltaInitiatedAt() != null) {
+            if (combination.getDeltaInitiatedAt() != null) {
                 throw new ApiException(HttpStatus.CONFLICT,
-                        "Delta has already been initiated for this server -- it can't be withdrawn.");
+                        "Delta has already been initiated for this combination -- it can't be withdrawn.");
             }
-            List<SignOff> signOffs = signOffRepository.findByServerId(server.getId());
+            List<SignOff> signOffs = signOffRepository.findByCombinationId(combination.getId());
             boolean alreadyProgressed = signOffs.stream()
                     .anyMatch(s -> s.getStatus() == SignOffStatus.APPROVED || s.getStatus() == SignOffStatus.SKIPPED);
             if (alreadyProgressed) {
@@ -94,7 +93,7 @@ public class SignOffService {
                                 + "decline it instead of withdrawing.");
             }
         }
-        signOffRepository.deleteAll(signOffRepository.findByServerId(server.getId()));
+        signOffRepository.deleteAll(signOffRepository.findByCombinationId(combination.getId()));
     }
 
     // Approving is only allowed by whoever is eligible for this role, and only once it's actually
@@ -104,16 +103,16 @@ public class SignOffService {
     // and Migration Engineers + the project's Migration Manager are notified.
     //
     // qaRequired only matters (and is required) when role == DEV_LEAD: it's the Dev Lead's own
-    // decision, made at the moment they approve, on whether this server also needs QA Lead approval.
-    // Saying "no" skips QA Lead entirely and finalizes Delta right away.
-    public SignOffApprovalDto approve(Long serverId, SignOffRole role, String actorEmail, Boolean qaRequired) {
-        Server server = serverService.findOrThrow(serverId);
-        SignOff signOff = signOffRepository.findByServerIdAndRole(serverId, role)
+    // decision, made at the moment they approve, on whether this combination also needs QA Lead
+    // approval. Saying "no" skips QA Lead entirely and finalizes Delta right away.
+    public SignOffApprovalDto approve(Long combinationId, SignOffRole role, String actorEmail, Boolean qaRequired) {
+        WorkspaceCombination combination = combinationService.findOrThrow(combinationId);
+        SignOff signOff = signOffRepository.findByCombinationIdAndRole(combinationId, role)
                 .orElseThrow(() -> new ResourceNotFoundException("No approval request found for this role."));
 
-        List<SignOff> serverSignOffs = signOffRepository.findByServerId(serverId);
-        requireTurn(role, serverSignOffs);
-        requireEligible(role, actorEmail, server);
+        List<SignOff> chain = signOffRepository.findByCombinationId(combinationId);
+        requireTurn(role, chain);
+        requireEligible(role, actorEmail, combination);
 
         if (role == SignOffRole.DEV_LEAD && qaRequired == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST,
@@ -129,7 +128,7 @@ public class SignOffService {
         signOffRepository.save(signOff);
 
         if (role == SignOffRole.DEV_LEAD && Boolean.FALSE.equals(qaRequired)) {
-            SignOff qaSignOff = serverSignOffs.stream()
+            SignOff qaSignOff = chain.stream()
                     .filter(s -> s.getRole() == SignOffRole.QA_LEAD)
                     .findFirst()
                     .orElseThrow(() -> new ResourceNotFoundException("QA Lead sign-off row missing."));
@@ -137,18 +136,18 @@ public class SignOffService {
             qaSignOff.setApprovedBy("Not required");
             qaSignOff.setApprovedAt(LocalDateTime.now());
             signOffRepository.save(qaSignOff);
-            finalizeDelta(server);
-            return toApprovalDto(signOff, server, signOffRepository.findByServerId(serverId), actorEmail,
-                computeServerStats(server));
+            finalizeDelta(combination);
+            return toApprovalDto(signOff, combination, signOffRepository.findByCombinationId(combinationId), actorEmail,
+                computeCombinationStats(combination));
         }
 
         int index = APPROVAL_SEQUENCE.indexOf(role);
         if (index == APPROVAL_SEQUENCE.size() - 1) {
-            finalizeDelta(server);
+            finalizeDelta(combination);
         } else {
             SignOffRole nextRole = APPROVAL_SEQUENCE.get(index + 1);
             // Give the next role a fresh turn if it had previously declined.
-            serverSignOffs.stream()
+            chain.stream()
                     .filter(s -> s.getRole() == nextRole && s.getStatus() == SignOffStatus.DECLINED)
                     .findFirst()
                     .ifPresent(next -> {
@@ -157,25 +156,25 @@ public class SignOffService {
                         next.setApprovedAt(null);
                         signOffRepository.save(next);
                     });
-            notifyNextApprover(server, nextRole);
+            notifyNextApprover(combination, nextRole);
         }
 
-        return toApprovalDto(signOff, server, signOffRepository.findByServerId(serverId), actorEmail,
-                computeServerStats(server));
+        return toApprovalDto(signOff, combination, signOffRepository.findByCombinationId(combinationId), actorEmail,
+                computeCombinationStats(combination));
     }
 
     // Declining bounces the request back one step for rework: the role right before this one (in
     // the Migration Manager -> Dev -> QA sequence) gets reset to pending so they have to reconsider.
     // Declining as Migration Manager (the first step) has nothing earlier to bounce to -- it just
     // sits blocked until the pre-check is resubmitted.
-    public SignOffApprovalDto decline(Long serverId, SignOffRole role, String actorEmail) {
-        Server server = serverService.findOrThrow(serverId);
-        SignOff signOff = signOffRepository.findByServerIdAndRole(serverId, role)
+    public SignOffApprovalDto decline(Long combinationId, SignOffRole role, String actorEmail) {
+        WorkspaceCombination combination = combinationService.findOrThrow(combinationId);
+        SignOff signOff = signOffRepository.findByCombinationIdAndRole(combinationId, role)
                 .orElseThrow(() -> new ResourceNotFoundException("No approval request found for this role."));
 
-        List<SignOff> serverSignOffs = signOffRepository.findByServerId(serverId);
-        requireTurn(role, serverSignOffs);
-        requireEligible(role, actorEmail, server);
+        List<SignOff> chain = signOffRepository.findByCombinationId(combinationId);
+        requireTurn(role, chain);
+        requireEligible(role, actorEmail, combination);
 
         signOff.setStatus(SignOffStatus.DECLINED);
         signOff.setApprovedBy(actorEmail);
@@ -185,7 +184,7 @@ public class SignOffService {
         int index = APPROVAL_SEQUENCE.indexOf(role);
         if (index > 0) {
             SignOffRole previousRole = APPROVAL_SEQUENCE.get(index - 1);
-            serverSignOffs.stream()
+            chain.stream()
                     .filter(s -> s.getRole() == previousRole)
                     .findFirst()
                     .ifPresent(previous -> {
@@ -196,30 +195,30 @@ public class SignOffService {
                     });
         }
 
-        return toApprovalDto(signOff, server, signOffRepository.findByServerId(serverId), actorEmail,
-                computeServerStats(server));
+        return toApprovalDto(signOff, combination, signOffRepository.findByCombinationId(combinationId), actorEmail,
+                computeCombinationStats(combination));
     }
 
-    // Only servers whose pre-check has actually been submitted show up here -- a server with no
-    // SignOff rows yet (pre-check not submitted) simply isn't part of this list.
+    // Only combinations whose pre-check has actually been submitted show up here -- a combination
+    // with no SignOff rows yet (pre-check not submitted) simply isn't part of this list.
     public List<SignOffApprovalDto> listApprovals(String callerEmail, AppUserRole callerRole) {
         List<SignOff> all = signOffRepository.findAll();
-        Map<Long, List<SignOff>> byServer = all.stream()
-                .collect(Collectors.groupingBy(s -> s.getServer().getId()));
-        // Pairs / open escalations / submission are server-level, not row-level -- compute them once
-        // per server instead of once per sign-off row (previously 3x redundant per server). Same
-        // values, far fewer queries.
-        Map<Long, ServerStats> statsByServer = new HashMap<>();
+        Map<Long, List<SignOff>> byCombination = all.stream()
+                .collect(Collectors.groupingBy(s -> s.getCombination().getId()));
+        // Pairs / open escalations / submission are combination-level, not row-level -- compute them
+        // once per combination instead of once per sign-off row (3x redundant otherwise).
+        Map<Long, CombinationStats> statsByCombination = new HashMap<>();
 
         return all.stream()
-                .filter(s -> isVisible(s.getServer(), callerEmail, callerRole))
+                .filter(s -> isVisible(s.getCombination(), callerEmail, callerRole))
                 .sorted(Comparator
                         .comparing((SignOff s) -> s.getStatus() == SignOffStatus.PENDING ? 0 : 1)
                         .thenComparing(SignOff::getSignedAt, Comparator.reverseOrder()))
                 .map(s -> {
-                    Server srv = s.getServer();
-                    ServerStats stats = statsByServer.computeIfAbsent(srv.getId(), k -> computeServerStats(srv));
-                    return toApprovalDto(s, srv, byServer.get(srv.getId()), callerEmail, stats);
+                    WorkspaceCombination combination = s.getCombination();
+                    CombinationStats stats = statsByCombination.computeIfAbsent(combination.getId(),
+                            k -> computeCombinationStats(combination));
+                    return toApprovalDto(s, combination, byCombination.get(combination.getId()), callerEmail, stats);
                 })
                 .toList();
     }
@@ -227,14 +226,14 @@ public class SignOffService {
     // Admins and Dev/QA Leads see every approval request (Dev/QA involvement isn't scoped to one
     // project). A Migration Manager only sees requests for projects they manage. An engineer only
     // sees requests for projects they created or are a team member of.
-    private boolean isVisible(Server server, String callerEmail, AppUserRole callerRole) {
+    private boolean isVisible(WorkspaceCombination combination, String callerEmail, AppUserRole callerRole) {
         if (callerEmail == null || callerRole == null) {
             return true;
         }
         if (callerRole == AppUserRole.ADMIN || callerRole == AppUserRole.DEV_LEAD || callerRole == AppUserRole.QA_LEAD) {
             return true;
         }
-        Project project = server.getProject();
+        Project project = combination.getServer().getProject();
         if (project == null) {
             return false;
         }
@@ -248,8 +247,8 @@ public class SignOffService {
         return false;
     }
 
-    private void requireEligible(SignOffRole role, String actorEmail, Server server) {
-        if (!isEligible(role, actorEmail, server)) {
+    private void requireEligible(SignOffRole role, String actorEmail, WorkspaceCombination combination) {
+        if (!isEligible(role, actorEmail, combination)) {
             throw new ApiException(HttpStatus.FORBIDDEN, "Only the " + roleLabel(role) + " can act on this.");
         }
     }
@@ -257,13 +256,14 @@ public class SignOffService {
     // Admins can act on any step as an override. Otherwise: Migration Manager must be the exact
     // person the project names; Dev/QA Lead just needs to currently hold that AppUserRole -- either
     // of the two people in that pool can act, since it isn't assigned to one specific name.
-    private boolean isEligible(SignOffRole role, String actorEmail, Server server) {
+    private boolean isEligible(SignOffRole role, String actorEmail, WorkspaceCombination combination) {
         if (actorEmail == null) {
             return false;
         }
         if (appUserService.isAdmin(actorEmail)) {
             return true;
         }
+        Server server = combination.getServer();
         return switch (role) {
             case MIGRATION_LEAD -> server.getProject() != null
                     && actorEmail.equalsIgnoreCase(server.getProject().getMigrationManagerName());
@@ -275,8 +275,8 @@ public class SignOffService {
     // Rejects the action if this role isn't the one currently allowed to act -- either someone
     // earlier in the sequence hasn't approved yet, or Migration Manager declined and nobody can
     // act until the pre-check is resubmitted.
-    private void requireTurn(SignOffRole role, List<SignOff> serverSignOffs) {
-        SignOffRole turn = currentTurn(serverSignOffs);
+    private void requireTurn(SignOffRole role, List<SignOff> chain) {
+        SignOffRole turn = currentTurn(chain);
         if (turn != role) {
             if (turn == null) {
                 throw new ApiException(HttpStatus.BAD_REQUEST,
@@ -289,9 +289,9 @@ public class SignOffService {
     // Walks the fixed sequence from the start. The first role that hasn't approved is whoever's
     // turn it is. A DECLINED role can only appear at index 0 under our invariants (declining always
     // resets the preceding role to pending), which correctly blocks everyone until resubmission.
-    private SignOffRole currentTurn(List<SignOff> serverSignOffs) {
+    private SignOffRole currentTurn(List<SignOff> chain) {
         for (SignOffRole role : APPROVAL_SEQUENCE) {
-            var signOff = serverSignOffs.stream().filter(s -> s.getRole() == role).findFirst();
+            var signOff = chain.stream().filter(s -> s.getRole() == role).findFirst();
             if (signOff.isEmpty() || signOff.get().getStatus() == SignOffStatus.PENDING) {
                 return role;
             }
@@ -302,8 +302,8 @@ public class SignOffService {
         return null;
     }
 
-    private String overallStatusLabel(List<SignOff> serverSignOffs) {
-        var migrationManager = serverSignOffs.stream()
+    private String overallStatusLabel(List<SignOff> chain) {
+        var migrationManager = chain.stream()
                 .filter(s -> s.getRole() == SignOffRole.MIGRATION_LEAD)
                 .findFirst();
         if (migrationManager.isPresent() && migrationManager.get().getStatus() == SignOffStatus.DECLINED) {
@@ -311,20 +311,20 @@ public class SignOffService {
         }
 
         boolean allApproved = APPROVAL_SEQUENCE.stream().allMatch(role ->
-                serverSignOffs.stream().anyMatch(s -> s.getRole() == role && isCleared(s)));
+                chain.stream().anyMatch(s -> s.getRole() == role && isCleared(s)));
         if (allApproved) {
             return "Approved";
         }
 
-        SignOffRole turn = currentTurn(serverSignOffs);
+        SignOffRole turn = currentTurn(chain);
         return turn == null ? "Approved" : "Pending with " + roleLabel(turn);
     }
 
-    private String currentStatusLabel(List<SignOff> serverSignOffs) {
+    private String currentStatusLabel(List<SignOff> chain) {
         // A stale decline can still be sitting on an earlier role from a prior bounce-back cycle
         // (bounce-back only resets the PRECEDING role, never clears the role that itself declined),
         // so pick whichever decline happened most recently rather than the first one found.
-        var declined = serverSignOffs.stream()
+        var declined = chain.stream()
                 .filter(s -> s.getStatus() == SignOffStatus.DECLINED)
                 .max(Comparator.comparing(SignOff::getApprovedAt));
         if (declined.isPresent()) {
@@ -334,7 +334,7 @@ public class SignOffService {
         SignOffRole lastApproved = null;
         boolean qaSkipped = false;
         for (SignOffRole role : APPROVAL_SEQUENCE) {
-            var match = serverSignOffs.stream().filter(s -> s.getRole() == role).findFirst();
+            var match = chain.stream().filter(s -> s.getRole() == role).findFirst();
             if (match.isEmpty() || !isCleared(match.get())) {
                 break;
             }
@@ -364,30 +364,33 @@ public class SignOffService {
         return role.label();
     }
 
-    private void finalizeDelta(Server server) {
-        String requestedBy = preCheckSubmissionRepository.findByServerId(server.getId())
+    private void finalizeDelta(WorkspaceCombination combination) {
+        String requestedBy = preCheckSubmissionRepository.findByCombinationId(combination.getId())
                 .map(sub -> sub.getSubmittedBy())
                 .filter(s -> s != null && !s.isBlank())
                 .orElse("unknown");
 
-        server.setDeltaInitiatedAt(LocalDateTime.now());
-        server.setDeltaInitiatedBy(requestedBy);
-        Server saved = serverService.save(server);
+        combination.setDeltaInitiatedAt(LocalDateTime.now());
+        combination.setDeltaInitiatedBy(requestedBy);
+        WorkspaceCombination saved = combinationService.save(combination);
 
-        emailService.notifyMigrationEngineersDeltaInitiated(saved.getName(), saved.getDeltaInitiatedBy(),
+        Server server = saved.getServer();
+        String label = server.getName() + " / " + saved.getName();
+        emailService.notifyMigrationEngineersDeltaInitiated(label, saved.getDeltaInitiatedBy(),
                 saved.getDeltaInitiatedAt(), appUserService.emailsForRole(AppUserRole.MIGRATION_ENGINEER));
 
-        Project project = saved.getProject();
+        Project project = server.getProject();
         if (project != null && StringUtils.hasText(project.getMigrationManagerName())) {
-            int workspacePairCount = workspacePairRepository.findByServerId(saved.getId()).size();
-            emailService.notifyMigrationManagerDeltaReady(project.getName(), saved.getName(), workspacePairCount,
+            int workspacePairCount = combinationService.pairCount(saved);
+            emailService.notifyMigrationManagerDeltaReady(project.getName(), label, workspacePairCount,
                     requestedBy, project.getMigrationManagerName());
         }
     }
 
     // Emails whoever's pool holds the next role in the sequence that an approval is now waiting on
     // them. Migration Manager is a specific person; Dev/QA Lead are pools of two, either can act.
-    private void notifyNextApprover(Server server, SignOffRole nextRole) {
+    private void notifyNextApprover(WorkspaceCombination combination, SignOffRole nextRole) {
+        Server server = combination.getServer();
         Project project = server.getProject();
         if (project == null) {
             return;
@@ -398,44 +401,50 @@ public class SignOffService {
             case DEV_LEAD -> appUserService.emailsForRole(AppUserRole.DEV_LEAD);
             case QA_LEAD -> appUserService.emailsForRole(AppUserRole.QA_LEAD);
         };
-        int workspacePairCount = workspacePairRepository.findByServerId(server.getId()).size();
-        String submittedBy = preCheckSubmissionRepository.findByServerId(server.getId())
+        String label = server.getName() + " / " + combination.getName();
+        int workspacePairCount = combinationService.pairCount(combination);
+        String submittedBy = preCheckSubmissionRepository.findByCombinationId(combination.getId())
                 .map(sub -> sub.getSubmittedBy())
                 .orElse(null);
-        emailService.notifyApprovalRequired(roleLabel(nextRole), project.getName(), server.getName(),
+        emailService.notifyApprovalRequired(roleLabel(nextRole), project.getName(), label,
                 workspacePairCount, submittedBy, recipients);
     }
 
     // Called right after a pre-check is submitted (chain already created) to let the Migration
     // Manager know it's waiting on them, in the same format as every other approval-chain email.
-    public void notifyPreCheckSubmitted(Server server, String submittedBy, String migrationManagerEmail) {
-        int workspacePairCount = workspacePairRepository.findByServerId(server.getId()).size();
+    public void notifyPreCheckSubmitted(WorkspaceCombination combination, String submittedBy, String migrationManagerEmail) {
+        Server server = combination.getServer();
+        int workspacePairCount = combinationService.pairCount(combination);
         Project project = server.getProject();
         String projectName = project != null ? project.getName() : "-";
-        emailService.notifyMigrationManagerPreCheckSubmitted(projectName, server.getName(), workspacePairCount,
+        String label = server.getName() + " / " + combination.getName();
+        emailService.notifyMigrationManagerPreCheckSubmitted(projectName, label, workspacePairCount,
                 submittedBy, migrationManagerEmail);
     }
 
-    // Server-level stats used to build a SignOffApprovalDto. Computed once per server (see
-    // computeServerStats) so a server's pairs/escalations/submission aren't re-queried for each of
-    // its three sign-off rows.
-    private record ServerStats(long openEscalations, int totalPairs, String submittedBy, LocalDateTime submittedAt) {
+    // Combination-level stats used to build a SignOffApprovalDto. Computed once per combination
+    // (see computeCombinationStats) so its pairs/escalations/submission aren't re-queried for each
+    // of its three sign-off rows.
+    private record CombinationStats(long openEscalations, int totalPairs, String submittedBy, LocalDateTime submittedAt) {
     }
 
-    private ServerStats computeServerStats(Server server) {
-        long openEscalations = ticketService.countOpenForServer(server.getId());
-        int totalPairs = workspacePairRepository.findByServerId(server.getId()).size();
-        return preCheckSubmissionRepository.findByServerId(server.getId())
-                .map(sub -> new ServerStats(openEscalations, totalPairs, sub.getSubmittedBy(), sub.getSubmittedAt()))
-                .orElseGet(() -> new ServerStats(openEscalations, totalPairs, null, null));
+    private CombinationStats computeCombinationStats(WorkspaceCombination combination) {
+        long openEscalations = ticketService.countOpenForCombination(combination.getId());
+        int totalPairs = combinationService.pairCount(combination);
+        return preCheckSubmissionRepository.findByCombinationId(combination.getId())
+                .map(sub -> new CombinationStats(openEscalations, totalPairs, sub.getSubmittedBy(), sub.getSubmittedAt()))
+                .orElseGet(() -> new CombinationStats(openEscalations, totalPairs, null, null));
     }
 
-    private void applyServerStats(SignOffApprovalDto dto, Server server, ServerStats stats) {
+    private void applyCombinationStats(SignOffApprovalDto dto, WorkspaceCombination combination, CombinationStats stats) {
+        Server server = combination.getServer();
+        dto.setCombinationId(combination.getId());
+        dto.setCombinationName(combination.getName());
         dto.setServerId(server.getId());
         dto.setServerName(server.getName());
         dto.setTotalPairs(stats.totalPairs());
         dto.setOpenEscalationCount(stats.openEscalations());
-        dto.setReadinessStatus(ServerReadinessDto.computeReadinessStatus(server.getStatus(), stats.openEscalations()));
+        dto.setReadinessStatus(ServerReadinessDto.computeReadinessStatus(combination.getStatus(), stats.openEscalations()));
 
         if (server.getProject() != null) {
             dto.setProjectId(server.getProject().getId());
@@ -443,11 +452,11 @@ public class SignOffService {
         }
     }
 
-    private SignOffApprovalDto toApprovalDto(SignOff signOff, Server server, List<SignOff> serverSignOffs,
-                                              String actorEmail, ServerStats stats) {
+    private SignOffApprovalDto toApprovalDto(SignOff signOff, WorkspaceCombination combination, List<SignOff> chain,
+                                              String actorEmail, CombinationStats stats) {
         SignOffApprovalDto dto = new SignOffApprovalDto();
         dto.setId(signOff.getId());
-        applyServerStats(dto, server, stats);
+        applyCombinationStats(dto, combination, stats);
 
         dto.setRole(signOff.getRole());
         dto.setAssignedName(signOff.getSignedBy());
@@ -456,13 +465,13 @@ public class SignOffService {
         dto.setSubmittedAt(stats.submittedAt());
         dto.setApprovedBy(signOff.getApprovedBy());
         dto.setApprovedAt(signOff.getApprovedAt());
-        dto.setOverallStatus(overallStatusLabel(serverSignOffs));
-        dto.setCurrentStatus(currentStatusLabel(serverSignOffs));
+        dto.setOverallStatus(overallStatusLabel(chain));
+        dto.setCurrentStatus(currentStatusLabel(chain));
 
-        SignOffRole turn = currentTurn(serverSignOffs);
+        SignOffRole turn = currentTurn(chain);
         dto.setTurnReady(signOff.getRole() == turn);
         dto.setCanAct(signOff.getStatus() == SignOffStatus.PENDING && signOff.getRole() == turn
-                && isEligible(signOff.getRole(), actorEmail, server));
+                && isEligible(signOff.getRole(), actorEmail, combination));
         return dto;
     }
 }

@@ -30,7 +30,8 @@ const READY_SUBMISSION = {
   ],
 };
 
-const READY_SERVER = {
+const READY_COMBINATION = {
+  combinationName: "Box to OneDrive",
   serverName: "S1",
   totalPairs: 1,
   migrationManagerName: "mgr@cloudfuze.com",
@@ -44,7 +45,7 @@ function renderPanel() {
       <CurrentUserContext.Provider value={null}>
         <ToastProvider>
           <ConfirmProvider>
-            <PreCheckPanel serverId={1} showBackNav={false} showHeader={false} />
+            <PreCheckPanel combinationId={1} showBackNav={false} showHeader={false} />
           </ConfirmProvider>
         </ToastProvider>
       </CurrentUserContext.Provider>
@@ -55,7 +56,7 @@ function renderPanel() {
 describe("PreCheckPanel", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    client.getServerReadiness.mockResolvedValue(READY_SERVER);
+    client.getCombinationReadiness.mockResolvedValue(READY_COMBINATION);
     client.getPreCheckSubmission.mockResolvedValue(READY_SUBMISSION);
   });
 

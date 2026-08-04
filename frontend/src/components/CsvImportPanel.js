@@ -1,5 +1,6 @@
 import React, { useRef, useState } from "react";
 import Modal from "./Modal";
+import { downloadSampleCsv } from "../utils/csv";
 
 export default function CsvImportPanel({ title, columns, sampleRow, onUpload, onImported, sampleFileName }) {
   const [showSchema, setShowSchema] = useState(false);
@@ -12,23 +13,10 @@ export default function CsvImportPanel({ title, columns, sampleRow, onUpload, on
   // Build the same header + example row shown under "View CSV format" as a downloadable file, so
   // users can start from a correctly-shaped template instead of hand-typing the columns.
   const downloadSample = () => {
-    const escape = (v) => {
-      const s = String(v ?? "");
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const csv = `${columns.map(escape).join(",")}\n${sampleRow.map(escape).join(",")}\n`;
     const fileName =
       sampleFileName ||
       `${(title || "sample").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-sample.csv`;
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    downloadSampleCsv(columns, sampleRow, fileName);
   };
 
   const handleFileChange = async (e) => {

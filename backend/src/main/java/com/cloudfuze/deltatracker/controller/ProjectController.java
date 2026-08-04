@@ -1,12 +1,15 @@
 package com.cloudfuze.deltatracker.controller;
 
+import com.cloudfuze.deltatracker.dto.CreateServerRequest;
 import com.cloudfuze.deltatracker.dto.ProjectAssignmentRequest;
 import com.cloudfuze.deltatracker.dto.ProjectCreateRequest;
 import com.cloudfuze.deltatracker.dto.ProjectDetailDto;
 import com.cloudfuze.deltatracker.dto.ProjectSummaryDto;
 import com.cloudfuze.deltatracker.dto.ProjectUpdateRequest;
+import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
 import com.cloudfuze.deltatracker.service.AppUserService;
 import com.cloudfuze.deltatracker.service.ProjectService;
+import com.cloudfuze.deltatracker.service.ServerService;
 import com.cloudfuze.deltatracker.util.JwtEmailUtil;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -22,10 +25,12 @@ public class ProjectController {
 
     private final ProjectService projectService;
     private final AppUserService appUserService;
+    private final ServerService serverService;
 
-    public ProjectController(ProjectService projectService, AppUserService appUserService) {
+    public ProjectController(ProjectService projectService, AppUserService appUserService, ServerService serverService) {
         this.projectService = projectService;
         this.appUserService = appUserService;
+        this.serverService = serverService;
     }
 
     @GetMapping
@@ -44,6 +49,17 @@ public class ProjectController {
     public ProjectSummaryDto create(@Valid @RequestBody ProjectCreateRequest request) {
         return projectService.create(request.getName(), request.getProductType(), request.getCreatedBy(),
                 request.getMigrationManagerName());
+    }
+
+    // Create a Server directly under this project (the "Server URL" add flow) -- no CSV needed.
+    // SecurityConfig gates the route by role; the per-project check (must be this project's
+    // Migration Manager or a team member, unless admin) mirrors WorkspacePairController.importGlobal
+    // and lives in ServerService.createForProject.
+    @PostMapping("/{id}/servers")
+    public ServerReadinessDto createServer(@PathVariable Long id, @Valid @RequestBody CreateServerRequest request,
+                                            @AuthenticationPrincipal Jwt jwt) {
+        String email = JwtEmailUtil.extractEmail(jwt);
+        return serverService.createForProject(id, request.getName(), email, appUserService.isAdmin(email));
     }
 
     @PatchMapping("/{id}/assignments")

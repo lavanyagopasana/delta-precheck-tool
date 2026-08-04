@@ -23,10 +23,16 @@ export const getDashboardSummary = () => client.get("/dashboard/summary").then((
 export const getServers = () => client.get("/servers").then((r) => r.data);
 export const getServerReadiness = (serverId) =>
   client.get(`/servers/${serverId}/readiness`).then((r) => r.data);
-export const startDelta = (serverId) =>
-  client.post(`/servers/${serverId}/delta/start`).then((r) => r.data);
-export const finishDelta = (serverId) =>
-  client.post(`/servers/${serverId}/delta/finish`).then((r) => r.data);
+
+// Pre-check/sign-off/Delta lifecycle are per-combination, not per-server -- see
+// WorkspaceCombination on the backend. ServerReadinessDto.combinations lists a server's
+// combinations (id, name, pairCount, status); fetch one's own readiness here.
+export const getCombinationReadiness = (combinationId) =>
+  client.get(`/combinations/${combinationId}`).then((r) => r.data);
+export const startCombinationDelta = (combinationId) =>
+  client.post(`/combinations/${combinationId}/delta/start`).then((r) => r.data);
+export const finishCombinationDelta = (combinationId) =>
+  client.post(`/combinations/${combinationId}/delta/finish`).then((r) => r.data);
 
 export const getProjects = () => client.get("/projects").then((r) => r.data);
 export const getProjectDetail = (id) => client.get(`/projects/${id}`).then((r) => r.data);
@@ -57,26 +63,36 @@ export const SAMPLE_CSV_COLUMNS = [
   "combination",
 ];
 
-export const importWorkspacePairsCsvGlobal = (file, projectId) => {
+export const createServerForProject = (projectId, name) =>
+  client.post(`/projects/${projectId}/servers`, { name }).then((r) => r.data);
+
+// Server + combination are both chosen in the UI before the file is picked, so this CSV carries
+// neither a server_url nor a combination column -- just the four fields below.
+export const SAMPLE_CSV_COLUMNS_COMBINATION = ["source_email", "source_path", "destination_email", "destination_path"];
+
+export const importWorkspacePairsCsvForCombination = (serverId, combination, file) => {
   const formData = new FormData();
   formData.append("file", file);
-  formData.append("projectId", projectId);
+  formData.append("combination", combination);
   return client
-    .post("/pairs/import", formData, { headers: { "Content-Type": "multipart/form-data" } })
+    .post(`/servers/${serverId}/pairs/import`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    })
     .then((r) => r.data);
 };
 
-export const SAMPLE_CSV_COLUMNS_GLOBAL = ["server_name", ...SAMPLE_CSV_COLUMNS];
+export const deletePairsByCombination = (serverId, combination) =>
+  client.delete(`/servers/${serverId}/pairs`, { params: { combination } }).then((r) => r.data);
 
-export const updatePreCheckItem = (serverId, itemId, payload) =>
-  client.post(`/servers/${serverId}/precheck-items/${itemId}`, payload).then((r) => r.data);
+export const updatePreCheckItem = (combinationId, itemId, payload) =>
+  client.post(`/combinations/${combinationId}/precheck-items/${itemId}`, payload).then((r) => r.data);
 
-export const getPreCheckSubmission = (serverId, viewerEmail) =>
-  client.get(`/servers/${serverId}/precheck-submission`, { params: { viewerEmail } }).then((r) => r.data);
-export const submitPreCheckForReview = (serverId, payload) =>
-  client.post(`/servers/${serverId}/precheck-submission/submit`, payload).then((r) => r.data);
-export const withdrawPreCheck = (serverId) =>
-  client.post(`/servers/${serverId}/precheck-submission/withdraw`).then((r) => r.data);
+export const getPreCheckSubmission = (combinationId, viewerEmail) =>
+  client.get(`/combinations/${combinationId}/precheck-submission`, { params: { viewerEmail } }).then((r) => r.data);
+export const submitPreCheckForReview = (combinationId, payload) =>
+  client.post(`/combinations/${combinationId}/precheck-submission/submit`, payload).then((r) => r.data);
+export const withdrawPreCheck = (combinationId) =>
+  client.post(`/combinations/${combinationId}/precheck-submission/withdraw`).then((r) => r.data);
 
 export const uploadEvidence = (file) => {
   const formData = new FormData();
@@ -114,10 +130,10 @@ export const updateTicket = (id, payload) =>
   client.put(`/tickets/${id}`, payload).then((r) => r.data);
 export const removeTicket = (id) => client.delete(`/tickets/${id}`).then((r) => r.data);
 
-export const approveSignOff = (serverId, role, approverEmail, qaRequired) =>
-  client.post(`/servers/${serverId}/signoffs/${role}/approve`, { approverEmail, qaRequired }).then((r) => r.data);
-export const declineSignOff = (serverId, role, approverEmail) =>
-  client.post(`/servers/${serverId}/signoffs/${role}/decline`, { approverEmail }).then((r) => r.data);
+export const approveSignOff = (combinationId, role, approverEmail, qaRequired) =>
+  client.post(`/combinations/${combinationId}/signoffs/${role}/approve`, { approverEmail, qaRequired }).then((r) => r.data);
+export const declineSignOff = (combinationId, role, approverEmail) =>
+  client.post(`/combinations/${combinationId}/signoffs/${role}/decline`, { approverEmail }).then((r) => r.data);
 export const getSignOffApprovals = () => client.get("/signoff-approvals").then((r) => r.data);
 
 export default client;

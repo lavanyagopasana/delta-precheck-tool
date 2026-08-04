@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/servers/{serverId}/precheck-items")
+@RequestMapping("/api/combinations/{combinationId}/precheck-items")
 public class PreCheckItemController {
 
     private final PreCheckItemService preCheckItemService;
@@ -20,21 +20,21 @@ public class PreCheckItemController {
     }
 
     @GetMapping
-    public List<PreCheckItemDto> list(@PathVariable Long serverId) {
-        return preCheckItemService.listByServer(serverId);
+    public List<PreCheckItemDto> list(@PathVariable Long combinationId) {
+        return preCheckItemService.listByCombination(combinationId);
     }
 
     @PostMapping("/{itemId}")
-    public PreCheckItemDto update(@PathVariable Long serverId,
+    public PreCheckItemDto update(@PathVariable Long combinationId,
                                    @PathVariable Long itemId,
                                    @Valid @RequestBody PreCheckItemUpdateRequest request) {
-        return preCheckItemService.update(serverId, itemId, request);
+        return preCheckItemService.update(combinationId, itemId, request);
     }
 
     @PostMapping("/check-all")
-    public void checkAll(@PathVariable Long serverId,
+    public void checkAll(@PathVariable Long combinationId,
                           @RequestParam ItemStatus status,
                           @RequestParam(required = false) String updatedBy) {
-        preCheckItemService.setAllStatus(serverId, status, updatedBy);
+        preCheckItemService.setAllStatus(combinationId, status, updatedBy);
     }
 }

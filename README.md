@@ -47,6 +47,9 @@ by environment variable — nothing needs editing for local dev, the defaults be
 | Auto-provision domain | `AZURE_AUTO_PROVISION_DOMAIN` | `cloudfuze.com` | as needed |
 | SMTP host/port/username | `SMTP_HOST`/`SMTP_PORT`/`SMTP_USERNAME` | Office 365 relay defaults | as needed |
 | SMTP password | `SMTP_PASSWORD` | *(blank — sending disabled)* | real SMTP password (secret) |
+| Jira site URL | `JIRA_BASE_URL` | *(blank — ticket lookup disabled)* | e.g. `https://yourcompany.atlassian.net` |
+| Jira account email | `JIRA_EMAIL` | *(blank)* | the email of the account that owns the API token below |
+| Jira API token | `JIRA_API_TOKEN` | *(blank)* | generate at https://id.atlassian.com/manage-profile/security/api-tokens (secret) |
 
 Frontend settings are build-time env vars (Create React App) in `frontend/.env.local` — copy
 `frontend/.env.example` to get started:
@@ -111,7 +114,7 @@ several aliases accepted per column):
 
 | Column | Required | Accepted header aliases |
 |---|---|---|
-| Server name | yes (global import only) | `server_name`, `server` |
+| Server URL | yes (global import only) | `server_url`, `url`, `server` |
 | Source email | yes | `source_email`, `source`, `source_user`, `source_account` |
 | Source path | no | `source_path`, `source_folder`, `source_folder_path` |
 | Destination email | yes | `destination_email`, `destination`, `destination_user`, `target_email`, `destination_account` |

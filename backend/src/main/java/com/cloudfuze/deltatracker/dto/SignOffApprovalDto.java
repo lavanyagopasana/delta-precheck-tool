@@ -12,6 +12,8 @@ import java.time.LocalDateTime;
 public class SignOffApprovalDto {
 
     private Long id;
+    private Long combinationId;
+    private String combinationName;
     private Long serverId;
     private String serverName;
     private String readinessStatus;

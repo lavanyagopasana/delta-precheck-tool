@@ -28,7 +28,14 @@ describe("TicketsPage", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     client.getTickets.mockResolvedValue([]);
-    client.getServers.mockResolvedValue([{ serverId: 5, serverName: "S1", projectId: 9 }]);
+    client.getServers.mockResolvedValue([
+      {
+        serverId: 5,
+        serverName: "S1",
+        projectId: 9,
+        combinations: [{ id: 21, name: "Box to OneDrive" }],
+      },
+    ]);
     client.getProjects.mockResolvedValue([{ id: 9, name: "P1" }]);
   });
 
@@ -61,20 +68,20 @@ describe("TicketsPage", () => {
     const modal = within(document.querySelector(".modal-card"));
     await userEvent.selectOptions(modal.getByLabelText("Project"), "9");
     await userEvent.selectOptions(modal.getByLabelText("Server"), "5");
+    await userEvent.selectOptions(modal.getByLabelText("Combination"), "21");
     await userEvent.type(modal.getByLabelText("Created by"), "eng@cloudfuze.com");
-    await userEvent.type(modal.getByLabelText("Ticket URL"), "https://jira.example.com/browse/T-1");
+    await userEvent.type(modal.getByLabelText("Ticket Number"), "PROJ-123");
 
     const submit = modal.getByRole("button", { name: "Log Ticket" });
     expect(submit).toBeEnabled();
     await userEvent.click(submit);
 
-    await waitFor(() => expect(modal.getByRole("button", { name: /saving/i })).toBeDisabled());
+    await waitFor(() => expect(modal.getByRole("button", { name: /fetching from jira/i })).toBeDisabled());
     expect(client.createTicket).toHaveBeenCalledWith(
       expect.objectContaining({
-        serverId: 5,
+        combinationId: 21,
         createdBy: "eng@cloudfuze.com",
-        ticketUrl: "https://jira.example.com/browse/T-1",
-        status: "OPEN",
+        ticketNumber: "PROJ-123",
       })
     );
 
@@ -82,8 +89,8 @@ describe("TicketsPage", () => {
     expect(await screen.findByText("Ticket logged.")).toBeInTheDocument();
   });
 
-  test("form shows an error message when create fails", async () => {
-    client.createTicket.mockRejectedValue({ response: { data: { message: "URL not allowed" } } });
+  test("form shows an error message when the Jira fetch fails", async () => {
+    client.createTicket.mockRejectedValue({ response: { data: { message: "No Jira ticket found for \"PROJ-123\"." } } });
 
     renderPage();
     await screen.findByText("Ticket Tracker");
@@ -92,11 +99,12 @@ describe("TicketsPage", () => {
     const modal = within(document.querySelector(".modal-card"));
     await userEvent.selectOptions(modal.getByLabelText("Project"), "9");
     await userEvent.selectOptions(modal.getByLabelText("Server"), "5");
+    await userEvent.selectOptions(modal.getByLabelText("Combination"), "21");
     await userEvent.type(modal.getByLabelText("Created by"), "eng@cloudfuze.com");
-    await userEvent.type(modal.getByLabelText("Ticket URL"), "https://jira.example.com/browse/T-1");
+    await userEvent.type(modal.getByLabelText("Ticket Number"), "PROJ-123");
     await userEvent.click(modal.getByRole("button", { name: "Log Ticket" }));
 
     // The message is surfaced in both the inline hint and a toast -- assert at least one.
-    expect((await screen.findAllByText("URL not allowed")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("No Jira ticket found for \"PROJ-123\".")).length).toBeGreaterThan(0);
   });
 });

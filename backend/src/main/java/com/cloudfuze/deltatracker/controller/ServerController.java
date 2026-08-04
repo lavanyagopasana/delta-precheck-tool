@@ -6,9 +6,6 @@ import com.cloudfuze.deltatracker.dto.WorkspacePairImportResultDto;
 import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.service.ServerService;
 import com.cloudfuze.deltatracker.service.WorkspacePairService;
-import com.cloudfuze.deltatracker.util.JwtEmailUtil;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -41,9 +38,24 @@ public class ServerController {
         return serverService.getReadiness(id);
     }
 
+    // combination is optional: when present, this is the "add a combination, then upload its CSV"
+    // flow (WorkspacePairService.importCsvForServerCombination) -- the CSV carries no server_url or
+    // combination column, both are already chosen in the UI. Absent, it's the existing plain
+    // per-server import where combination (if any) comes from a CSV column per row.
     @PostMapping("/{id}/pairs/import")
-    public WorkspacePairImportResultDto importPairs(@PathVariable Long id, @RequestParam MultipartFile file) {
-        return workspacePairService.importCsv(id, file);
+    public WorkspacePairImportResultDto importPairs(@PathVariable Long id, @RequestParam MultipartFile file,
+                                                      @RequestParam(required = false) String combination) {
+        return combination != null
+                ? workspacePairService.importCsvForServerCombination(id, combination, file)
+                : workspacePairService.importCsv(id, file);
+    }
+
+    // Removes every migration pair under one combination for this server -- the "delete combination"
+    // action on the project page. Distinct from project deletion: this only clears pairs, the
+    // server itself and its other combinations are untouched.
+    @DeleteMapping("/{id}/pairs")
+    public void deletePairsByCombination(@PathVariable Long id, @RequestParam String combination) {
+        workspacePairService.deleteByServerAndCombination(id, combination);
     }
 
     @PostMapping("/{id}/project")
@@ -51,14 +63,4 @@ public class ServerController {
         return serverService.assignProject(id, request.getProjectId());
     }
 
-    // Post-Delta lifecycle, engineer-driven (gated in SecurityConfig to ADMIN + MIGRATION_ENGINEER).
-    @PostMapping("/{id}/delta/start")
-    public ServerReadinessDto startDelta(@PathVariable Long id, @AuthenticationPrincipal Jwt jwt) {
-        return serverService.startDelta(id, JwtEmailUtil.extractEmail(jwt));
-    }
-
-    @PostMapping("/{id}/delta/finish")
-    public ServerReadinessDto finishDelta(@PathVariable Long id, @AuthenticationPrincipal Jwt jwt) {
-        return serverService.finishDelta(id, JwtEmailUtil.extractEmail(jwt));
-    }
 }

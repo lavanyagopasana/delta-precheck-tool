@@ -88,9 +88,10 @@ signing in with the auto-provision domain (default `cloudfuze.com`) is silently 
 ## Critical Constraints
 
 - **`AZURE_CLIENT_ID`/`AZURE_TENANT_ID` are baked into `application.properties` as defaults**
-  (as of 2026-07-27 — client ID `a55e053f-bfe9-4b4a-8b74-362649f82cf0`, tenant ID
-  `66d8848d-26b6-4147-8124-127624d7b3a6`; this is now a **single-tenant** registration, not
-  multi-tenant as it was originally). Neither value is a secret (both are public OAuth identifiers,
+  (as of 2026-07-30 — client ID `4145c1b2-a596-4d84-bede-6e2ca276c9c7`, tenant ID
+  `807d6772-847c-40e2-9bec-e2c930b3a42e`; this is the "delta migration readiness tracker" app
+  registration confirmed with the team, replacing an earlier stale pair. This is a
+  **single-tenant** registration, not multi-tenant as it was originally). Neither value is a secret (both are public OAuth identifiers,
   not credentials), so baking them in as defaults is safe — and it closes a footgun that bit this
   project repeatedly before: when these had to be exported manually every backend restart,
   forgetting silently fell back to fully-open `permitAll` mode (`/api/me` would return
@@ -153,8 +154,8 @@ frontend/src/
 | `DB_URL` | `jdbc:mysql://localhost:3306/delta_migration_tracker?...` | DB auto-created on first connect |
 | `DB_USERNAME` | `root` | |
 | `DB_PASSWORD` | `root` | |
-| `AZURE_CLIENT_ID` | `a55e053f-bfe9-4b4a-8b74-362649f82cf0` | Baked in; override only to test a different app registration or to disable auth (set blank) |
-| `AZURE_TENANT_ID` | `66d8848d-26b6-4147-8124-127624d7b3a6` | Single-tenant — only accounts in this Entra ID tenant can authenticate at all |
+| `AZURE_CLIENT_ID` | `4145c1b2-a596-4d84-bede-6e2ca276c9c7` | Baked in; override only to test a different app registration or to disable auth (set blank) |
+| `AZURE_TENANT_ID` | `807d6772-847c-40e2-9bec-e2c930b3a42e` | Single-tenant — only accounts in this Entra ID tenant can authenticate at all |
 | `AZURE_ALLOWED_EMAIL_DOMAIN` | *(blank)* | Currently unset for testing; set to `cloudfuze.com` to restrict sign-in |
 | `AZURE_REQUIRE_ALLOWLIST` | `true` | Only people added under Manage Access can sign in. Set `false` only for local testing with unregistered accounts |
 | `AZURE_AUTO_PROVISION_DOMAIN` | `cloudfuze.com` | Auto-added as `MIGRATION_ENGINEER` on first sign-in |

@@ -1,28 +1,25 @@
 package com.cloudfuze.deltatracker.dto;
 
-import com.cloudfuze.deltatracker.entity.TicketStatus;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.Setter;
 
+// Logging a ticket only needs a combination (for internal visibility scoping -- Jira has no concept
+// of our internal Project/Server/Combination, and a server can have several combinations each with
+// their own migration) and a ticket number; everything else (URL, status, summary, reporter, created
+// date) is fetched from Jira by JiraService. See TicketUpdateRequest for editing an already-logged
+// ticket, which still takes a raw URL/status.
 @Getter
 @Setter
 public class TicketCreateRequest {
 
     @NotNull
-    private Long serverId;
-
-    // Max matches the ticket_url column length (VARCHAR(512)) so an oversize URL is rejected at bind
-    // with a clear message instead of failing at insert.
-    @NotBlank
-    @Size(max = 512, message = "Ticket URL must be 512 characters or fewer")
-    private String ticketUrl;
+    private Long combinationId;
 
     @NotBlank
     private String createdBy;
 
-    @NotNull
-    private TicketStatus status;
+    @NotBlank
+    private String ticketNumber;
 }

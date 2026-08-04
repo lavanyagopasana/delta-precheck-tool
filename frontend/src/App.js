@@ -13,7 +13,8 @@ import { getCurrentUser } from "./api/client";
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const ProjectsPage = lazy(() => import("./pages/ProjectsPage"));
 const ProjectDetailsPage = lazy(() => import("./pages/ProjectDetailsPage"));
-const ServerPreCheckPage = lazy(() => import("./pages/ServerPreCheckPage"));
+const ServerDetailsPage = lazy(() => import("./pages/ServerDetailsPage"));
+const CombinationPreCheckPage = lazy(() => import("./pages/CombinationPreCheckPage"));
 const TicketsPage = lazy(() => import("./pages/TicketsPage"));
 const ApprovalsPage = lazy(() => import("./pages/ApprovalsPage"));
 const AdminUsersPage = lazy(() => import("./pages/AdminUsersPage"));
@@ -155,7 +156,8 @@ function AppShell() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/projects" element={<ProjectsPage />} />
                 <Route path="/projects/:id" element={<ProjectDetailsPage />} />
-                <Route path="/servers/:serverId/precheck" element={<ServerPreCheckPage />} />
+                <Route path="/servers/:serverId" element={<ServerDetailsPage />} />
+                <Route path="/combinations/:combinationId/precheck" element={<CombinationPreCheckPage />} />
                 <Route path="/tickets" element={<TicketsPage />} />
                 <Route path="/approvals" element={<ApprovalsPage />} />
                 <Route path="/admin" element={<AdminUsersPage />} />

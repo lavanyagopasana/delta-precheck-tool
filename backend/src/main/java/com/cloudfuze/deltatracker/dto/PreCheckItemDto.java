@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
 public class PreCheckItemDto {
 
     private Long id;
-    private Long serverId;
+    private Long combinationId;
     private String itemName;
     private ItemStatus status;
     private String notes;
@@ -24,7 +24,7 @@ public class PreCheckItemDto {
     public static PreCheckItemDto fromEntity(PreCheckItem item) {
         PreCheckItemDto dto = new PreCheckItemDto();
         dto.setId(item.getId());
-        dto.setServerId(item.getServerId());
+        dto.setCombinationId(item.getCombinationId());
         dto.setItemName(item.getItemName());
         dto.setStatus(item.getStatus());
         dto.setNotes(item.getNotes());
@@ -40,7 +40,7 @@ public class PreCheckItemDto {
     public static PreCheckItemDto redacted(PreCheckItem item) {
         PreCheckItemDto dto = new PreCheckItemDto();
         dto.setId(item.getId());
-        dto.setServerId(item.getServerId());
+        dto.setCombinationId(item.getCombinationId());
         dto.setItemName(item.getItemName());
         dto.setStatus(ItemStatus.NOT_STARTED);
         return dto;

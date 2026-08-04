@@ -7,5 +7,5 @@ import java.util.List;
 
 public interface PreCheckItemRepository extends JpaRepository<PreCheckItem, Long> {
 
-    List<PreCheckItem> findByServerId(Long serverId);
+    List<PreCheckItem> findByCombinationId(Long combinationId);
 }

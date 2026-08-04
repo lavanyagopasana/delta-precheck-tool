@@ -8,7 +8,7 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "sign_offs", uniqueConstraints = @UniqueConstraint(columnNames = {"server_id", "role"}))
+@Table(name = "sign_offs", uniqueConstraints = @UniqueConstraint(columnNames = {"combination_id", "role"}))
 @Getter
 @Setter
 @NoArgsConstructor
@@ -27,8 +27,8 @@ public class SignOff {
     private Long version = 0L;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "server_id", nullable = false)
-    private Server server;
+    @JoinColumn(name = "combination_id", nullable = false)
+    private WorkspaceCombination combination;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -54,12 +54,12 @@ public class SignOff {
     private LocalDateTime approvedAt;
 
     // Only ever set on the Dev Lead row, at the moment the Dev Lead approves -- records whether they
-    // said QA Lead approval is required for this server. Null means the Dev Lead hasn't acted yet.
+    // said QA Lead approval is required for this combination. Null means the Dev Lead hasn't acted yet.
     @Column(name = "qa_required")
     private Boolean qaRequired;
 
-    public SignOff(Server server, SignOffRole role, String signedBy) {
-        this.server = server;
+    public SignOff(WorkspaceCombination combination, SignOffRole role, String signedBy) {
+        this.combination = combination;
         this.role = role;
         this.signedBy = signedBy;
         this.signedAt = LocalDateTime.now();

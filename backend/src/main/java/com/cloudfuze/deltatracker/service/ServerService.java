@@ -1,40 +1,43 @@
 package com.cloudfuze.deltatracker.service;
 
+import com.cloudfuze.deltatracker.dto.CombinationSummaryDto;
 import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
 import com.cloudfuze.deltatracker.dto.WorkspacePairDto;
-import com.cloudfuze.deltatracker.entity.ItemStatus;
 import com.cloudfuze.deltatracker.entity.PairStatus;
-import com.cloudfuze.deltatracker.entity.PreCheckItem;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
 import com.cloudfuze.deltatracker.entity.Project;
 import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.entity.SubmissionStatus;
+import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import com.cloudfuze.deltatracker.entity.WorkspacePair;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
 import org.springframework.http.HttpStatus;
-import com.cloudfuze.deltatracker.repository.PreCheckItemRepository;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
 import com.cloudfuze.deltatracker.repository.ProjectRepository;
 import com.cloudfuze.deltatracker.repository.ServerRepository;
+import com.cloudfuze.deltatracker.repository.WorkspaceCombinationRepository;
 import com.cloudfuze.deltatracker.repository.WorkspacePairRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 
-import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional
 public class ServerService {
 
     public static final String DELTA_TYPE_ITEM = "Delta Type";
+    // Only required/counted when Delta Type's own status is PRE_DELTA -- see
+    // PreCheckSubmissionService.isPreDeltaMigrationRequired.
+    public static final String PRE_DELTA_MIGRATION_ITEM = "Pre Delta Migration";
 
     public static final List<String> PRE_CHECK_ITEMS = List.of(
             "OneTime Migration",
             DELTA_TYPE_ITEM,
-            "Pre Delta Migration",
+            PRE_DELTA_MIGRATION_ITEM,
             "Data Verified",
             "Permissions Verified",
             "Hyperlinks Verified",
@@ -44,26 +47,23 @@ public class ServerService {
 
     private final ServerRepository serverRepository;
     private final WorkspacePairRepository workspacePairRepository;
-    private final PreCheckItemRepository preCheckItemRepository;
+    private final WorkspaceCombinationRepository workspaceCombinationRepository;
     private final PreCheckSubmissionRepository preCheckSubmissionRepository;
     private final TicketService ticketService;
     private final ProjectRepository projectRepository;
-    private final EmailService emailService;
 
     public ServerService(ServerRepository serverRepository,
                           WorkspacePairRepository workspacePairRepository,
-                          PreCheckItemRepository preCheckItemRepository,
+                          WorkspaceCombinationRepository workspaceCombinationRepository,
                           PreCheckSubmissionRepository preCheckSubmissionRepository,
                           TicketService ticketService,
-                          ProjectRepository projectRepository,
-                          EmailService emailService) {
+                          ProjectRepository projectRepository) {
         this.serverRepository = serverRepository;
         this.workspacePairRepository = workspacePairRepository;
-        this.preCheckItemRepository = preCheckItemRepository;
+        this.workspaceCombinationRepository = workspaceCombinationRepository;
         this.preCheckSubmissionRepository = preCheckSubmissionRepository;
         this.ticketService = ticketService;
         this.projectRepository = projectRepository;
-        this.emailService = emailService;
     }
 
     public Server findOrThrow(Long id) {
@@ -75,25 +75,52 @@ public class ServerService {
         return serverRepository.save(server);
     }
 
-    public void seedPreCheckItems(Server server) {
-        for (String itemName : PRE_CHECK_ITEMS) {
-            preCheckItemRepository.save(new PreCheckItem(server, itemName));
+    // Creates a Server directly under a project (the "Server URL" add flow on the project page),
+    // without requiring a CSV import first. Mirrors WorkspacePairService.importCsvGlobal's
+    // new-server path: same case-insensitive per-project uniqueness rule, the same per-project
+    // permission check (non-admins must be this project's Migration Manager or a team member). No
+    // pre-check seeding happens here anymore -- that's per-combination now (see
+    // WorkspaceCombinationService), and a freshly created server has no combinations yet.
+    public ServerReadinessDto createForProject(Long projectId, String name, String callerEmail, boolean isAdmin) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new ResourceNotFoundException("Project not found: " + projectId));
+
+        if (callerEmail != null && !isAdmin) {
+            boolean isManager = callerEmail.equalsIgnoreCase(project.getMigrationManagerName());
+            boolean isTeamMember = project.getEngineerEmails().stream().anyMatch(callerEmail::equalsIgnoreCase);
+            if (!isManager && !isTeamMember) {
+                throw new ApiException(HttpStatus.FORBIDDEN,
+                        "Only this project's Migration Manager or team members can add a server here.");
+            }
         }
-        preCheckSubmissionRepository.save(new PreCheckSubmission(server));
+
+        String trimmed = name.trim();
+        if (serverRepository.findByProjectIdAndNameIgnoreCase(projectId, trimmed).isPresent()) {
+            throw new ApiException(HttpStatus.CONFLICT, "A server with this URL already exists in this project.");
+        }
+        Server server = new Server(trimmed);
+        server.setProject(project);
+        server = serverRepository.save(server);
+        return buildReadiness(server, false);
     }
 
+    // Server.status is a rollup of its combinations' own statuses -- DELTA_READY only once the
+    // server has at least one combination AND every one of them is DELTA_READY; PENDING if none of
+    // them have any progress; IN_PROGRESS otherwise. Called whenever a combination's own status
+    // changes (WorkspaceCombinationService.recomputeStatus).
     public void recomputeStatus(Server server) {
-        SubmissionStatus status = preCheckSubmissionRepository.findByServerId(server.getId())
-                .map(PreCheckSubmission::getStatus)
-                .orElse(SubmissionStatus.NOT_STARTED);
+        List<WorkspaceCombination> combinations = workspaceCombinationRepository.findByServerId(server.getId());
 
-        boolean anyProgress = status != SubmissionStatus.NOT_STARTED
-                || preCheckItemRepository.findByServerId(server.getId()).stream()
-                        .anyMatch(item -> item.getStatus() != ItemStatus.NOT_STARTED);
-
-        PairStatus newStatus = status == SubmissionStatus.SUBMITTED
-                ? PairStatus.DELTA_READY
-                : anyProgress ? PairStatus.IN_PROGRESS : PairStatus.PENDING;
+        PairStatus newStatus;
+        if (combinations.isEmpty()) {
+            newStatus = PairStatus.PENDING;
+        } else if (combinations.stream().allMatch(c -> c.getStatus() == PairStatus.DELTA_READY)) {
+            newStatus = PairStatus.DELTA_READY;
+        } else if (combinations.stream().anyMatch(c -> c.getStatus() != PairStatus.PENDING)) {
+            newStatus = PairStatus.IN_PROGRESS;
+        } else {
+            newStatus = PairStatus.PENDING;
+        }
 
         server.setStatus(newStatus);
         serverRepository.save(server);
@@ -118,10 +145,13 @@ public class ServerService {
                 .toList();
     }
 
+    // includePairs=true here (unlike listReadiness/assignProject) so the project page's "Servers &
+    // Migration Pairs" card can derive each server's already-uploaded combinations without a
+    // separate round trip per server.
     public List<ServerReadinessDto> listReadinessForProject(Long projectId) {
         return serverRepository.findAll().stream()
                 .filter(server -> server.getProject() != null && server.getProject().getId().equals(projectId))
-                .map(server -> buildReadiness(server, false))
+                .map(server -> buildReadiness(server, true))
                 .toList();
     }
 
@@ -130,58 +160,9 @@ public class ServerService {
         return buildReadiness(server, true);
     }
 
-    // Post-Delta lifecycle (engineer-driven). Start can only happen after Delta is initiated;
-    // Finish only after Start. Timestamps are stamped at click time.
-    public ServerReadinessDto startDelta(Long serverId, String actorEmail) {
-        Server server = findOrThrow(serverId);
-        if (server.getDeltaInitiatedAt() == null) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "Delta hasn't been initiated for this server yet.");
-        }
-        if (server.getDeltaStartedAt() != null) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "Delta migration has already been started for this server.");
-        }
-        server.setDeltaStartedAt(LocalDateTime.now());
-        server.setDeltaStartedBy(actorEmail);
-        Server saved = serverRepository.save(server);
-        notifyManager(saved, true);
-        return buildReadiness(saved, true);
-    }
-
-    public ServerReadinessDto finishDelta(Long serverId, String actorEmail) {
-        Server server = findOrThrow(serverId);
-        if (server.getDeltaStartedAt() == null) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "Start the Delta migration before marking it finished.");
-        }
-        if (server.getDeltaFinishedAt() != null) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "Delta migration is already marked finished for this server.");
-        }
-        server.setDeltaFinishedAt(LocalDateTime.now());
-        server.setDeltaFinishedBy(actorEmail);
-        Server saved = serverRepository.save(server);
-        notifyManager(saved, false);
-        return buildReadiness(saved, true);
-    }
-
-    // Notifies the project's Migration Manager that the engineer has started (started=true) or
-    // finished (started=false) the Delta migration for this server. No-op if the server has no
-    // project or no Migration Manager assigned.
-    private void notifyManager(Server server, boolean started) {
-        Project project = server.getProject();
-        if (project == null || !StringUtils.hasText(project.getMigrationManagerName())) {
-            return;
-        }
-        int pairCount = (int) workspacePairRepository.countByServerId(server.getId());
-        if (started) {
-            emailService.notifyMigrationManagerDeltaStarted(project.getName(), server.getName(), pairCount,
-                    server.getDeltaStartedBy(), server.getDeltaStartedAt(), project.getMigrationManagerName());
-        } else {
-            emailService.notifyMigrationManagerDeltaFinished(project.getName(), server.getName(), pairCount,
-                    server.getDeltaFinishedBy(), server.getDeltaFinishedAt(), project.getMigrationManagerName());
-        }
-    }
-
     private ServerReadinessDto buildReadiness(Server server, boolean includePairs) {
         List<WorkspacePair> pairs = workspacePairRepository.findByServerId(server.getId());
+        List<WorkspaceCombination> combinations = workspaceCombinationRepository.findByServerId(server.getId());
 
         int total = pairs.size();
         int ready = server.getStatus() == PairStatus.DELTA_READY ? total : 0;
@@ -197,25 +178,41 @@ public class ServerService {
         dto.setNotReadyCount(notReady);
         dto.setOpenEscalationCount(openEscalations);
         dto.setReadinessStatus(ServerReadinessDto.computeReadinessStatus(server.getStatus(), openEscalations));
-        dto.setDeltaInitiatedAt(server.getDeltaInitiatedAt());
-        dto.setDeltaInitiatedBy(server.getDeltaInitiatedBy());
-        dto.setDeltaStartedAt(server.getDeltaStartedAt());
-        dto.setDeltaStartedBy(server.getDeltaStartedBy());
-        dto.setDeltaFinishedAt(server.getDeltaFinishedAt());
-        dto.setDeltaFinishedBy(server.getDeltaFinishedBy());
-        dto.setSubmissionStatus(preCheckSubmissionRepository.findByServerId(server.getId())
-                .map(PreCheckSubmission::getStatus)
-                .orElse(SubmissionStatus.NOT_STARTED));
         if (server.getProject() != null) {
             dto.setProjectId(server.getProject().getId());
             dto.setProjectName(server.getProject().getName());
             dto.setMigrationManagerName(server.getProject().getMigrationManagerName());
+            dto.setProductType(server.getProject().getProductType());
         }
+
+        List<Long> combinationIds = combinations.stream().map(WorkspaceCombination::getId).toList();
+        Map<Long, PreCheckSubmission> submissionByCombination = preCheckSubmissionRepository
+                .findByCombinationIdIn(combinationIds).stream()
+                .collect(Collectors.toMap(s -> s.getCombination().getId(), s -> s));
+
+        dto.setCombinations(combinations.stream()
+                .map(c -> {
+                    long pairCount = pairs.stream().filter(p -> sameCombination(p.getCombination(), c.getName())).count();
+                    CombinationSummaryDto summary = new CombinationSummaryDto();
+                    summary.setId(c.getId());
+                    summary.setName(c.getName());
+                    summary.setPairCount((int) pairCount);
+                    summary.setStatus(c.getStatus());
+                    summary.setSubmissionStatus(java.util.Optional.ofNullable(submissionByCombination.get(c.getId()))
+                            .map(PreCheckSubmission::getStatus)
+                            .orElse(SubmissionStatus.NOT_STARTED));
+                    return summary;
+                })
+                .toList());
 
         if (includePairs) {
             dto.setPairs(pairs.stream().map(WorkspacePairDto::fromEntity).toList());
         }
 
         return dto;
+    }
+
+    private boolean sameCombination(String a, String b) {
+        return (a == null ? "" : a.trim()).equalsIgnoreCase(b == null ? "" : b.trim());
     }
 }

@@ -10,10 +10,10 @@ import java.util.Optional;
 
 public interface SignOffRepository extends JpaRepository<SignOff, Long> {
 
-    List<SignOff> findByServerId(Long serverId);
+    List<SignOff> findByCombinationId(Long combinationId);
 
-    // Batch variant for building project/list summaries without a query per server.
-    List<SignOff> findByServerIdIn(Collection<Long> serverIds);
+    // Batch variant for building project/list summaries without a query per combination.
+    List<SignOff> findByCombinationIdIn(Collection<Long> combinationIds);
 
-    Optional<SignOff> findByServerIdAndRole(Long serverId, SignOffRole role);
+    Optional<SignOff> findByCombinationIdAndRole(Long combinationId, SignOffRole role);
 }

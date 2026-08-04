@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  getServerReadiness,
+  getCombinationReadiness,
   getPreCheckSubmission,
   updatePreCheckItem,
   submitPreCheckForReview,
@@ -33,6 +33,9 @@ const BASE_STATUS_OPTIONS = [
 ];
 
 const DELTA_TYPE_ITEM = "Delta Type";
+// Only shown/required when Delta Type's own status is PRE_DELTA -- see preDeltaMigrationRequired
+// below. Mirrors ServerService.PRE_DELTA_MIGRATION_ITEM on the backend.
+const PRE_DELTA_MIGRATION_ITEM = "Pre Delta Migration";
 
 const DELTA_TYPE_STATUS_OPTIONS = [
   { value: "NOT_STARTED", label: "Not Started" },
@@ -47,7 +50,7 @@ function statusOptionsFor(itemName) {
   if (itemName === "Drive changes") {
     return BASE_STATUS_OPTIONS.map((o) => (o.value === "COMPLETED" ? { ...o, label: "Not up to date" } : o));
   }
-  if (itemName === "Pre Delta Migration") {
+  if (itemName === PRE_DELTA_MIGRATION_ITEM) {
     return [...BASE_STATUS_OPTIONS, { value: "NOT_AVAILABLE", label: "Not available" }];
   }
   return BASE_STATUS_OPTIONS;
@@ -80,7 +83,7 @@ function evidenceDisplayName(item) {
   return segments[segments.length - 1];
 }
 
-function ItemRow({ item, locked, serverId, editingAs, onSaved }) {
+function ItemRow({ item, locked, combinationId, editingAs, onSaved }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
   const [dragOver, setDragOver] = useState(false);
@@ -94,7 +97,7 @@ function ItemRow({ item, locked, serverId, editingAs, onSaved }) {
   const save = async (patch) => {
     setError(null);
     try {
-      const updated = await updatePreCheckItem(serverId, item.id, {
+      const updated = await updatePreCheckItem(combinationId, item.id, {
         status: item.status,
         notes: item.notes,
         evidenceFilePath: item.evidenceFilePath,
@@ -253,7 +256,7 @@ function ItemRow({ item, locked, serverId, editingAs, onSaved }) {
   );
 }
 
-function PreCheckBackNav({ fromSignoff, projectId, projectName, serverName }) {
+function PreCheckBackNav({ fromSignoff, projectId, projectName, serverName, combinationName }) {
   const navigate = useNavigate();
   if (fromSignoff) {
     return (
@@ -262,19 +265,20 @@ function PreCheckBackNav({ fromSignoff, projectId, projectName, serverName }) {
       </button>
     );
   }
+  const trail = `${serverName} / ${combinationName} / Pre-Check`;
   if (!projectId) {
-    return <div className="breadcrumb">{serverName} / Pre-Check</div>;
+    return <div className="breadcrumb">{trail}</div>;
   }
   return (
     <div className="breadcrumb">
-      <Link to={`/projects/${projectId}`}>{projectName || "Project"}</Link> / {serverName} / Pre-Check
+      <Link to={`/projects/${projectId}`}>{projectName || "Project"}</Link> / {trail}
     </div>
   );
 }
 
-export default function PreCheckPanel({ serverId, showBackNav = true, showHeader = true, fromSignoff = false }) {
+export default function PreCheckPanel({ combinationId, showBackNav = true, showHeader = true, fromSignoff = false }) {
   const currentUser = useCurrentUser();
-  const [server, setServer] = useState(null);
+  const [combination, setCombination] = useState(null);
   const [submission, setSubmission] = useState(null);
   const [loading, setLoading] = useState(true);
   const [submittedByInput, setSubmittedByInput] = useState("");
@@ -289,31 +293,32 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
     : submittedByInput.trim();
 
   // load() reads submittedByName to fetch the viewer-scoped submission, but must fire ONLY on
-  // serverId change -- never on every keystroke of the (non-auth) name field, which would refetch
-  // and clobber the form on each character. So the name is read through a ref (always the latest
-  // value at call time) instead of being a dependency, and load is memoized on serverId alone. This
-  // keeps the exhaustive-deps rule satisfied without suppression and without changing when load runs.
+  // combinationId change -- never on every keystroke of the (non-auth) name field, which would
+  // refetch and clobber the form on each character. So the name is read through a ref (always the
+  // latest value at call time) instead of being a dependency, and load is memoized on combinationId
+  // alone. This keeps the exhaustive-deps rule satisfied without suppression and without changing
+  // when load runs.
   const submittedByNameRef = useRef(submittedByName);
   submittedByNameRef.current = submittedByName;
 
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    Promise.all([getServerReadiness(serverId), getPreCheckSubmission(serverId, submittedByNameRef.current)])
-      .then(([serverData, submissionData]) => {
-        setServer(serverData);
+    Promise.all([getCombinationReadiness(combinationId), getPreCheckSubmission(combinationId, submittedByNameRef.current)])
+      .then(([combinationData, submissionData]) => {
+        setCombination(combinationData);
         setSubmission(submissionData);
       })
       .catch((err) => setError(err.response?.data?.message || "Failed to load the pre-check form."))
       .finally(() => setLoading(false));
-  }, [serverId]);
+  }, [combinationId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   if (loading) return <p>Loading pre-check form...</p>;
-  if (!server || !submission) {
+  if (!combination || !submission) {
     return (
       <div>
         <div className="inline-hint">{error || "Failed to load the pre-check form."}</div>
@@ -327,8 +332,16 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
   if (submission.lockedByOther) {
     return (
       <div>
-        {showBackNav && <PreCheckBackNav fromSignoff={fromSignoff} projectId={server.projectId} projectName={server.projectName} serverName={server.serverName} />}
-        {showHeader && <h2>{server.serverName}</h2>}
+        {showBackNav && (
+          <PreCheckBackNav
+            fromSignoff={fromSignoff}
+            projectId={combination.projectId}
+            projectName={combination.projectName}
+            serverName={combination.serverName}
+            combinationName={combination.combinationName}
+          />
+        )}
+        {showHeader && <h2>{combination.serverName} / {combination.combinationName}</h2>}
         <div className="card">
           <strong style={{ fontSize: 14 }}>This pre-check is in progress</strong>
           <p style={{ color: "var(--color-text-muted)", fontSize: 13.5 }}>
@@ -340,11 +353,17 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
     );
   }
 
-  const hasMigrationManager = !!server.migrationManagerName;
+  const hasMigrationManager = !!combination.migrationManagerName;
   const canEdit = !AUTH_CONFIGURED || PRECHECK_EDIT_ROLES.includes(currentUser?.role);
 
   const items = submission.items;
   const locked = submission.status === "SUBMITTED" || !canEdit;
+
+  // "Pre Delta Migration" only applies once Delta Type has actually been set to "Pre delta" --
+  // before that (Not Started) or once it's "Final delta", the item is hidden and not required.
+  const deltaTypeItem = items.find((i) => i.itemName === DELTA_TYPE_ITEM);
+  const preDeltaMigrationRequired = deltaTypeItem?.status === "PRE_DELTA";
+  const visibleItems = items.filter((i) => i.itemName !== PRE_DELTA_MIGRATION_ITEM || preDeltaMigrationRequired);
 
   // A mistakenly-submitted pre-check can be withdrawn (un-submitted) only by the person who
   // submitted/started it, or an admin -- NOT the Migration Manager (managers approve/decline in
@@ -355,17 +374,17 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
   const isAdmin = currentUser?.role === "ADMIN";
   const canWithdraw =
     submission.status === "SUBMITTED" && canEdit && (!AUTH_CONFIGURED || isSubmitter || isOwner || isAdmin);
-  const completedCount = items.filter(isItemComplete).length;
-  const allCompleted = items.length > 0 && completedCount === items.length;
-  const allHaveEvidence = items
+  const completedCount = visibleItems.filter(isItemComplete).length;
+  const allCompleted = visibleItems.length > 0 && completedCount === visibleItems.length;
+  const allHaveEvidence = visibleItems
     .filter((i) => i.itemName !== DELTA_TYPE_ITEM)
     .every((i) => !!i.evidenceFilePath);
-  const allHaveNotes = items
+  const allHaveNotes = visibleItems
     .filter((i) => i.itemName !== DELTA_TYPE_ITEM)
     .every((i) => !!i.notes?.trim());
   // Everything filled in correctly -- only then does the Submit button appear.
   const readyToSubmit = allCompleted && allHaveEvidence && allHaveNotes && hasMigrationManager && !!submittedByName;
-  const progressPct = items.length === 0 ? 0 : Math.round((completedCount / items.length) * 100);
+  const progressPct = visibleItems.length === 0 ? 0 : Math.round((completedCount / visibleItems.length) * 100);
   const badge = STATUS_BADGE[submission.status] || STATUS_BADGE.NOT_STARTED;
 
   const updateItemInPlace = (updated) => {
@@ -380,7 +399,7 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
     // a time, so the user knows exactly what's left before the form can be submitted.
     const problems = [];
     if (!submittedByName) problems.push("enter your name");
-    if (!hasMigrationManager) problems.push("assign a Migration Manager to this server");
+    if (!hasMigrationManager) problems.push("assign a Migration Manager to this project");
     if (!allCompleted) problems.push("select a status for every item");
     if (!allHaveEvidence) problems.push("attach evidence for every item");
     if (!allHaveNotes) problems.push("add a note for every item");
@@ -399,7 +418,7 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
     setBusy(true);
     setError(null);
     try {
-      await submitPreCheckForReview(serverId, { submittedBy: submittedByName });
+      await submitPreCheckForReview(combinationId, { submittedBy: submittedByName });
       showToast("Pre-check submitted for Migration Manager review.", "success");
       load();
     } catch (err) {
@@ -421,7 +440,7 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
     setBusy(true);
     setError(null);
     try {
-      await withdrawPreCheck(serverId);
+      await withdrawPreCheck(combinationId);
       showToast("Submission withdrawn — you can edit and resubmit.", "success");
       load();
     } catch (err) {
@@ -435,13 +454,21 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
 
   return (
     <div>
-      {showBackNav && <PreCheckBackNav fromSignoff={fromSignoff} projectId={server.projectId} projectName={server.projectName} serverName={server.serverName} />}
+      {showBackNav && (
+        <PreCheckBackNav
+          fromSignoff={fromSignoff}
+          projectId={combination.projectId}
+          projectName={combination.projectName}
+          serverName={combination.serverName}
+          combinationName={combination.combinationName}
+        />
+      )}
 
       {showHeader && (
         <>
-          <h2>{server.serverName}</h2>
+          <h2>{combination.serverName} / {combination.combinationName}</h2>
           <p style={{ color: "var(--color-text-muted)", marginTop: -10, marginBottom: 20 }}>
-            {server.totalPairs} migration pair(s) on this server share this pre-check.
+            {combination.totalPairs} migration pair(s) under this combination share this pre-check.
           </p>
         </>
       )}
@@ -450,7 +477,7 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
         <h3>
           Pre-Check Items{" "}
           <span style={{ color: "var(--color-text-faint)", fontWeight: 500 }}>
-            {completedCount}/{items.length}
+            {completedCount}/{visibleItems.length}
           </span>
         </h3>
 
@@ -503,12 +530,12 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
         )}
 
         <div className="precheck-items-list">
-          {items.map((item) => (
+          {visibleItems.map((item) => (
             <ItemRow
               key={item.id}
               item={item}
               locked={locked}
-              serverId={serverId}
+              combinationId={combinationId}
               editingAs={submittedByName}
               onSaved={updateItemInPlace}
             />
@@ -532,7 +559,7 @@ export default function PreCheckPanel({ serverId, showBackNav = true, showHeader
           >
             <span className="progress-label">
               {hasMigrationManager
-                ? `Migration Manager: ${server.migrationManagerName}. Fill out every item, then submit for review.`
+                ? `Migration Manager: ${combination.migrationManagerName}. Fill out every item, then submit for review.`
                 : "Fill out every item, then submit for Migration Manager review."}
             </span>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>

@@ -39,18 +39,19 @@ import java.util.regex.Pattern;
  * azure.allowed-email-domain is set, tokens are additionally restricted to that email domain
  * (currently blank/off for testing -- see application.properties). /api/me stays reachable to any
  * valid token so the frontend can show a clear "pending approval" state instead of a generic
- * failure. The sign-off endpoints (/api/servers/{id}/signoffs/**) are further restricted to the
+ * failure. The sign-off endpoints (/api/combinations/{id}/signoffs/**) are further restricted to the
  * ADMIN, MIGRATION_MANAGER, DEV_LEAD, and QA_LEAD roles
  * regardless of azure.require-allowlist -- MIGRATION_ENGINEER keeps access to the rest of the app
  * but not sign-off. CSV import (/api/pairs/import, /api/servers/{id}/pairs/import) is restricted to
  * ADMIN, MIGRATION_ENGINEER, and MIGRATION_MANAGER, same regardless-of-bypass rule. Managing the
  * allowlist itself (Manage Access) is also ADMIN-only,
  * enforced in AppUserService.requireAdmin(). Viewing the pre-check form (GET on
- * /api/servers/{id}/precheck-items/**, /api/servers/{id}/precheck-submission/**) is open to anyone
- * on the allowlist, regardless of role. Filling it out (any other method on those same paths --
- * updating an item, checking all, submitting) stays restricted to MIGRATION_ENGINEER and
+ * /api/combinations/{id}/precheck-items/**, /api/combinations/{id}/precheck-submission/**) is open
+ * to anyone on the allowlist, regardless of role. Filling it out (any other method on those same
+ * paths -- updating an item, checking all, submitting) stays restricted to MIGRATION_ENGINEER and
  * MIGRATION_MANAGER only -- notably, ADMIN is NOT included there, unlike the sign-off and
- * CSV-import rules above.
+ * CSV-import rules above. Pre-check/sign-off/Delta lifecycle are per-combination, not per-server --
+ * see WorkspaceCombination.
  *
  * Works with either a single-tenant or multi-tenant app registration. If azure.tenant-id is set,
  * the issuer must match that exact tenant (single-tenant registration). If it's blank, any Entra
@@ -124,14 +125,22 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/uploads/**").permitAll()
                         .requestMatchers("/api/me").authenticated()
-                        .requestMatchers(HttpMethod.GET, "/api/servers/*/signoffs/**", "/api/signoff-approvals")
+                        .requestMatchers(HttpMethod.GET, "/api/combinations/*/signoffs/**", "/api/signoff-approvals")
                                 .access(allowlistRequired())
-                        .requestMatchers("/api/servers/*/signoffs/**").access(roleRequired(
+                        .requestMatchers("/api/combinations/*/signoffs/**").access(roleRequired(
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER, AppUserRole.DEV_LEAD, AppUserRole.QA_LEAD))
                         .requestMatchers(HttpMethod.POST, "/api/pairs/import", "/api/servers/*/pairs/import").access(roleRequired(
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER, AppUserRole.MIGRATION_MANAGER))
+                        // Deleting a combination's pairs -- same role set as importing them.
+                        .requestMatchers(HttpMethod.DELETE, "/api/servers/*/pairs").access(roleRequired(
+                                AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER, AppUserRole.MIGRATION_MANAGER))
+                        // Creating a Server directly (the "Server URL" add flow) -- same role set as
+                        // CSV import, since it's an alternate way of doing the same thing a CSV row does.
+                        .requestMatchers(HttpMethod.POST, "/api/projects/*/servers").access(roleRequired(
+                                AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER, AppUserRole.MIGRATION_MANAGER))
                         // Post-Delta lifecycle (Start / Finish the migration) -- engineer-driven, admins too.
-                        .requestMatchers(HttpMethod.POST, "/api/servers/*/delta/**").access(roleRequired(
+                        // Per-combination now, not per-server.
+                        .requestMatchers(HttpMethod.POST, "/api/combinations/*/delta/**").access(roleRequired(
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER))
                         // Deleting a project is gated here to the roles that could ever be allowed; the
                         // per-project ownership check (creator / managing MM / admin) and the
@@ -142,12 +151,12 @@ public class SecurityConfig {
                         // check (admin / current MM / creator / assigned engineer) is in ProjectService.
                         .requestMatchers(HttpMethod.PATCH, "/api/projects/*").access(roleRequired(
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER, AppUserRole.MIGRATION_ENGINEER))
-                        .requestMatchers(HttpMethod.GET, "/api/servers/*/precheck-items/**", "/api/servers/*/precheck-submission/**")
+                        .requestMatchers(HttpMethod.GET, "/api/combinations/*/precheck-items/**", "/api/combinations/*/precheck-submission/**")
                                 .access(allowlistRequired())
                         // ADMIN included here by explicit product decision -- admins have full access
                         // to everything, including filling out/submitting/withdrawing pre-checks. The
                         // per-action admin bypasses live in the services (ownership lock, submitted lock).
-                        .requestMatchers("/api/servers/*/precheck-items/**", "/api/servers/*/precheck-submission/**")
+                        .requestMatchers("/api/combinations/*/precheck-items/**", "/api/combinations/*/precheck-submission/**")
                                 .access(roleRequired(AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER, AppUserRole.MIGRATION_MANAGER))
                         .anyRequest().access(allowlistRequired()))
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.decoder(azureJwtDecoder())));

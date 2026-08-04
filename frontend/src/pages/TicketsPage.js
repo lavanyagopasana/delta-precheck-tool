@@ -21,32 +21,23 @@ import { useConfirm } from "../components/ConfirmDialog";
 import { apiErrorMessage } from "../utils/apiError";
 import { emailLocalPart } from "../utils/format";
 
-const EMPTY_FORM = {
+const EMPTY_CREATE_FORM = {
   projectId: "",
   serverId: "",
-  ticketUrl: "",
+  combinationId: "",
+  ticketNumber: "",
   createdBy: "",
-  status: "OPEN",
 };
 
 // A ticket link only needs to look like an http(s) URL to be submittable; the "Validate link" button
-// does the real server-side reachability check on demand.
+// does the real server-side reachability check on demand. Only used by the edit form now -- creating
+// a ticket no longer takes a raw URL (see JiraService).
 const isLikelyUrl = (value) => /^https?:\/\/.+/i.test(value.trim());
 
-function TicketForm({ projects, servers, existingTicketUrls, onCreated, existing = null }) {
-  const currentUser = useCurrentUser();
-  const isEdit = !!existing;
-  const [form, setForm] = useState(() =>
-    existing
-      ? {
-          projectId: "",
-          serverId: String(existing.serverId ?? ""),
-          ticketUrl: existing.ticketUrl || "",
-          createdBy: existing.createdBy || "",
-          status: existing.status || "OPEN",
-        }
-      : EMPTY_FORM
-  );
+// Editing an already-logged ticket still works the old way (raw URL + status) -- only *logging a new*
+// ticket was replaced by the ticket-number-fetches-from-Jira flow below.
+function EditTicketForm({ existing, existingTicketUrls, onCreated }) {
+  const [form, setForm] = useState({ ticketUrl: existing.ticketUrl || "", status: existing.status || "OPEN" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [validating, setValidating] = useState(false);
@@ -55,33 +46,16 @@ function TicketForm({ projects, servers, existingTicketUrls, onCreated, existing
 
   const set = (field) => (e) => setForm({ ...form, [field]: e.target.value });
 
-  // Changing the URL invalidates any previous validation result.
   const setUrl = (e) => {
     setForm({ ...form, ticketUrl: e.target.value });
     setValidation(null);
   };
 
-  const setProject = (e) => {
-    const projectId = e.target.value;
-    setForm({ ...form, projectId, serverId: "" });
-  };
-
-  const serversForProject = form.projectId
-    ? servers.filter((s) => String(s.projectId) === String(form.projectId))
-    : [];
-
-  // Email, not display name -- names collide across employees, email doesn't.
-  const createdByName = AUTH_CONFIGURED
-    ? currentUser?.email || currentUser?.name || ""
-    : form.createdBy.trim();
-
-  const requiredFilled =
-    isLikelyUrl(form.ticketUrl) && (isEdit || (form.projectId && form.serverId && createdByName));
   const isDuplicate =
     !!form.ticketUrl.trim() &&
-    form.ticketUrl.trim().toLowerCase() !== (existing?.ticketUrl || "").toLowerCase() &&
+    form.ticketUrl.trim().toLowerCase() !== (existing.ticketUrl || "").toLowerCase() &&
     existingTicketUrls.has(form.ticketUrl.trim().toLowerCase());
-  const canSubmit = requiredFilled && !isDuplicate;
+  const canSubmit = isLikelyUrl(form.ticketUrl) && !isDuplicate;
 
   const handleValidate = async () => {
     if (!isLikelyUrl(form.ticketUrl)) return;
@@ -103,22 +77,11 @@ function TicketForm({ projects, servers, existingTicketUrls, onCreated, existing
     setSaving(true);
     setError(null);
     try {
-      const payload = {
-        ticketUrl: form.ticketUrl.trim(),
-        status: form.status,
-      };
-      if (isEdit) {
-        await updateTicket(existing.id, payload);
-        showToast("Ticket updated.", "success");
-      } else {
-        await createTicket({ ...payload, serverId: Number(form.serverId), createdBy: createdByName });
-        showToast("Ticket logged.", "success");
-      }
-      setForm(EMPTY_FORM);
-      setValidation(null);
+      await updateTicket(existing.id, { ticketUrl: form.ticketUrl.trim(), status: form.status });
+      showToast("Ticket updated.", "success");
       onCreated();
     } catch (err) {
-      const msg = apiErrorMessage(err, isEdit ? "Failed to update ticket." : "Failed to create ticket.");
+      const msg = apiErrorMessage(err, "Failed to update ticket.");
       setError(msg);
       showToast(msg, "error");
     } finally {
@@ -129,51 +92,14 @@ function TicketForm({ projects, servers, existingTicketUrls, onCreated, existing
   return (
     <form onSubmit={handleSubmit}>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-        {isEdit ? (
-          <span className="progress-label" style={{ alignSelf: "center" }}>
-            Server: <strong>{existing.serverName}</strong>
-          </span>
-        ) : (
-          <>
-            <label className="sr-only" htmlFor="ticket-project">Project</label>
-            <select id="ticket-project" value={form.projectId} onChange={setProject} style={{ minWidth: 180 }}>
-              <option value="">Select project...</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <label className="sr-only" htmlFor="ticket-server">Server</label>
-            <select
-              id="ticket-server"
-              value={form.serverId}
-              onChange={set("serverId")}
-              disabled={!form.projectId}
-              style={{ minWidth: 180 }}
-            >
-              <option value="">{form.projectId ? "Select server..." : "Select a project first"}</option>
-              {serversForProject.map((s) => (
-                <option key={s.serverId} value={s.serverId}>
-                  {s.serverName}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
-        {!AUTH_CONFIGURED && (
-          <>
-            <label className="sr-only" htmlFor="ticket-created-by">Created by</label>
-            <input
-              id="ticket-created-by"
-              type="text"
-              placeholder="Created by"
-              value={form.createdBy}
-              onChange={set("createdBy")}
-              style={{ width: 200 }}
-            />
-          </>
-        )}
+        <span className="progress-label" style={{ alignSelf: "center" }}>
+          Server: <strong>{existing.serverName}</strong>
+          {existing.combinationName && (
+            <>
+              {" "}/ Combination: <strong>{existing.combinationName}</strong>
+            </>
+          )}
+        </span>
         <label className="sr-only" htmlFor="ticket-status">Status</label>
         <select id="ticket-status" value={form.status} onChange={set("status")}>
           <option value="OPEN">Open</option>
@@ -219,13 +145,163 @@ function TicketForm({ projects, servers, existingTicketUrls, onCreated, existing
       {error && <div className="inline-hint" style={{ marginBottom: 10 }}>{error}</div>}
 
       <div className="form-actions" style={{ justifyContent: "flex-end", gap: 10 }}>
+        <button className="btn" type="submit" disabled={!canSubmit || saving}>
+          {saving ? "Saving..." : "Save Changes"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// Logging a new ticket: Project + Server still need picking (Jira has no idea which of our internal
+// servers a ticket is about), but the ticket number is all that's typed by hand -- status, reporter,
+// summary, and the link itself are fetched from Jira on submit (see JiraService/TicketService).
+function LogTicketForm({ projects, servers, onCreated }) {
+  const currentUser = useCurrentUser();
+  const [form, setForm] = useState(EMPTY_CREATE_FORM);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const showToast = useToast();
+
+  const set = (field) => (e) => setForm({ ...form, [field]: e.target.value });
+
+  const setProject = (e) => {
+    const projectId = e.target.value;
+    setForm({ ...form, projectId, serverId: "", combinationId: "" });
+  };
+
+  const setServer = (e) => {
+    const serverId = e.target.value;
+    setForm({ ...form, serverId, combinationId: "" });
+  };
+
+  const serversForProject = form.projectId
+    ? servers.filter((s) => String(s.projectId) === String(form.projectId))
+    : [];
+
+  // A server can have several combinations (e.g. Box -> OneDrive and Google Drive -> OneDrive both
+  // on the same server), each migrated independently -- a ticket has to point at one specific
+  // combination, not the whole server, or its open-ticket count would show up against every
+  // combination on that server.
+  const selectedServer = servers.find((s) => String(s.serverId) === String(form.serverId));
+  const combinationsForServer = selectedServer?.combinations || [];
+
+  // Email, not display name -- names collide across employees, email doesn't.
+  const createdByName = AUTH_CONFIGURED
+    ? currentUser?.email || currentUser?.name || ""
+    : form.createdBy.trim();
+
+  const canSubmit = !!(form.projectId && form.serverId && form.combinationId && form.ticketNumber.trim() && createdByName);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await createTicket({
+        combinationId: Number(form.combinationId),
+        ticketNumber: form.ticketNumber.trim(),
+        createdBy: createdByName,
+      });
+      showToast("Ticket logged.", "success");
+      setForm(EMPTY_CREATE_FORM);
+      onCreated();
+    } catch (err) {
+      const msg = apiErrorMessage(err, "Could not fetch that ticket from Jira.");
+      setError(msg);
+      showToast(msg, "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+        <label className="sr-only" htmlFor="ticket-project">Project</label>
+        <select id="ticket-project" value={form.projectId} onChange={setProject} style={{ minWidth: 180 }}>
+          <option value="">Select project...</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <label className="sr-only" htmlFor="ticket-server">Server</label>
+        <select
+          id="ticket-server"
+          value={form.serverId}
+          onChange={setServer}
+          disabled={!form.projectId}
+          style={{ minWidth: 180 }}
+        >
+          <option value="">{form.projectId ? "Select server..." : "Select a project first"}</option>
+          {serversForProject.map((s) => (
+            <option key={s.serverId} value={s.serverId}>
+              {s.serverName}
+            </option>
+          ))}
+        </select>
+        <label className="sr-only" htmlFor="ticket-combination">Combination</label>
+        <select
+          id="ticket-combination"
+          value={form.combinationId}
+          onChange={set("combinationId")}
+          disabled={!form.serverId}
+          style={{ minWidth: 180 }}
+        >
+          <option value="">
+            {!form.serverId
+              ? "Select a server first"
+              : combinationsForServer.length
+              ? "Select combination..."
+              : "No combinations yet"}
+          </option>
+          {combinationsForServer.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        {!AUTH_CONFIGURED && (
+          <>
+            <label className="sr-only" htmlFor="ticket-created-by">Created by</label>
+            <input
+              id="ticket-created-by"
+              type="text"
+              placeholder="Created by"
+              value={form.createdBy}
+              onChange={set("createdBy")}
+              style={{ width: 200 }}
+            />
+          </>
+        )}
+      </div>
+
+      <label className="sr-only" htmlFor="ticket-number">Ticket Number</label>
+      <input
+        id="ticket-number"
+        type="text"
+        placeholder="Jira ticket number (e.g. PROJ-123)"
+        value={form.ticketNumber}
+        onChange={set("ticketNumber")}
+        style={{ width: "100%", marginBottom: 8 }}
+      />
+      <div style={{ fontSize: 12, color: "var(--color-text-faint)", marginBottom: 10 }}>
+        Status, reporter, summary, and the link are pulled from Jira automatically once you submit.
+      </div>
+
+      {error && <div className="inline-hint" style={{ marginBottom: 10 }}>{error}</div>}
+
+      <div className="form-actions" style={{ justifyContent: "flex-end", gap: 10 }}>
         {AUTH_CONFIGURED && createdByName && (
           <span style={{ color: "var(--color-text-faint)", fontSize: 12.5, marginRight: "auto" }}>
             Logging as {createdByName}
           </span>
         )}
         <button className="btn" type="submit" disabled={!canSubmit || saving}>
-          {saving ? "Saving..." : isEdit ? "Save Changes" : "Log Ticket"}
+          {saving ? "Fetching from Jira..." : "Log Ticket"}
         </button>
       </div>
     </form>
@@ -254,8 +330,7 @@ function ResolveControl({ ticket, onResolved }) {
 
   return (
     <button
-      className="btn success"
-      style={{ padding: "6px 10px" }}
+      className="btn icon-btn success"
       title="Mark resolved"
       aria-label="Mark resolved"
       onClick={handleResolve}
@@ -395,45 +470,72 @@ export default function TicketsPage() {
         columns={[
           {
             key: "projectName",
-            label: "Project / Server",
+            label: "Project / Server / Combination",
             render: (t) => (
               <div>
                 <div style={{ fontWeight: 700, whiteSpace: "nowrap" }}>{t.projectName || "—"}</div>
                 <div style={{ fontSize: 11.5, color: "var(--color-text-faint)", whiteSpace: "nowrap" }}>{t.serverName}</div>
+                {t.combinationName && (
+                  <div style={{ fontSize: 11.5, color: "var(--color-text-faint)", whiteSpace: "nowrap" }}>
+                    {t.combinationName}
+                  </div>
+                )}
               </div>
             ),
           },
           {
             key: "ticketUrl",
-            label: "Link",
+            label: "Ticket",
             render: (t) => (
               <div style={{ maxWidth: 360, margin: "0 auto" }}>
+                {t.jiraKey && (
+                  <div
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: 700,
+                      color: "var(--color-text-faint)",
+                      textTransform: "uppercase",
+                      letterSpacing: 0.4,
+                    }}
+                  >
+                    Ticket No.
+                  </div>
+                )}
                 <a
                   href={t.ticketUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={(evt) => evt.stopPropagation()}
-                  style={{ fontWeight: 600, wordBreak: "break-all" }}
+                  style={{ fontWeight: 700, fontSize: 13.5, wordBreak: "break-all" }}
                 >
-                  {t.ticketUrl}
+                  {t.jiraKey || t.ticketUrl}
                 </a>
+                {t.jiraSummary && (
+                  <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2 }}>{t.jiraSummary}</div>
+                )}
               </div>
             ),
           },
           {
             key: "createdBy",
-            label: "Reported",
+            label: "Reported By",
             render: (t) => (
-              <div>
-                <div style={{ fontSize: 13, whiteSpace: "nowrap" }} title={t.createdBy}>{emailLocalPart(t.createdBy)}</div>
+              <div title={`Logged in tracker by ${t.createdBy}`}>
+                <div style={{ fontSize: 13, whiteSpace: "nowrap" }}>
+                  {t.jiraReporter || emailLocalPart(t.createdBy)}
+                </div>
                 <div style={{ fontSize: 11, color: "var(--color-text-faint)", whiteSpace: "nowrap" }}>
-                  {new Date(t.createdAt).toLocaleString()}
+                  {new Date(t.jiraCreatedAt || t.createdAt).toLocaleString()}
                 </div>
               </div>
             ),
           },
           {
             key: "status",
+            // Not sortable -- the toolbar's own "All statuses/Open/Resolved" dropdown already covers
+            // this, and a sort toggle reserves an indicator space that visibly knocks this short
+            // header off-center next to the longer ones (Project / Server, Reported By).
+            sortable: false,
             label: "Status",
             render: (t) => <TicketStatusBadge status={t.status} />,
           },
@@ -445,13 +547,12 @@ export default function TicketsPage() {
             render: (t) =>
               canManage(t) ? (
                 <div
-                  style={{ display: "flex", gap: 6, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}
+                  style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}
                   onClick={(evt) => evt.stopPropagation()}
                 >
                   <ResolveControl ticket={t} onResolved={reloadTickets} />
                   <button
-                    className="btn secondary"
-                    style={{ padding: "6px 10px" }}
+                    className="btn icon-btn secondary"
                     title="Edit ticket"
                     aria-label="Edit ticket"
                     onClick={() => setEditing(t)}
@@ -459,8 +560,7 @@ export default function TicketsPage() {
                     <EditIcon size={18} style={{ marginRight: 0 }} />
                   </button>
                   <button
-                    className="btn danger"
-                    style={{ padding: "6px 10px" }}
+                    className="btn icon-btn danger"
                     title="Delete ticket"
                     aria-label="Delete ticket"
                     onClick={() => handleDelete(t)}
@@ -477,10 +577,9 @@ export default function TicketsPage() {
 
       {showModal && (
         <Modal title="Log a Ticket" onClose={() => setShowModal(false)} width={640} closeIcon>
-          <TicketForm
+          <LogTicketForm
             projects={projects}
             servers={servers}
-            existingTicketUrls={new Set(tickets.map((t) => t.ticketUrl.toLowerCase()))}
             onCreated={() => {
               reloadTickets();
               setShowModal(false);
@@ -491,9 +590,7 @@ export default function TicketsPage() {
 
       {editing && (
         <Modal title="Edit Ticket" onClose={() => setEditing(null)} width={640} closeIcon>
-          <TicketForm
-            projects={projects}
-            servers={servers}
+          <EditTicketForm
             existing={editing}
             existingTicketUrls={new Set(tickets.map((t) => t.ticketUrl.toLowerCase()))}
             onCreated={() => {

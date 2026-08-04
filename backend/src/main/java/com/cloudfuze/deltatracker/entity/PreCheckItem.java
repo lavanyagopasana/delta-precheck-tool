@@ -21,11 +21,11 @@ public class PreCheckItem {
 
     @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "server_id", nullable = false)
-    private Server server;
+    @JoinColumn(name = "combination_id", nullable = false)
+    private WorkspaceCombination combination;
 
-    @Column(name = "server_id", insertable = false, updatable = false)
-    private Long serverId;
+    @Column(name = "combination_id", insertable = false, updatable = false)
+    private Long combinationId;
 
     @Column(name = "item_name", nullable = false, length = 500)
     private String itemName;
@@ -49,8 +49,8 @@ public class PreCheckItem {
     @Column(name = "last_modified_at")
     private LocalDateTime lastModifiedAt;
 
-    public PreCheckItem(Server server, String itemName) {
-        this.server = server;
+    public PreCheckItem(WorkspaceCombination combination, String itemName) {
+        this.combination = combination;
         this.itemName = itemName;
         this.status = ItemStatus.NOT_STARTED;
     }

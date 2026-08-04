@@ -9,8 +9,8 @@ import java.util.Optional;
 
 public interface PreCheckSubmissionRepository extends JpaRepository<PreCheckSubmission, Long> {
 
-    Optional<PreCheckSubmission> findByServerId(Long serverId);
+    Optional<PreCheckSubmission> findByCombinationId(Long combinationId);
 
-    // Batch variant for building project/list summaries without a query per server.
-    List<PreCheckSubmission> findByServerIdIn(Collection<Long> serverIds);
+    // Batch variant for building project/list summaries without a query per combination.
+    List<PreCheckSubmission> findByCombinationIdIn(Collection<Long> combinationIds);
 }

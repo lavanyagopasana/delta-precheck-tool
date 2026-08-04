@@ -446,6 +446,51 @@ tr.selected-row.clickable-row:hover td {
   display: inline-block;
 }
 
+/* Reusable card/section heading -- same left-accent-bar language as .precheck-section h3, just not
+   scoped to pre-check. Use for every top-level card title on a page so section hierarchy reads the
+   same way everywhere instead of some titles being plain bold text and others having an accent. */
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.section-title::before {
+  content: "";
+  width: 4px;
+  height: 16px;
+  border-radius: 3px;
+  background: var(--color-primary);
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+/* A visually distinct sub-panel inside a card -- e.g. the stat-card strip inside the Servers card --
+   so multiple zones inside one card read as separate groups instead of one unbroken stack. */
+.subpanel {
+  background: var(--color-bg);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+/* A single row (combination, draft-in-progress row) inside a .subpanel -- white surface + border so
+   it "pops" against the subpanel's tinted background instead of relying on a bare top divider. */
+.combo-row {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-top: 10px;
+}
+
+.combo-row:first-of-type {
+  margin-top: 12px;
+}
+
 /* ---------- Buttons ---------- */
 
 .btn {

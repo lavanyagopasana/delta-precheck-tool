@@ -23,6 +23,15 @@ public interface WorkspacePairRepository extends JpaRepository<WorkspacePair, Lo
     // Batch variant for building project/list summaries without a query per server.
     List<WorkspacePair> findByServerIdIn(Collection<Long> serverIds);
 
-    Optional<WorkspacePair> findByServerIdAndSourceEmailAndSourcePathAndDestinationEmailAndDestinationPath(
-            Long serverId, String sourceEmail, String sourcePath, String destinationEmail, String destinationPath);
+    // The real identity key for a pair includes combination -- the same source/destination email+path
+    // legitimately represents two distinct pairs under two different combinations (e.g. the same
+    // person's Box account AND Google Drive account both migrating to the same OneDrive mailbox).
+    // Spring Data turns a null `combination` argument into "IS NULL" automatically, so this still
+    // matches correctly for pairs imported without a combination at all.
+    Optional<WorkspacePair> findByServerIdAndSourceEmailAndSourcePathAndDestinationEmailAndDestinationPathAndCombination(
+            Long serverId, String sourceEmail, String sourcePath, String destinationEmail, String destinationPath,
+            String combination);
+
+    // Backs "delete this combination" on the project page's per-server combination list.
+    List<WorkspacePair> findByServerIdAndCombinationIgnoreCase(Long serverId, String combination);
 }

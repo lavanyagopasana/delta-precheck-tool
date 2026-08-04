@@ -51,7 +51,7 @@ public class WorkspacePairService {
     private static final int MAX_COMBINATION_LEN = 200;
 
     private static final Map<String, List<String>> COLUMN_ALIASES = Map.of(
-            "server_name", List.of("servername", "server"),
+            "server_url", List.of("serverurl", "url", "server"),
             "source_email", List.of("sourceemail", "source", "sourceuser", "sourceaccount"),
             "source_path", List.of("sourcepath", "sourcefolder", "sourcefolderpath"),
             "destination_email", List.of("destinationemail", "destination", "destinationuser", "targetemail", "destinationaccount"),
@@ -60,20 +60,20 @@ public class WorkspacePairService {
     );
 
     private static final List<String> REQUIRED_COLUMNS = List.of("source_email", "destination_email");
-    private static final List<String> REQUIRED_COLUMNS_GLOBAL = List.of("server_name", "source_email", "destination_email");
+    private static final List<String> REQUIRED_COLUMNS_GLOBAL = List.of("server_url", "source_email", "destination_email");
 
     private final WorkspacePairRepository workspacePairRepository;
     private final ServerRepository serverRepository;
-    private final ServerService serverService;
+    private final WorkspaceCombinationService workspaceCombinationService;
     private final ProjectRepository projectRepository;
 
     public WorkspacePairService(WorkspacePairRepository workspacePairRepository,
                                  ServerRepository serverRepository,
-                                 ServerService serverService,
+                                 WorkspaceCombinationService workspaceCombinationService,
                                  ProjectRepository projectRepository) {
         this.workspacePairRepository = workspacePairRepository;
         this.serverRepository = serverRepository;
-        this.serverService = serverService;
+        this.workspaceCombinationService = workspaceCombinationService;
         this.projectRepository = projectRepository;
     }
 
@@ -129,7 +129,65 @@ public class WorkspacePairService {
                 continue;
             }
             List<String> fields = CsvUtils.parseLine(line);
-            switch (processRow(server, fields, columnIndex, rowNum, errors, duplicates)) {
+            switch (processRow(server, fields, columnIndex, rowNum, errors, duplicates, null)) {
+                case CREATED -> created++;
+                case UPDATED -> updated++;
+                case DUPLICATE -> duplicate++;
+                case SKIPPED -> { /* reason already recorded in errors */ }
+            }
+        }
+
+        server.setTotalPairCount((int) workspacePairRepository.countByServerId(server.getId()));
+        serverRepository.save(server);
+
+        result.setTotalRows(lines.size() - 1);
+        result.setCreatedCount(created);
+        result.setUpdatedCount(updated);
+        result.setDuplicateCount(duplicate);
+        result.setDuplicates(duplicates);
+        result.setErrors(errors);
+        return result;
+    }
+
+    // Variant of importCsv for the "add a Server URL, then add a combination, then upload its CSV"
+    // flow on the project page: the server and combination are both already chosen in the UI
+    // before the file is picked, so the CSV itself only carries source/destination email + path
+    // (no server_url or combination column) -- every row gets the same, caller-supplied
+    // combination stamped on it via processRow's override, instead of reading one per row.
+    public WorkspacePairImportResultDto importCsvForServerCombination(Long serverId, String combination, MultipartFile file) {
+        Server server = serverRepository.findById(serverId)
+                .orElseThrow(() -> new ResourceNotFoundException("Server not found: " + serverId));
+        if (!StringUtils.hasText(combination)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "combination is required");
+        }
+        String trimmedCombination = combination.trim();
+
+        List<String> lines = readLines(file);
+        if (lines.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "CSV file is empty");
+        }
+
+        Map<String, Integer> columnIndex = resolveColumns(CsvUtils.parseLine(lines.get(0)));
+        for (String required : REQUIRED_COLUMNS) {
+            if (!columnIndex.containsKey(required)) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "CSV is missing required column: " + required);
+            }
+        }
+
+        WorkspacePairImportResultDto result = new WorkspacePairImportResultDto();
+        List<String> errors = new ArrayList<>();
+        List<String> duplicates = new ArrayList<>();
+        int created = 0;
+        int updated = 0;
+        int duplicate = 0;
+
+        for (int rowNum = 1; rowNum < lines.size(); rowNum++) {
+            String line = lines.get(rowNum);
+            if (!StringUtils.hasText(line)) {
+                continue;
+            }
+            List<String> fields = CsvUtils.parseLine(line);
+            switch (processRow(server, fields, columnIndex, rowNum, errors, duplicates, trimmedCombination)) {
                 case CREATED -> created++;
                 case UPDATED -> updated++;
                 case DUPLICATE -> duplicate++;
@@ -193,23 +251,21 @@ public class WorkspacePairService {
             }
             List<String> fields = CsvUtils.parseLine(line);
 
-            String serverName = valueOf(fields, columnIndex, "server_name");
-            if (!StringUtils.hasText(serverName)) {
-                errors.add("Row " + (rowNum + 1) + ": server_name is required");
+            String serverUrl = valueOf(fields, columnIndex, "server_url");
+            if (!StringUtils.hasText(serverUrl)) {
+                errors.add("Row " + (rowNum + 1) + ": server_url is required");
                 continue;
             }
 
-            Server server = serverCache.computeIfAbsent(serverName.trim().toLowerCase(),
-                    key -> serverRepository.findByProjectIdAndNameIgnoreCase(project.getId(), serverName.trim())
+            Server server = serverCache.computeIfAbsent(serverUrl.trim().toLowerCase(),
+                    key -> serverRepository.findByProjectIdAndNameIgnoreCase(project.getId(), serverUrl.trim())
                             .orElseGet(() -> {
-                                Server newServer = new Server(serverName.trim());
+                                Server newServer = new Server(serverUrl.trim());
                                 newServer.setProject(project);
-                                newServer = serverRepository.save(newServer);
-                                serverService.seedPreCheckItems(newServer);
-                                return newServer;
+                                return serverRepository.save(newServer);
                             }));
 
-            switch (processRow(server, fields, columnIndex, rowNum, errors, duplicates)) {
+            switch (processRow(server, fields, columnIndex, rowNum, errors, duplicates, null)) {
                 case CREATED -> created++;
                 case UPDATED -> updated++;
                 case DUPLICATE -> duplicate++;
@@ -231,6 +287,18 @@ public class WorkspacePairService {
         return result;
     }
 
+    // Deletes every pair under this combination for this server -- the "trash" action on a
+    // combination row in the project page's per-server list. Case-insensitive to match how
+    // processRow's duplicate check already treats combination values.
+    public void deleteByServerAndCombination(Long serverId, String combination) {
+        Server server = serverRepository.findById(serverId)
+                .orElseThrow(() -> new ResourceNotFoundException("Server not found: " + serverId));
+        List<WorkspacePair> pairs = workspacePairRepository.findByServerIdAndCombinationIgnoreCase(serverId, combination);
+        workspacePairRepository.deleteAll(pairs);
+        server.setTotalPairCount((int) workspacePairRepository.countByServerId(server.getId()));
+        serverRepository.save(server);
+    }
+
     private enum RowOutcome { CREATED, UPDATED, DUPLICATE, SKIPPED }
 
     /**
@@ -241,13 +309,21 @@ public class WorkspacePairService {
      *       combination) already exists for this server; nothing is written and a human-readable line
      *       is appended to {@code duplicates}. This is what lets a re-uploaded file report "already
      *       imported" instead of silently doing nothing.</li>
-     *   <li>{@code UPDATED} — the source/destination match an existing pair but the combination
-     *       changed, so only the combination is updated.</li>
-     *   <li>{@code CREATED} — a brand-new pair was inserted.</li>
+     *   <li>{@code CREATED} — a brand-new pair was inserted. Combination is part of a pair's identity,
+     *       so the same source/destination email+path under a *different* combination is a distinct
+     *       pair, not an update of the existing one -- e.g. the same person's Box account and Google
+     *       Drive account can both be migrating to the same OneDrive mailbox as two separate
+     *       combinations.</li>
      * </ul>
+     *
+     * @param combinationOverride when non-null, used as every row's combination instead of reading
+     *                            a "combination" column from the CSV -- see
+     *                            {@link #importCsvForServerCombination}, where the combination is
+     *                            chosen once in the UI rather than being a per-row CSV value.
      */
     private RowOutcome processRow(Server server, List<String> fields, Map<String, Integer> columnIndex,
-                                  int rowNum, List<String> errors, List<String> duplicates) {
+                                  int rowNum, List<String> errors, List<String> duplicates,
+                                  String combinationOverride) {
         String sourceEmail = valueOf(fields, columnIndex, "source_email");
         String destinationEmail = valueOf(fields, columnIndex, "destination_email");
         if (!StringUtils.hasText(sourceEmail) || !StringUtils.hasText(destinationEmail)) {
@@ -257,7 +333,7 @@ public class WorkspacePairService {
 
         String sourcePath = orEmpty(valueOf(fields, columnIndex, "source_path"));
         String destinationPath = orEmpty(valueOf(fields, columnIndex, "destination_path"));
-        String combination = valueOf(fields, columnIndex, "combination");
+        String combination = combinationOverride != null ? combinationOverride : valueOf(fields, columnIndex, "combination");
 
         String overLong = firstOverLengthField(sourceEmail, destinationEmail, sourcePath, destinationPath, combination);
         if (overLong != null) {
@@ -265,36 +341,30 @@ public class WorkspacePairService {
             return RowOutcome.SKIPPED;
         }
 
-        WorkspacePair pair = workspacePairRepository
-                .findByServerIdAndSourceEmailAndSourcePathAndDestinationEmailAndDestinationPath(
-                        server.getId(), sourceEmail, sourcePath, destinationEmail, destinationPath)
-                .orElse(null);
-
-        if (pair != null) {
-            // Source + destination already exist. If the combination also matches, it's a byte-for-byte
-            // duplicate of an already-imported row -> skip and report, don't touch it.
-            if (sameValue(pair.getCombination(), combination)) {
-                duplicates.add("Row " + (rowNum + 1) + ": " + sourceEmail + " \u2192 " + destinationEmail
-                        + " already exists (skipped)");
-                return RowOutcome.DUPLICATE;
-            }
-            pair.setCombination(combination);
-            workspacePairRepository.save(pair);
-            return RowOutcome.UPDATED;
+        // A combination row (checklist/sign-off/Delta lifecycle) is only meaningful once it has a
+        // real name -- get-or-create it now so it's guaranteed to exist for every valid row under
+        // this name, whether the pair itself turns out to be new or a duplicate.
+        if (StringUtils.hasText(combination)) {
+            workspaceCombinationService.getOrCreate(server, combination);
         }
 
-        pair = new WorkspacePair(server, sourceEmail, destinationEmail);
+        boolean alreadyExists = workspacePairRepository
+                .findByServerIdAndSourceEmailAndSourcePathAndDestinationEmailAndDestinationPathAndCombination(
+                        server.getId(), sourceEmail, sourcePath, destinationEmail, destinationPath, combination)
+                .isPresent();
+
+        if (alreadyExists) {
+            duplicates.add("Row " + (rowNum + 1) + ": " + sourceEmail + " \u2192 " + destinationEmail
+                    + " already exists (skipped)");
+            return RowOutcome.DUPLICATE;
+        }
+
+        WorkspacePair pair = new WorkspacePair(server, sourceEmail, destinationEmail);
         pair.setSourcePath(sourcePath);
         pair.setDestinationPath(destinationPath);
         pair.setCombination(combination);
         workspacePairRepository.save(pair);
         return RowOutcome.CREATED;
-    }
-
-    // Null-safe, trimmed, case-insensitive equality -- used to decide whether an incoming row's
-    // combination matches the stored one (i.e. the whole row is a duplicate).
-    private boolean sameValue(String a, String b) {
-        return orEmpty(a).trim().equalsIgnoreCase(orEmpty(b).trim());
     }
 
     private Map<String, Integer> resolveColumns(List<String> header) {

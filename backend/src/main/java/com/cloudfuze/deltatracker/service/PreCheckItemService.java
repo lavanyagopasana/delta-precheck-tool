@@ -5,8 +5,8 @@ import com.cloudfuze.deltatracker.dto.PreCheckItemUpdateRequest;
 import com.cloudfuze.deltatracker.entity.ItemStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckItem;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
-import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.entity.SubmissionStatus;
+import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
 import com.cloudfuze.deltatracker.repository.PreCheckItemRepository;
@@ -25,37 +25,37 @@ public class PreCheckItemService {
 
     private final PreCheckItemRepository preCheckItemRepository;
     private final PreCheckSubmissionRepository preCheckSubmissionRepository;
-    private final ServerService serverService;
+    private final WorkspaceCombinationService combinationService;
     private final AppUserService appUserService;
 
     public PreCheckItemService(PreCheckItemRepository preCheckItemRepository,
                                 PreCheckSubmissionRepository preCheckSubmissionRepository,
-                                ServerService serverService,
+                                WorkspaceCombinationService combinationService,
                                 AppUserService appUserService) {
         this.preCheckItemRepository = preCheckItemRepository;
         this.preCheckSubmissionRepository = preCheckSubmissionRepository;
-        this.serverService = serverService;
+        this.combinationService = combinationService;
         this.appUserService = appUserService;
     }
 
-    public List<PreCheckItemDto> listByServer(Long serverId) {
-        return preCheckItemRepository.findByServerId(serverId).stream()
+    public List<PreCheckItemDto> listByCombination(Long combinationId) {
+        return preCheckItemRepository.findByCombinationId(combinationId).stream()
                 .map(PreCheckItemDto::fromEntity)
                 .toList();
     }
 
-    public PreCheckItemDto update(Long serverId, Long itemId, PreCheckItemUpdateRequest request) {
-        Server server = serverService.findOrThrow(serverId);
+    public PreCheckItemDto update(Long combinationId, Long itemId, PreCheckItemUpdateRequest request) {
+        WorkspaceCombination combination = combinationService.findOrThrow(combinationId);
 
         PreCheckItem item = preCheckItemRepository.findById(itemId)
                 .orElseThrow(() -> new ResourceNotFoundException("Pre-check item not found: " + itemId));
 
-        if (!item.getServerId().equals(server.getId())) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "Pre-check item does not belong to this server");
+        if (!item.getCombinationId().equals(combination.getId())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Pre-check item does not belong to this combination");
         }
         boolean isAdmin = appUserService.isAdmin(request.getUpdatedBy());
-        requireUnlocked(serverId, isAdmin);
-        claimOrVerifyOwnership(serverId, request.getUpdatedBy(), isAdmin);
+        requireUnlocked(combinationId, isAdmin);
+        claimOrVerifyOwnership(combinationId, request.getUpdatedBy(), isAdmin);
 
         item.setStatus(request.getStatus());
         item.setNotes(request.getNotes());
@@ -67,18 +67,18 @@ public class PreCheckItemService {
         item.setLastModifiedAt(LocalDateTime.now());
         item = preCheckItemRepository.save(item);
 
-        serverService.recomputeStatus(server);
+        combinationService.recomputeStatus(combination);
 
         return PreCheckItemDto.fromEntity(item);
     }
 
-    public void setAllStatus(Long serverId, ItemStatus status, String updatedBy) {
-        Server server = serverService.findOrThrow(serverId);
+    public void setAllStatus(Long combinationId, ItemStatus status, String updatedBy) {
+        WorkspaceCombination combination = combinationService.findOrThrow(combinationId);
         boolean isAdmin = appUserService.isAdmin(updatedBy);
-        requireUnlocked(serverId, isAdmin);
-        claimOrVerifyOwnership(serverId, updatedBy, isAdmin);
+        requireUnlocked(combinationId, isAdmin);
+        claimOrVerifyOwnership(combinationId, updatedBy, isAdmin);
 
-        List<PreCheckItem> items = preCheckItemRepository.findByServerId(serverId);
+        List<PreCheckItem> items = preCheckItemRepository.findByCombinationId(combinationId);
         items.forEach(i -> {
             i.setStatus(status);
             if (StringUtils.hasText(updatedBy)) {
@@ -88,15 +88,15 @@ public class PreCheckItemService {
         });
         preCheckItemRepository.saveAll(items);
 
-        serverService.recomputeStatus(server);
+        combinationService.recomputeStatus(combination);
     }
 
     // Admins bypass the submitted-lock entirely -- full access to edit even a submitted pre-check.
-    private void requireUnlocked(Long serverId, boolean isAdmin) {
+    private void requireUnlocked(Long combinationId, boolean isAdmin) {
         if (isAdmin) {
             return;
         }
-        preCheckSubmissionRepository.findByServerId(serverId)
+        preCheckSubmissionRepository.findByCombinationId(combinationId)
                 .filter(s -> s.getStatus() == SubmissionStatus.SUBMITTED)
                 .ifPresent(s -> {
                     throw new ApiException(HttpStatus.BAD_REQUEST,
@@ -104,14 +104,14 @@ public class PreCheckItemService {
                 });
     }
 
-    // First person to edit a server's pre-check claims it -- everyone else is blocked from editing
-    // (and from seeing the real content) until that person submits it for review. Admins bypass the
-    // claim entirely (full access, and they don't take ownership of the form).
-    private void claimOrVerifyOwnership(Long serverId, String editorEmail, boolean isAdmin) {
+    // First person to edit a combination's pre-check claims it -- everyone else is blocked from
+    // editing (and from seeing the real content) until that person submits it for review. Admins
+    // bypass the claim entirely (full access, and they don't take ownership of the form).
+    private void claimOrVerifyOwnership(Long combinationId, String editorEmail, boolean isAdmin) {
         if (isAdmin) {
             return;
         }
-        PreCheckSubmission submission = preCheckSubmissionRepository.findByServerId(serverId).orElse(null);
+        PreCheckSubmission submission = preCheckSubmissionRepository.findByCombinationId(combinationId).orElse(null);
         if (submission == null) {
             return;
         }

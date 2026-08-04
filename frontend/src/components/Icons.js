@@ -81,3 +81,59 @@ export function SendIcon(props) {
     </Svg>
   );
 }
+
+// Open eye -- "view/preview" action on an uploaded combination.
+export function EyeIcon(props) {
+  return (
+    <Svg {...props}>
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </Svg>
+  );
+}
+
+// Down arrow into a tray -- "download sample CSV".
+export function DownloadIcon(props) {
+  return (
+    <Svg {...props}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </Svg>
+  );
+}
+
+// Up arrow out of a tray -- "upload / re-upload CSV".
+export function UploadIcon(props) {
+  return (
+    <Svg {...props}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
+    </Svg>
+  );
+}
+
+// Horizontal bidirectional arrows -- leading glyph on a server/combination row (source <-> destination).
+export function SwapIcon(props) {
+  return (
+    <Svg {...props}>
+      <polyline points="17 1 21 5 17 9" />
+      <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+      <polyline points="7 23 3 19 7 15" />
+      <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+    </Svg>
+  );
+}
+
+// Server/database rack -- leading glyph on a server card header.
+export function ServerIcon(props) {
+  return (
+    <Svg {...props}>
+      <rect x="2" y="3" width="20" height="7" rx="1.5" />
+      <rect x="2" y="14" width="20" height="7" rx="1.5" />
+      <line x1="6" y1="6.5" x2="6.01" y2="6.5" />
+      <line x1="6" y1="17.5" x2="6.01" y2="17.5" />
+    </Svg>
+  );
+}

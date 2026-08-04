@@ -6,8 +6,8 @@ import com.cloudfuze.deltatracker.dto.SubmissionSubmitRequest;
 import com.cloudfuze.deltatracker.entity.ItemStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckItem;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
-import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.entity.SubmissionStatus;
+import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.EvidenceRequiredException;
 import com.cloudfuze.deltatracker.repository.PreCheckItemRepository;
@@ -27,30 +27,30 @@ public class PreCheckSubmissionService {
 
     private final PreCheckSubmissionRepository submissionRepository;
     private final PreCheckItemRepository itemRepository;
-    private final ServerService serverService;
+    private final WorkspaceCombinationService combinationService;
     private final SignOffService signOffService;
     private final AppUserService appUserService;
 
     public PreCheckSubmissionService(PreCheckSubmissionRepository submissionRepository,
                                       PreCheckItemRepository itemRepository,
-                                      ServerService serverService,
+                                      WorkspaceCombinationService combinationService,
                                       SignOffService signOffService,
                                       AppUserService appUserService) {
         this.submissionRepository = submissionRepository;
         this.itemRepository = itemRepository;
-        this.serverService = serverService;
+        this.combinationService = combinationService;
         this.signOffService = signOffService;
         this.appUserService = appUserService;
     }
 
-    public PreCheckSubmissionDto getByServer(Long serverId, String viewerEmail) {
-        Server server = serverService.findOrThrow(serverId);
-        return toDto(getOrCreate(server), viewerEmail);
+    public PreCheckSubmissionDto getByCombination(Long combinationId, String viewerEmail) {
+        WorkspaceCombination combination = combinationService.findOrThrow(combinationId);
+        return toDto(getOrCreate(combination), viewerEmail);
     }
 
-    public PreCheckSubmissionDto submit(Long serverId, SubmissionSubmitRequest request) {
-        Server server = serverService.findOrThrow(serverId);
-        PreCheckSubmission submission = getOrCreate(server);
+    public PreCheckSubmissionDto submit(Long combinationId, SubmissionSubmitRequest request) {
+        WorkspaceCombination combination = combinationService.findOrThrow(combinationId);
+        PreCheckSubmission submission = getOrCreate(combination);
 
         if (StringUtils.hasText(submission.getStartedByEmail())
                 && !submission.getStartedByEmail().equalsIgnoreCase(request.getSubmittedBy())
@@ -60,17 +60,31 @@ public class PreCheckSubmissionService {
                             + " -- only they can submit it.");
         }
 
-        List<PreCheckItem> items = itemRepository.findByServerId(serverId);
+        List<PreCheckItem> items = itemRepository.findByCombinationId(combinationId);
 
-        boolean allCompleted = !items.isEmpty() && items.stream().allMatch(PreCheckSubmissionService::isItemComplete);
+        // "Pre Delta Migration" is only required once Delta Type has actually been set to
+        // PRE_DELTA -- otherwise the frontend hides it entirely, so it can't have a status,
+        // evidence, or a note either. Mirrors PreCheckPanel.js's preDeltaMigrationRequired.
+        boolean preDeltaMigrationRequired = items.stream()
+                .filter(i -> ServerService.DELTA_TYPE_ITEM.equals(i.getItemName()))
+                .findFirst()
+                .map(i -> i.getStatus() == ItemStatus.PRE_DELTA)
+                .orElse(false);
+
+        boolean allCompleted = !items.isEmpty() && items.stream()
+                .filter(i -> preDeltaMigrationRequired || !ServerService.PRE_DELTA_MIGRATION_ITEM.equals(i.getItemName()))
+                .allMatch(PreCheckSubmissionService::isItemComplete);
         boolean allHaveEvidence = items.stream()
                 .filter(i -> !ServerService.DELTA_TYPE_ITEM.equals(i.getItemName()))
+                .filter(i -> preDeltaMigrationRequired || !ServerService.PRE_DELTA_MIGRATION_ITEM.equals(i.getItemName()))
                 .allMatch(i -> StringUtils.hasText(i.getEvidenceFilePath()));
         boolean allHaveNotes = items.stream()
                 .filter(i -> !ServerService.DELTA_TYPE_ITEM.equals(i.getItemName()))
+                .filter(i -> preDeltaMigrationRequired || !ServerService.PRE_DELTA_MIGRATION_ITEM.equals(i.getItemName()))
                 .allMatch(i -> StringUtils.hasText(i.getNotes()));
 
-        String migrationManagerEmail = server.getProject() != null ? server.getProject().getMigrationManagerName() : null;
+        String migrationManagerEmail = combination.getServer().getProject() != null
+                ? combination.getServer().getProject().getMigrationManagerName() : null;
         if (!StringUtils.hasText(migrationManagerEmail)) {
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "This project has no Migration Manager assigned yet -- that has to be set before submitting for review.");
@@ -90,9 +104,9 @@ public class PreCheckSubmissionService {
         submission.setSubmittedAt(LocalDateTime.now());
 
         submission = submissionRepository.save(submission);
-        serverService.recomputeStatus(server);
-        signOffService.createChainIfAbsent(server);
-        signOffService.notifyPreCheckSubmitted(server, request.getSubmittedBy(), migrationManagerEmail);
+        combinationService.recomputeStatus(combination);
+        signOffService.createChainIfAbsent(combination);
+        signOffService.notifyPreCheckSubmitted(combination, request.getSubmittedBy(), migrationManagerEmail);
 
         return toDto(submission, request.getSubmittedBy());
     }
@@ -103,10 +117,10 @@ public class PreCheckSubmissionService {
     // enforces that and throws a 409 otherwise. Allowed for the person who submitted/started it or the
     // project's Migration Manager (ADMIN is intentionally out here, mirroring how ADMIN is excluded
     // from filling out/submitting pre-checks in SecurityConfig).
-    public PreCheckSubmissionDto withdraw(Long serverId, String callerEmail) {
-        Server server = serverService.findOrThrow(serverId);
-        PreCheckSubmission submission = submissionRepository.findByServerId(serverId)
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "No pre-check submission for this server."));
+    public PreCheckSubmissionDto withdraw(Long combinationId, String callerEmail) {
+        WorkspaceCombination combination = combinationService.findOrThrow(combinationId);
+        PreCheckSubmission submission = submissionRepository.findByCombinationId(combinationId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "No pre-check submission for this combination."));
 
         if (submission.getStatus() != SubmissionStatus.SUBMITTED) {
             throw new ApiException(HttpStatus.BAD_REQUEST,
@@ -121,12 +135,12 @@ public class PreCheckSubmissionService {
                             + "Migration Managers review it -- to send it back, decline it instead.");
         }
 
-        signOffService.removeChainForWithdrawal(server, isAdmin);
-        if (isAdmin && server.getDeltaInitiatedAt() != null) {
-            // Admin rollback of a finalized Delta -- un-stamp it so the server returns to pre-submit.
-            server.setDeltaInitiatedAt(null);
-            server.setDeltaInitiatedBy(null);
-            serverService.save(server);
+        signOffService.removeChainForWithdrawal(combination, isAdmin);
+        if (isAdmin && combination.getDeltaInitiatedAt() != null) {
+            // Admin rollback of a finalized Delta -- un-stamp it so the combination returns to pre-submit.
+            combination.setDeltaInitiatedAt(null);
+            combination.setDeltaInitiatedBy(null);
+            combinationService.save(combination);
         }
 
         submission.setStatus(SubmissionStatus.DRAFT);
@@ -134,7 +148,7 @@ public class PreCheckSubmissionService {
         submission.setSubmittedAt(null);
         // startedByEmail is kept so the same person retains the edit lock and can fix + resubmit.
         submission = submissionRepository.save(submission);
-        serverService.recomputeStatus(server);
+        combinationService.recomputeStatus(combination);
 
         return toDto(submission, callerEmail);
     }
@@ -150,13 +164,14 @@ public class PreCheckSubmissionService {
                 || callerEmail.equalsIgnoreCase(submission.getStartedByEmail());
     }
 
-    private PreCheckSubmission getOrCreate(Server server) {
-        return submissionRepository.findByServerId(server.getId())
-                .orElseGet(() -> submissionRepository.save(new PreCheckSubmission(server)));
+    private PreCheckSubmission getOrCreate(WorkspaceCombination combination) {
+        return submissionRepository.findByCombinationId(combination.getId())
+                .orElseGet(() -> submissionRepository.save(new PreCheckSubmission(combination)));
     }
 
     private PreCheckSubmissionDto toDto(PreCheckSubmission submission, String viewerEmail) {
-        List<PreCheckItem> items = itemRepository.findByServerId(submission.getServer().getId());
+        WorkspaceCombination combination = submission.getCombination();
+        List<PreCheckItem> items = itemRepository.findByCombinationId(combination.getId());
 
         boolean lockedByOther = submission.getStatus() != SubmissionStatus.SUBMITTED
                 && StringUtils.hasText(submission.getStartedByEmail())
@@ -164,7 +179,10 @@ public class PreCheckSubmissionService {
 
         PreCheckSubmissionDto dto = new PreCheckSubmissionDto();
         dto.setId(submission.getId());
-        dto.setServerId(submission.getServer().getId());
+        dto.setCombinationId(combination.getId());
+        dto.setCombinationName(combination.getName());
+        dto.setServerId(combination.getServer().getId());
+        dto.setServerName(combination.getServer().getName());
         dto.setStatus(submission.getStatus());
         dto.setSubmittedBy(submission.getSubmittedBy());
         dto.setSubmittedAt(submission.getSubmittedAt());
