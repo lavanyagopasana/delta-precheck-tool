@@ -47,7 +47,7 @@ class PreCheckItemControllerTest {
         // POST on this path is role-gated (ADMIN/ENGINEER/MM) -- authorize as a Migration Engineer.
         when(appUserService.roleOf("eng@cloudfuze.com")).thenReturn(Optional.of(AppUserRole.MIGRATION_ENGINEER));
 
-        mockMvc.perform(post("/api/servers/5/precheck-items/9")
+        mockMvc.perform(post("/api/combinations/5/precheck-items/9")
                         .with(jwt().jwt(j -> j.claim("preferred_username", "eng@cloudfuze.com")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"notes\":\"looks good\"}"))

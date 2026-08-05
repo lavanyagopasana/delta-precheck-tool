@@ -10,12 +10,6 @@ import { TrashIcon, PlusIcon, EditIcon } from "../components/Icons";
 import { useConfirm } from "../components/ConfirmDialog";
 import { emailLocalPart } from "../utils/format";
 
-const PRODUCT_TYPE_OPTIONS = [
-  { value: "MESSAGE", label: "Message" },
-  { value: "EMAIL", label: "Email" },
-  { value: "CONTENT", label: "Content" },
-];
-
 const EMPTY_ROSTER = { migrationManagers: [], engineers: [] };
 
 export default function ProjectsPage() {
@@ -57,7 +51,6 @@ export default function ProjectsPage() {
 
   const [editing, setEditing] = useState(null);
   const [editName, setEditName] = useState("");
-  const [editProductType, setEditProductType] = useState("");
   const [editMM, setEditMM] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState(null);
@@ -65,20 +58,18 @@ export default function ProjectsPage() {
   const openEdit = (p) => {
     setEditing(p);
     setEditName(p.name || "");
-    setEditProductType(p.productType || "");
     setEditMM(p.migrationManagerName || "");
     setEditError(null);
   };
 
   const handleUpdate = async (e) => {
     e.preventDefault();
-    if (!editName.trim() || !editProductType) return;
+    if (!editName.trim()) return;
     setEditSaving(true);
     setEditError(null);
     try {
       await updateProjectDetails(editing.id, {
         name: editName.trim(),
-        productType: editProductType,
         migrationManagerName: editMM || null,
       });
       showToast(`Project "${editName.trim()}" updated.`, "success");
@@ -217,26 +208,11 @@ export default function ProjectsPage() {
       {editing && (
         <Modal title={`Edit "${editing.name}"`} onClose={() => setEditing(null)} closeIcon>
           <form onSubmit={handleUpdate}>
-            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-              <div style={{ flex: "1 1 220px" }}>
-                <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>
-                  Project Name <span style={{ color: "var(--color-red)" }}>*</span>
-                </label>
-                <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} style={{ width: "100%" }} />
-              </div>
-              <div style={{ flex: "1 1 160px" }}>
-                <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>
-                  Product Type <span style={{ color: "var(--color-red)" }}>*</span>
-                </label>
-                <select value={editProductType} onChange={(e) => setEditProductType(e.target.value)} style={{ width: "100%" }}>
-                  <option value="">Select...</option>
-                  {PRODUCT_TYPE_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div>
+              <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>
+                Project Name <span style={{ color: "var(--color-red)" }}>*</span>
+              </label>
+              <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} style={{ width: "100%" }} />
             </div>
 
             <div style={{ marginTop: 14 }}>
@@ -263,7 +239,7 @@ export default function ProjectsPage() {
             {editError && <div className="inline-hint" style={{ marginTop: 14 }}>{editError}</div>}
 
             <div className="form-actions">
-              <button className="btn" type="submit" disabled={editSaving || !editName.trim() || !editProductType}>
+              <button className="btn" type="submit" disabled={editSaving || !editName.trim()}>
                 {editSaving ? "Saving..." : "Save Changes"}
               </button>
             </div>

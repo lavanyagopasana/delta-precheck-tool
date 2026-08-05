@@ -3,6 +3,7 @@ package com.cloudfuze.deltatracker.repository;
 import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.entity.Ticket;
 import com.cloudfuze.deltatracker.entity.TicketStatus;
+import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -19,6 +20,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * persistence layer (STEP 8). The web-layer counterpart (TicketControllerTest) proves the resulting
  * exception is mapped to HTTP 409; this proves the exception is genuinely raised by two writers
  * racing on the same row rather than one silently clobbering the other.
+ *
+ * <p>A Ticket belongs to a WorkspaceCombination now, not a Server directly (see the per-combination
+ * migration in decisions.md) -- the combination still needs a Server to hang off of, so both are
+ * persisted here.
  */
 @DataJpaTest
 @ActiveProfiles("test")
@@ -34,7 +39,8 @@ class OptimisticLockingTest {
     @Test
     void staleTicketWriteFailsOptimisticLock() {
         Server server = em.persist(new Server("SRV-OPT"));
-        Ticket ticket = em.persist(new Ticket(server, "https://jira.example.com/browse/T-1", "eng@cloudfuze.com"));
+        WorkspaceCombination combination = em.persist(new WorkspaceCombination(server, "Combo A"));
+        Ticket ticket = em.persist(new Ticket(combination, "https://jira.example.com/browse/T-1", "eng@cloudfuze.com"));
         em.flush();
         Long id = ticket.getId();
         assertThat(ticket.getVersion()).isEqualTo(0L);

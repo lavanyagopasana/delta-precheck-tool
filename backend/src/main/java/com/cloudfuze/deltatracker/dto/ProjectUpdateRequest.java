@@ -1,8 +1,6 @@
 package com.cloudfuze.deltatracker.dto;
 
-import com.cloudfuze.deltatracker.entity.ProductType;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.Setter;
@@ -19,9 +17,6 @@ public class ProjectUpdateRequest {
     @NotBlank
     @Size(max = 255, message = "Project name must be 255 characters or fewer")
     private String name;
-
-    @NotNull
-    private ProductType productType;
 
     private String migrationManagerName;
 }

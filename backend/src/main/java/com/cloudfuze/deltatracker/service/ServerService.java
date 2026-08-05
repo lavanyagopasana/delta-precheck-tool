@@ -5,6 +5,7 @@ import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
 import com.cloudfuze.deltatracker.dto.WorkspacePairDto;
 import com.cloudfuze.deltatracker.entity.PairStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
+import com.cloudfuze.deltatracker.entity.ProductType;
 import com.cloudfuze.deltatracker.entity.Project;
 import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.entity.SubmissionStatus;
@@ -34,6 +35,8 @@ public class ServerService {
     // PreCheckSubmissionService.isPreDeltaMigrationRequired.
     public static final String PRE_DELTA_MIGRATION_ITEM = "Pre Delta Migration";
 
+    // The Content checklist -- also still the default/fallback list (used for a combination whose
+    // server has no product type set, e.g. one created before this field existed).
     public static final List<String> PRE_CHECK_ITEMS = List.of(
             "OneTime Migration",
             DELTA_TYPE_ITEM,
@@ -44,6 +47,27 @@ public class ServerService {
             "Workspace Status Updated in DB",
             "Drive changes"
     );
+
+    // Email and Message checklists are placeholders reusing the Content list for now -- swap these
+    // for the real per-type item sets once they're provided. Keeping them non-empty (rather than
+    // List.of()) matters: an empty checklist can never be submitted (PreCheckSubmissionService.submit
+    // requires at least one item), so a genuinely empty list would silently lock out every Email/
+    // Message combination from ever completing its pre-check.
+    private static final Map<ProductType, List<String>> PRE_CHECK_ITEMS_BY_PRODUCT_TYPE = Map.of(
+            ProductType.CONTENT, PRE_CHECK_ITEMS,
+            ProductType.EMAIL, PRE_CHECK_ITEMS,
+            ProductType.MESSAGE, PRE_CHECK_ITEMS
+    );
+
+    // The checklist to seed/sort for a combination, based on its server's product type. Falls back
+    // to the Content list for a null product type -- Map.of()'s getOrDefault throws on a null key
+    // rather than treating it as "not found", so null has to be handled before it ever reaches the map.
+    public static List<String> preCheckItemsFor(ProductType productType) {
+        if (productType == null) {
+            return PRE_CHECK_ITEMS;
+        }
+        return PRE_CHECK_ITEMS_BY_PRODUCT_TYPE.getOrDefault(productType, PRE_CHECK_ITEMS);
+    }
 
     private final ServerRepository serverRepository;
     private final WorkspacePairRepository workspacePairRepository;
@@ -81,7 +105,8 @@ public class ServerService {
     // permission check (non-admins must be this project's Migration Manager or a team member). No
     // pre-check seeding happens here anymore -- that's per-combination now (see
     // WorkspaceCombinationService), and a freshly created server has no combinations yet.
-    public ServerReadinessDto createForProject(Long projectId, String name, String callerEmail, boolean isAdmin) {
+    public ServerReadinessDto createForProject(Long projectId, String name, ProductType productType,
+                                                String callerEmail, boolean isAdmin) {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new ResourceNotFoundException("Project not found: " + projectId));
 
@@ -100,6 +125,14 @@ public class ServerService {
         }
         Server server = new Server(trimmed);
         server.setProject(project);
+        server.setProductType(productType);
+        server = serverRepository.save(server);
+        return buildReadiness(server, false);
+    }
+
+    public ServerReadinessDto updateProductType(Long serverId, ProductType productType) {
+        Server server = findOrThrow(serverId);
+        server.setProductType(productType);
         server = serverRepository.save(server);
         return buildReadiness(server, false);
     }
@@ -173,6 +206,7 @@ public class ServerService {
         dto.setServerId(server.getId());
         dto.setServerName(server.getName());
         dto.setStatus(server.getStatus());
+        dto.setProductType(server.getProductType());
         dto.setTotalPairs(total);
         dto.setReadyCount(ready);
         dto.setNotReadyCount(notReady);
@@ -182,7 +216,6 @@ public class ServerService {
             dto.setProjectId(server.getProject().getId());
             dto.setProjectName(server.getProject().getName());
             dto.setMigrationManagerName(server.getProject().getMigrationManagerName());
-            dto.setProductType(server.getProject().getProductType());
         }
 
         List<Long> combinationIds = combinations.stream().map(WorkspaceCombination::getId).toList();

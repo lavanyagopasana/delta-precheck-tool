@@ -1,5 +1,6 @@
 package com.cloudfuze.deltatracker.dto;
 
+import com.cloudfuze.deltatracker.entity.ProductType;
 import com.cloudfuze.deltatracker.entity.SignOffRole;
 import com.cloudfuze.deltatracker.entity.SignOffStatus;
 import lombok.Getter;
@@ -21,6 +22,7 @@ public class SignOffApprovalDto {
     private long openEscalationCount;
     private Long projectId;
     private String projectName;
+    private ProductType productType;
     private SignOffRole role;
     // Display label only -- "the project's manager" for MIGRATION_LEAD, "Any Dev Lead"/"Any QA Lead"
     // for the pool roles. Not used for eligibility; canAct is computed server-side per caller.

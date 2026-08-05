@@ -1,7 +1,6 @@
 {
   "id" : 1,
   "name" : "Alpha Project",
-  "productType" : "MESSAGE",
   "serverCount" : 2,
   "totalPairs" : 3,
   "readyServerCount" : 2,
@@ -22,45 +21,74 @@
     "serverId" : 1,
     "serverName" : "SRV-ALPHA-1",
     "status" : "DELTA_READY",
+    "productType" : null,
     "totalPairs" : 2,
     "readyCount" : 2,
     "notReadyCount" : 0,
     "openEscalationCount" : 1,
     "readinessStatus" : "RED",
-    "deltaInitiatedAt" : null,
-    "deltaInitiatedBy" : null,
-    "deltaStartedAt" : null,
-    "deltaStartedBy" : null,
-    "deltaFinishedAt" : null,
-    "deltaFinishedBy" : null,
     "migrationManagerName" : "mgr@cloudfuze.com",
     "projectId" : 1,
     "projectName" : "Alpha Project",
     "readinessStage" : "IN_PROGRESS",
-    "readinessDetail" : "Dev Lead not approved yet",
-    "submissionStatus" : "SUBMITTED",
-    "pairs" : null
+    "readinessDetail" : "\"Combo A\": Dev Lead not approved yet",
+    "combinations" : [ {
+      "id" : 1,
+      "name" : "Combo A",
+      "pairCount" : 2,
+      "status" : "PENDING",
+      "submissionStatus" : "SUBMITTED"
+    } ],
+    "pairs" : [ {
+      "id" : 1,
+      "serverId" : 1,
+      "serverName" : "SRV-ALPHA-1",
+      "sourceEmail" : "src1@a.com",
+      "sourcePath" : null,
+      "destinationEmail" : "dst1@b.com",
+      "destinationPath" : null,
+      "combination" : "Combo A"
+    }, {
+      "id" : 2,
+      "serverId" : 1,
+      "serverName" : "SRV-ALPHA-1",
+      "sourceEmail" : "src2@a.com",
+      "sourcePath" : null,
+      "destinationEmail" : "dst2@b.com",
+      "destinationPath" : null,
+      "combination" : "Combo A"
+    } ]
   }, {
     "serverId" : 2,
     "serverName" : "SRV-ALPHA-2",
     "status" : "DELTA_READY",
+    "productType" : null,
     "totalPairs" : 1,
     "readyCount" : 1,
     "notReadyCount" : 0,
     "openEscalationCount" : 0,
     "readinessStatus" : "GREEN",
-    "deltaInitiatedAt" : "2026-01-04T12:00:00",
-    "deltaInitiatedBy" : "alice@cloudfuze.com",
-    "deltaStartedAt" : "2026-01-05T13:00:00",
-    "deltaStartedBy" : "alice@cloudfuze.com",
-    "deltaFinishedAt" : "2026-01-06T14:00:00",
-    "deltaFinishedBy" : "alice@cloudfuze.com",
     "migrationManagerName" : "mgr@cloudfuze.com",
     "projectId" : 1,
     "projectName" : "Alpha Project",
     "readinessStage" : "READY",
     "readinessDetail" : null,
-    "submissionStatus" : "SUBMITTED",
-    "pairs" : null
+    "combinations" : [ {
+      "id" : 2,
+      "name" : "Combo A",
+      "pairCount" : 1,
+      "status" : "PENDING",
+      "submissionStatus" : "SUBMITTED"
+    } ],
+    "pairs" : [ {
+      "id" : 3,
+      "serverId" : 2,
+      "serverName" : "SRV-ALPHA-2",
+      "sourceEmail" : "src3@a.com",
+      "sourcePath" : null,
+      "destinationEmail" : "dst3@b.com",
+      "destinationPath" : null,
+      "combination" : "Combo A"
+    } ]
   } ]
 }

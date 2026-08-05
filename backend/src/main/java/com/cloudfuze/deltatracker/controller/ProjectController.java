@@ -47,7 +47,7 @@ public class ProjectController {
 
     @PostMapping
     public ProjectSummaryDto create(@Valid @RequestBody ProjectCreateRequest request) {
-        return projectService.create(request.getName(), request.getProductType(), request.getCreatedBy(),
+        return projectService.create(request.getName(), request.getCreatedBy(),
                 request.getMigrationManagerName());
     }
 
@@ -59,7 +59,7 @@ public class ProjectController {
     public ServerReadinessDto createServer(@PathVariable Long id, @Valid @RequestBody CreateServerRequest request,
                                             @AuthenticationPrincipal Jwt jwt) {
         String email = JwtEmailUtil.extractEmail(jwt);
-        return serverService.createForProject(id, request.getName(), email, appUserService.isAdmin(email));
+        return serverService.createForProject(id, request.getName(), request.getProductType(), email, appUserService.isAdmin(email));
     }
 
     @PatchMapping("/{id}/assignments")

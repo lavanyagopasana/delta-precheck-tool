@@ -15,6 +15,8 @@ const ROLE_LABELS = {
   QA_LEAD: "QA Lead",
 };
 
+const PRODUCT_TYPE_LABELS = { MESSAGE: "Message", EMAIL: "Email", CONTENT: "Content" };
+
 const STEPS = [
   { role: "MIGRATION_LEAD", short: "MM", full: "Migration Manager" },
   { role: "DEV_LEAD", short: "Dev", full: "Dev Lead" },
@@ -67,10 +69,10 @@ function CurrentStatusText({ label }) {
   const isApproved = label.startsWith("Approved") || label.startsWith("Delta Ready");
   const isDeclined = label.startsWith("Declined");
   const color = isApproved ? "var(--color-green)" : isDeclined ? "var(--color-red)" : "var(--color-text-muted)";
-  const icon = isApproved ? "✓" : isDeclined ? "✕" : "•";
+  const icon = isApproved ? "✓" : isDeclined ? "✕" : null;
   return (
     <span className="current-status-text" style={{ color }}>
-      <span className="icon">{icon}</span>
+      {icon && <span className="icon">{icon}</span>}
       {label}
     </span>
   );
@@ -296,7 +298,11 @@ export default function ApprovalsPage() {
               <div>
                 <div style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{a.serverName}</div>
                 <div style={{ fontSize: 12, color: "var(--color-text-muted)", whiteSpace: "nowrap" }}>{a.combinationName}</div>
-                <div style={{ fontSize: 11.5, color: "var(--color-text-faint)" }}>{a.totalPairs} pair(s)</div>
+                {a.productType && (
+                  <div style={{ fontSize: 11.5, color: "var(--color-text-faint)" }}>
+                    {PRODUCT_TYPE_LABELS[a.productType] || a.productType}
+                  </div>
+                )}
               </div>
             ),
           },

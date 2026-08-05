@@ -2,11 +2,8 @@ import React, { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { getServerReadiness } from "../api/client";
 import WorkspacePairsPanel from "../components/WorkspacePairsPanel";
-import AddCombinationModal from "../components/AddCombinationModal";
-import { ServerIcon, SwapIcon, PlusIcon } from "../components/Icons";
+import { ServerIcon, SwapIcon } from "../components/Icons";
 import { groupByCombination } from "../utils/pairs";
-import { AUTH_CONFIGURED } from "../auth/authConfig";
-import { useCurrentUser } from "../auth/CurrentUserContext";
 
 const PRODUCT_TYPE_LABELS = { MESSAGE: "Message", EMAIL: "Email", CONTENT: "Content" };
 
@@ -14,13 +11,9 @@ export default function ServerDetailsPage() {
   const { serverId } = useParams();
   const [searchParams] = useSearchParams();
   const initialCombination = searchParams.get("combination") || "";
-  const currentUser = useCurrentUser();
-  const canImport =
-    !AUTH_CONFIGURED || ["ADMIN", "MIGRATION_ENGINEER", "MIGRATION_MANAGER"].includes(currentUser?.role);
   const [server, setServer] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [showAddCombination, setShowAddCombination] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -65,7 +58,7 @@ export default function ServerDetailsPage() {
               <ServerIcon size={20} style={{ marginRight: 0, color: "var(--color-primary)" }} />
               <h2 style={{ margin: 0 }}>{server.serverName}</h2>
               {server.productType && (
-                <span className="badge gray">{PRODUCT_TYPE_LABELS[server.productType] || server.productType}</span>
+                <span className="badge blue">{PRODUCT_TYPE_LABELS[server.productType] || server.productType}</span>
               )}
             </div>
             {activeCombination && (
@@ -75,22 +68,10 @@ export default function ServerDetailsPage() {
               </div>
             )}
           </div>
-          {canImport && (
-            <button className="btn secondary" onClick={() => setShowAddCombination(true)}>
-              <PlusIcon /> Add combination
-            </button>
-          )}
         </div>
       </div>
 
       {error && <div className="inline-hint" style={{ marginTop: 12 }}>{error}</div>}
-
-      <AddCombinationModal
-        server={{ serverId, serverName: server.serverName }}
-        open={showAddCombination}
-        onClose={() => setShowAddCombination(false)}
-        onSaved={load}
-      />
 
       <div className="card">
         <WorkspacePairsPanel

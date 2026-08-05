@@ -1,11 +1,17 @@
-// Shared by CsvImportPanel (the "Download sample CSV" button) and ServerUrlsPanel's per-combination
-// download icon -- both need to turn a fixed column list + one example row into a downloadable file.
-export function downloadSampleCsv(columns, sampleRow, fileName) {
-  const escape = (v) => {
-    const s = String(v ?? "");
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const csv = `${columns.map(escape).join(",")}\n${sampleRow.map(escape).join(",")}\n`;
+function escapeCsvValue(v) {
+  const s = String(v ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function buildCsv(columns, rows) {
+  const lines = [columns.map(escapeCsvValue).join(",")];
+  for (const row of rows) {
+    lines.push(row.map(escapeCsvValue).join(","));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function triggerDownload(csv, fileName) {
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -18,4 +24,16 @@ export function downloadSampleCsv(columns, sampleRow, fileName) {
   // the download it just started, producing a truncated/empty/unopenable file on disk -- deferring
   // it gives that read time to finish first.
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Shared by CsvImportPanel (the "Download sample CSV" button) -- a fixed column list + one example
+// row, so users can start from a correctly-shaped template instead of hand-typing the columns.
+export function downloadSampleCsv(columns, sampleRow, fileName) {
+  triggerDownload(buildCsv(columns, [sampleRow]), fileName);
+}
+
+// Used by ServerUrlsPanel's per-combination download icon -- exports the migration pairs actually
+// uploaded under that combination, in the same column shape as the sample template.
+export function downloadCsv(columns, rows, fileName) {
+  triggerDownload(buildCsv(columns, rows), fileName);
 }

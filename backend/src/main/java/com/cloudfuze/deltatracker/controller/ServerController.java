@@ -2,6 +2,7 @@ package com.cloudfuze.deltatracker.controller;
 
 import com.cloudfuze.deltatracker.dto.AssignProjectRequest;
 import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
+import com.cloudfuze.deltatracker.dto.UpdateServerRequest;
 import com.cloudfuze.deltatracker.dto.WorkspacePairImportResultDto;
 import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.service.ServerService;
@@ -36,6 +37,13 @@ public class ServerController {
     @GetMapping("/{id}/readiness")
     public ServerReadinessDto readiness(@PathVariable Long id) {
         return serverService.getReadiness(id);
+    }
+
+    // Product type lives on the Server itself -- edited independently of adding a new server (e.g.
+    // to set/correct it on a server created before this field existed).
+    @PatchMapping("/{id}")
+    public ServerReadinessDto update(@PathVariable Long id, @RequestBody UpdateServerRequest request) {
+        return serverService.updateProductType(id, request.getProductType());
     }
 
     // combination is optional: when present, this is the "add a combination, then upload its CSV"

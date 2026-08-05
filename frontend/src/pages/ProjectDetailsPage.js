@@ -49,7 +49,7 @@ function AssignmentsCard({ project, roster, canManage, onSaved }) {
       <h3 className="section-title">Assignments</h3>
 
       <div className="subpanel" style={{ marginTop: 16 }}>
-        <span style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 8 }}>
+        <span style={{ display: "block", fontSize: 12, fontWeight: 500, color: "var(--color-text-muted)", marginBottom: 8 }}>
           Migration Manager
         </span>
         {project.migrationManagerName ? (
@@ -64,7 +64,7 @@ function AssignmentsCard({ project, roster, canManage, onSaved }) {
 
       <div className="subpanel" style={{ marginTop: 14 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)" }}>
+          <span style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-muted)" }}>
             Migration Engineers
           </span>
           {canManage && (
@@ -158,6 +158,7 @@ export default function ProjectDetailsPage() {
       <ServerUrlsPanel
         project={project}
         canManage={canManage}
+        isAdmin={isAdmin}
         onSaved={load}
         showAddServer={showAddServer}
         onCloseAddServer={() => setShowAddServer(false)}

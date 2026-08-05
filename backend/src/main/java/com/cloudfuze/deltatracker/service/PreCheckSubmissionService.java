@@ -190,8 +190,9 @@ public class PreCheckSubmissionService {
         dto.setLockedByOther(lockedByOther);
         dto.setTotalCount(items.size());
 
+        List<String> orderedItemNames = ServerService.preCheckItemsFor(combination.getServer().getProductType());
         List<PreCheckItem> ordered = items.stream()
-                .sorted(Comparator.comparing(i -> ServerService.PRE_CHECK_ITEMS.indexOf(i.getItemName())))
+                .sorted(Comparator.comparing(i -> orderedItemNames.indexOf(i.getItemName())))
                 .toList();
 
         if (lockedByOther) {

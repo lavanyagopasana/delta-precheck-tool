@@ -1,5 +1,7 @@
 [ {
   "id" : 3,
+  "combinationId" : 1,
+  "combinationName" : "Combo A",
   "serverId" : 1,
   "serverName" : "SRV-ALPHA-1",
   "readinessStatus" : "RED",
@@ -7,6 +9,7 @@
   "openEscalationCount" : 1,
   "projectId" : 1,
   "projectName" : "Alpha Project",
+  "productType" : null,
   "role" : "QA_LEAD",
   "assignedName" : "Any QA Lead",
   "status" : "PENDING",
@@ -20,6 +23,8 @@
   "canAct" : false
 }, {
   "id" : 2,
+  "combinationId" : 1,
+  "combinationName" : "Combo A",
   "serverId" : 1,
   "serverName" : "SRV-ALPHA-1",
   "readinessStatus" : "RED",
@@ -27,6 +32,7 @@
   "openEscalationCount" : 1,
   "projectId" : 1,
   "projectName" : "Alpha Project",
+  "productType" : null,
   "role" : "DEV_LEAD",
   "assignedName" : "Any Dev Lead",
   "status" : "PENDING",
@@ -40,13 +46,16 @@
   "canAct" : false
 }, {
   "id" : 6,
+  "combinationId" : 2,
+  "combinationName" : "Combo A",
   "serverId" : 2,
   "serverName" : "SRV-ALPHA-2",
-  "readinessStatus" : "GREEN",
+  "readinessStatus" : "RED",
   "totalPairs" : 1,
   "openEscalationCount" : 0,
   "projectId" : 1,
   "projectName" : "Alpha Project",
+  "productType" : null,
   "role" : "QA_LEAD",
   "assignedName" : "Any QA Lead",
   "status" : "APPROVED",
@@ -60,13 +69,16 @@
   "canAct" : false
 }, {
   "id" : 5,
+  "combinationId" : 2,
+  "combinationName" : "Combo A",
   "serverId" : 2,
   "serverName" : "SRV-ALPHA-2",
-  "readinessStatus" : "GREEN",
+  "readinessStatus" : "RED",
   "totalPairs" : 1,
   "openEscalationCount" : 0,
   "projectId" : 1,
   "projectName" : "Alpha Project",
+  "productType" : null,
   "role" : "DEV_LEAD",
   "assignedName" : "Any Dev Lead",
   "status" : "APPROVED",
@@ -80,6 +92,8 @@
   "canAct" : false
 }, {
   "id" : 1,
+  "combinationId" : 1,
+  "combinationName" : "Combo A",
   "serverId" : 1,
   "serverName" : "SRV-ALPHA-1",
   "readinessStatus" : "RED",
@@ -87,6 +101,7 @@
   "openEscalationCount" : 1,
   "projectId" : 1,
   "projectName" : "Alpha Project",
+  "productType" : null,
   "role" : "MIGRATION_LEAD",
   "assignedName" : "mgr@cloudfuze.com",
   "status" : "APPROVED",
@@ -100,13 +115,16 @@
   "canAct" : false
 }, {
   "id" : 4,
+  "combinationId" : 2,
+  "combinationName" : "Combo A",
   "serverId" : 2,
   "serverName" : "SRV-ALPHA-2",
-  "readinessStatus" : "GREEN",
+  "readinessStatus" : "RED",
   "totalPairs" : 1,
   "openEscalationCount" : 0,
   "projectId" : 1,
   "projectName" : "Alpha Project",
+  "productType" : null,
   "role" : "MIGRATION_LEAD",
   "assignedName" : "mgr@cloudfuze.com",
   "status" : "APPROVED",

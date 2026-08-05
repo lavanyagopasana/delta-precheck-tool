@@ -33,4 +33,9 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
     long countByStatus(TicketStatus status);
 
     boolean existsByTicketUrlIgnoreCase(String ticketUrl);
+
+    // Backs the scheduled Jira sync (TicketService.syncOpenTicketsFromJira) -- only tickets that are
+    // both still OPEN and actually came from Jira (jiraKey set) are worth re-checking; a manually
+    // logged plain URL has no ticket number to poll.
+    List<Ticket> findByStatusAndJiraKeyIsNotNull(TicketStatus status);
 }

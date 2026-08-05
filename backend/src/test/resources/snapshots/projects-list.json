@@ -1,7 +1,6 @@
 [ {
   "id" : 1,
   "name" : "Alpha Project",
-  "productType" : "MESSAGE",
   "serverCount" : 2,
   "totalPairs" : 3,
   "readyServerCount" : 2,
@@ -21,7 +20,6 @@
 }, {
   "id" : 2,
   "name" : "Beta Project",
-  "productType" : "EMAIL",
   "serverCount" : 0,
   "totalPairs" : 0,
   "readyServerCount" : 0,

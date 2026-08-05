@@ -342,7 +342,7 @@ tr.selected-row.clickable-row:hover td {
   padding: 4px 11px;
   border-radius: 999px;
   font-size: 11.5px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.01em;
 }
 
@@ -350,6 +350,9 @@ tr.selected-row.clickable-row:hover td {
 .badge.yellow { background: var(--color-yellow-soft); color: var(--color-yellow); }
 .badge.red { background: var(--color-red-soft); color: var(--color-red); }
 .badge.gray { background: var(--color-gray-soft); color: var(--color-text-muted); }
+/* A categorical tag (e.g. product type) reads as more meaningful than a plain count -- give it the
+   brand color instead of the same neutral gray every count/status pill already uses everywhere. */
+.badge.blue { background: var(--color-primary-soft); color: var(--color-primary-dark); }
 
 .dot {
   display: inline-block;
@@ -526,12 +529,15 @@ tr.selected-row.clickable-row:hover td {
 }
 
 .btn.secondary {
-  background: var(--color-gray-soft);
-  color: var(--color-text);
+  background: var(--color-surface);
+  color: var(--color-primary);
+  border: 1px solid #b7cbf3;
   box-shadow: none;
 }
 .btn.secondary:hover:not(:disabled) {
-  background: #e3e6ee;
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
 }
 
 .btn.danger {
@@ -582,6 +588,71 @@ tbody td .btn.secondary:hover:not(:disabled) {
 /* Keep every in-row action button crisp on the tinted hover row. */
 tbody td .btn {
   box-shadow: 0 1px 2px rgba(17, 21, 34, 0.08);
+}
+
+/* A cohesive icon-button toolbar for table-row actions (Resolve/Edit/Delete, etc.) -- neutral at
+   rest with color reserved for hover/danger, so 2-3 actions read as one calm control instead of a
+   row of separately-colored buttons (green/gray/red squares) competing for attention. Always stays
+   on one line -- 3 icons at 30px + gaps comfortably fit the space a wrapped 2+1 stack used to need. */
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(17, 21, 34, 0.06);
+  flex-wrap: nowrap;
+}
+
+.row-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.row-action:hover:not(:disabled) {
+  background: var(--color-gray-soft);
+  color: var(--color-text);
+}
+
+.row-action:disabled {
+  color: var(--color-text-faint);
+  cursor: not-allowed;
+}
+
+.row-action.success:hover:not(:disabled) {
+  background: var(--color-green-soft);
+  color: var(--color-green);
+}
+
+/* Destructive actions stay subtly tinted even at rest, not just on hover, so "this deletes
+   something" doesn't require a hover-to-discover interaction. */
+.row-action.danger {
+  color: var(--color-red);
+}
+.row-action.danger:hover:not(:disabled) {
+  background: var(--color-red-soft);
+}
+
+/* Truncates long free-text (e.g. a Jira issue summary) to 2 lines with an ellipsis instead of
+   wrapping to 4-5 lines and making the whole table row look ungainly -- full text stays available
+   via the element's title attribute. */
+.text-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* ---------- Forms / inputs ---------- */

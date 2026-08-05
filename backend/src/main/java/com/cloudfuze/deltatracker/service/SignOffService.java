@@ -375,15 +375,15 @@ public class SignOffService {
         WorkspaceCombination saved = combinationService.save(combination);
 
         Server server = saved.getServer();
-        String label = server.getName() + " / " + saved.getName();
-        emailService.notifyMigrationEngineersDeltaInitiated(label, saved.getDeltaInitiatedBy(),
-                saved.getDeltaInitiatedAt(), appUserService.emailsForRole(AppUserRole.MIGRATION_ENGINEER));
-
         Project project = server.getProject();
+        emailService.notifyMigrationEngineersDeltaInitiated(project != null ? project.getName() : "-", server.getName(),
+                saved.getName(), saved.getDeltaInitiatedBy(), saved.getDeltaInitiatedAt(),
+                appUserService.emailsForRole(AppUserRole.MIGRATION_ENGINEER));
+
         if (project != null && StringUtils.hasText(project.getMigrationManagerName())) {
             int workspacePairCount = combinationService.pairCount(saved);
-            emailService.notifyMigrationManagerDeltaReady(project.getName(), label, workspacePairCount,
-                    requestedBy, project.getMigrationManagerName());
+            emailService.notifyMigrationManagerDeltaReady(project.getName(), server.getName(), saved.getName(),
+                    workspacePairCount, requestedBy, project.getMigrationManagerName());
         }
     }
 
@@ -401,12 +401,11 @@ public class SignOffService {
             case DEV_LEAD -> appUserService.emailsForRole(AppUserRole.DEV_LEAD);
             case QA_LEAD -> appUserService.emailsForRole(AppUserRole.QA_LEAD);
         };
-        String label = server.getName() + " / " + combination.getName();
         int workspacePairCount = combinationService.pairCount(combination);
         String submittedBy = preCheckSubmissionRepository.findByCombinationId(combination.getId())
                 .map(sub -> sub.getSubmittedBy())
                 .orElse(null);
-        emailService.notifyApprovalRequired(roleLabel(nextRole), project.getName(), label,
+        emailService.notifyApprovalRequired(roleLabel(nextRole), project.getName(), server.getName(), combination.getName(),
                 workspacePairCount, submittedBy, recipients);
     }
 
@@ -417,9 +416,8 @@ public class SignOffService {
         int workspacePairCount = combinationService.pairCount(combination);
         Project project = server.getProject();
         String projectName = project != null ? project.getName() : "-";
-        String label = server.getName() + " / " + combination.getName();
-        emailService.notifyMigrationManagerPreCheckSubmitted(projectName, label, workspacePairCount,
-                submittedBy, migrationManagerEmail);
+        emailService.notifyMigrationManagerPreCheckSubmitted(projectName, server.getName(), combination.getName(),
+                workspacePairCount, submittedBy, migrationManagerEmail);
     }
 
     // Combination-level stats used to build a SignOffApprovalDto. Computed once per combination
@@ -440,6 +438,7 @@ public class SignOffService {
         Server server = combination.getServer();
         dto.setCombinationId(combination.getId());
         dto.setCombinationName(combination.getName());
+        dto.setProductType(server.getProductType());
         dto.setServerId(server.getId());
         dto.setServerName(server.getName());
         dto.setTotalPairs(stats.totalPairs());

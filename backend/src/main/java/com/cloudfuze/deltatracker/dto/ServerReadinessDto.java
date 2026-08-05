@@ -14,8 +14,7 @@ public class ServerReadinessDto {
     private Long serverId;
     private String serverName;
     private PairStatus status;
-    // Product type lives on the parent Project, not the Server itself -- surfaced here so the
-    // frontend can show it next to a server without a second round-trip.
+    // One product type per Server URL, shared by every combination under it.
     private ProductType productType;
     private int totalPairs;
     private int readyCount;

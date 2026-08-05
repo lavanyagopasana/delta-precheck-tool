@@ -131,12 +131,16 @@ public class SecurityConfig {
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER, AppUserRole.DEV_LEAD, AppUserRole.QA_LEAD))
                         .requestMatchers(HttpMethod.POST, "/api/pairs/import", "/api/servers/*/pairs/import").access(roleRequired(
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER, AppUserRole.MIGRATION_MANAGER))
-                        // Deleting a combination's pairs -- same role set as importing them.
+                        // Deleting a combination's pairs -- admin-only (unlike importing, which is
+                        // shared with engineers/managers).
                         .requestMatchers(HttpMethod.DELETE, "/api/servers/*/pairs").access(roleRequired(
-                                AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER, AppUserRole.MIGRATION_MANAGER))
+                                AppUserRole.ADMIN))
                         // Creating a Server directly (the "Server URL" add flow) -- same role set as
                         // CSV import, since it's an alternate way of doing the same thing a CSV row does.
                         .requestMatchers(HttpMethod.POST, "/api/projects/*/servers").access(roleRequired(
+                                AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER, AppUserRole.MIGRATION_MANAGER))
+                        // Editing a Server's product type -- same role set as creating one.
+                        .requestMatchers(HttpMethod.PATCH, "/api/servers/*").access(roleRequired(
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER, AppUserRole.MIGRATION_MANAGER))
                         // Post-Delta lifecycle (Start / Finish the migration) -- engineer-driven, admins too.
                         // Per-combination now, not per-server.

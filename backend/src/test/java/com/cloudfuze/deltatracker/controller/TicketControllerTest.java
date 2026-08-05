@@ -23,7 +23,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -47,7 +46,7 @@ class TicketControllerTest {
     @MockBean private AppUserService appUserService;
 
     private static final String VALID_BODY =
-            "{\"serverId\":1,\"ticketUrl\":\"https://jira.example.com/browse/T-1\",\"createdBy\":\"eng@cloudfuze.com\",\"status\":\"OPEN\"}";
+            "{\"combinationId\":1,\"ticketNumber\":\"PROJ-1\",\"createdBy\":\"eng@cloudfuze.com\"}";
 
     @Test
     void unauthenticatedRequestIs401() throws Exception {
@@ -87,25 +86,6 @@ class TicketControllerTest {
         verify(ticketService).create(any());
     }
 
-    // Validation matrix (Part 2): ticketUrl over the 512 column length is rejected at bind with a
-    // clear 400 in the GlobalExceptionHandler shape, not at insert.
-    @Test
-    void oversizeTicketUrlOnCreateReturns400() throws Exception {
-        when(appUserService.isAllowed(anyString())).thenReturn(true);
-        String longUrl = "https://jira.example.com/browse/" + "x".repeat(600);
-        String body = "{\"serverId\":1,\"ticketUrl\":\"" + longUrl + "\",\"createdBy\":\"eng@cloudfuze.com\",\"status\":\"OPEN\"}";
-
-        mockMvc.perform(post("/api/tickets")
-                        .with(jwt().jwt(j -> j.claim("preferred_username", "eng@cloudfuze.com")))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.status").value(400))
-                .andExpect(jsonPath("$.error").value("Bad Request"))
-                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("512 characters or fewer")));
-        verify(ticketService, never()).create(any());
-    }
-
     @Test
     void oversizeTicketUrlOnUpdateReturns400() throws Exception {
         when(appUserService.isAllowed(anyString())).thenReturn(true);
@@ -128,12 +108,14 @@ class TicketControllerTest {
     @Test
     void staleVersionUpdateReturns409WithReloadMessage() throws Exception {
         when(appUserService.isAllowed(anyString())).thenReturn(true);
-        when(ticketService.resolve(anyLong(), anyString(), any()))
+        when(ticketService.update(anyLong(), any(), anyString(), any()))
                 .thenThrow(new ObjectOptimisticLockingFailureException(
                         com.cloudfuze.deltatracker.entity.Ticket.class, 1L));
 
-        mockMvc.perform(patch("/api/tickets/1/resolve")
-                        .with(jwt().jwt(j -> j.claim("preferred_username", "eng@cloudfuze.com"))))
+        mockMvc.perform(put("/api/tickets/1")
+                        .with(jwt().jwt(j -> j.claim("preferred_username", "eng@cloudfuze.com")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ticketUrl\":\"https://jira.example.com/browse/T-1\",\"status\":\"RESOLVED\"}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.status").value(409))
                 .andExpect(jsonPath("$.error").value("Conflict"))

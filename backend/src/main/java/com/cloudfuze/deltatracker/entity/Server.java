@@ -23,6 +23,12 @@ public class Server {
     @Column(nullable = false)
     private String name;
 
+    // One product type per Server URL, shared by every combination under it. Nullable -- a server
+    // can exist with no product type set yet (chosen at creation time, editable afterward).
+    @Enumerated(EnumType.STRING)
+    @Column(name = "product_type")
+    private ProductType productType;
+
     @Column(name = "total_pair_count", nullable = false)
     private int totalPairCount;
 

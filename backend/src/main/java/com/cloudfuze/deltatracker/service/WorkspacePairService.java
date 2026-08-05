@@ -154,7 +154,8 @@ public class WorkspacePairService {
     // before the file is picked, so the CSV itself only carries source/destination email + path
     // (no server_url or combination column) -- every row gets the same, caller-supplied
     // combination stamped on it via processRow's override, instead of reading one per row.
-    public WorkspacePairImportResultDto importCsvForServerCombination(Long serverId, String combination, MultipartFile file) {
+    public WorkspacePairImportResultDto importCsvForServerCombination(Long serverId, String combination,
+                                                                       MultipartFile file) {
         Server server = serverRepository.findById(serverId)
                 .orElseThrow(() -> new ResourceNotFoundException("Server not found: " + serverId));
         if (!StringUtils.hasText(combination)) {

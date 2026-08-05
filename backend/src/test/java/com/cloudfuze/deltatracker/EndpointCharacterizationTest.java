@@ -2,7 +2,6 @@ package com.cloudfuze.deltatracker;
 
 import com.cloudfuze.deltatracker.entity.PairStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
-import com.cloudfuze.deltatracker.entity.ProductType;
 import com.cloudfuze.deltatracker.entity.Project;
 import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.entity.SignOff;
@@ -11,12 +10,14 @@ import com.cloudfuze.deltatracker.entity.SignOffStatus;
 import com.cloudfuze.deltatracker.entity.SubmissionStatus;
 import com.cloudfuze.deltatracker.entity.Ticket;
 import com.cloudfuze.deltatracker.entity.TicketStatus;
+import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import com.cloudfuze.deltatracker.entity.WorkspacePair;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
 import com.cloudfuze.deltatracker.repository.ProjectRepository;
 import com.cloudfuze.deltatracker.repository.ServerRepository;
 import com.cloudfuze.deltatracker.repository.SignOffRepository;
 import com.cloudfuze.deltatracker.repository.TicketRepository;
+import com.cloudfuze.deltatracker.repository.WorkspaceCombinationRepository;
 import com.cloudfuze.deltatracker.repository.WorkspacePairRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,6 +39,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // graph (fixed timestamps; auto-increment ids reset each test so ids are stable run-to-run) and
 // golden-files the exact JSON. NOT @Transactional -- each test resets + commits a fresh graph so
 // the endpoints (which run their own transactions) read committed data with predictable ids.
+//
+// Pre-checks/sign-offs/Delta/tickets are all scoped to a WorkspaceCombination now, not a Server
+// directly -- a server can have several combinations, each migrated independently (see the
+// per-combination migration in decisions.md). The seed below gives each server exactly one
+// combination so the shape stays simple, but every entity hangs off the combination, not the server.
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -60,6 +66,7 @@ class EndpointCharacterizationTest {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private ProjectRepository projectRepository;
     @Autowired private ServerRepository serverRepository;
+    @Autowired private WorkspaceCombinationRepository combinationRepository;
     @Autowired private WorkspacePairRepository workspacePairRepository;
     @Autowired private PreCheckSubmissionRepository submissionRepository;
     @Autowired private SignOffRepository signOffRepository;
@@ -71,7 +78,7 @@ class EndpointCharacterizationTest {
     void resetAndSeed() {
         jdbc.execute("SET REFERENTIAL_INTEGRITY FALSE");
         for (String table : new String[] {
-                "tickets", "sign_offs", "precheck_submissions", "precheck_items",
+                "tickets", "sign_offs", "precheck_submissions", "precheck_items", "workspace_combinations",
                 "workspace_pairs", "project_engineers", "servers", "projects", "app_users" }) {
             jdbc.execute("TRUNCATE TABLE " + table);
             if (!table.equals("project_engineers")) {
@@ -85,58 +92,67 @@ class EndpointCharacterizationTest {
     private void seed() {
         // Project "Alpha Project" -- has two servers exercising two lifecycle states.
         Set<String> alphaEngineers = new LinkedHashSet<>(Set.of("alice@cloudfuze.com"));
-        Project alpha = new Project("Alpha Project", ProductType.MESSAGE, "alice@cloudfuze.com",
+        Project alpha = new Project("Alpha Project", "alice@cloudfuze.com",
                 "mgr@cloudfuze.com", alphaEngineers);
         alpha.setCreatedAt(T_CREATED);
         alpha = projectRepository.save(alpha);
         alphaProjectId = alpha.getId();
 
         // Project "Beta Project" -- empty (no servers), no Migration Manager.
-        Project beta = new Project("Beta Project", ProductType.EMAIL, "bob@cloudfuze.com", null, null);
+        Project beta = new Project("Beta Project", "bob@cloudfuze.com", null, null);
         beta.setCreatedAt(T_CREATED);
         projectRepository.save(beta);
 
-        // Server 1: submitted, Migration Manager approved, Dev/QA still pending (mid-chain).
+        // Server 1, one combination: submitted, Migration Manager approved, Dev/QA still pending (mid-chain).
         Server s1 = new Server("SRV-ALPHA-1");
         s1.setProject(alpha);
         s1.setStatus(PairStatus.DELTA_READY);
         s1 = serverRepository.save(s1);
-        workspacePairRepository.save(new WorkspacePair(s1, "src1@a.com", "dst1@b.com"));
-        workspacePairRepository.save(new WorkspacePair(s1, "src2@a.com", "dst2@b.com"));
-        saveSubmission(s1, "alice@cloudfuze.com");
-        saveSignOff(s1, SignOffRole.MIGRATION_LEAD, "mgr@cloudfuze.com", SignOffStatus.APPROVED,
+        WorkspaceCombination c1 = combinationRepository.save(new WorkspaceCombination(s1, "Combo A"));
+        workspacePairRepository.save(pair(s1, "src1@a.com", "dst1@b.com", c1.getName()));
+        workspacePairRepository.save(pair(s1, "src2@a.com", "dst2@b.com", c1.getName()));
+        saveSubmission(c1, "alice@cloudfuze.com");
+        saveSignOff(c1, SignOffRole.MIGRATION_LEAD, "mgr@cloudfuze.com", SignOffStatus.APPROVED,
                 "mgr@cloudfuze.com", T_MM_APPROVED, T_SIGN_1, null);
-        saveSignOff(s1, SignOffRole.DEV_LEAD, "Any Dev Lead", SignOffStatus.PENDING, null, null, T_SIGN_2, null);
-        saveSignOff(s1, SignOffRole.QA_LEAD, "Any QA Lead", SignOffStatus.PENDING, null, null, T_SIGN_3, null);
+        saveSignOff(c1, SignOffRole.DEV_LEAD, "Any Dev Lead", SignOffStatus.PENDING, null, null, T_SIGN_2, null);
+        saveSignOff(c1, SignOffRole.QA_LEAD, "Any QA Lead", SignOffStatus.PENDING, null, null, T_SIGN_3, null);
 
-        Ticket t1 = new Ticket(s1, "https://jira.example.com/browse/JIRA-101", "alice@cloudfuze.com");
+        Ticket t1 = new Ticket(c1, "https://jira.example.com/browse/JIRA-101", "alice@cloudfuze.com");
         t1.setStatus(TicketStatus.OPEN);
         t1.setCreatedAt(T_ESCALATION);
         ticketRepository.save(t1);
 
-        // Server 2: fully approved and Delta finished.
+        // Server 2, one combination: fully approved and Delta finished.
         Server s2 = new Server("SRV-ALPHA-2");
         s2.setProject(alpha);
         s2.setStatus(PairStatus.DELTA_READY);
-        s2.setDeltaInitiatedAt(T_DELTA_INIT);
-        s2.setDeltaInitiatedBy("alice@cloudfuze.com");
-        s2.setDeltaStartedAt(T_DELTA_START);
-        s2.setDeltaStartedBy("alice@cloudfuze.com");
-        s2.setDeltaFinishedAt(T_DELTA_FINISH);
-        s2.setDeltaFinishedBy("alice@cloudfuze.com");
         s2 = serverRepository.save(s2);
-        workspacePairRepository.save(new WorkspacePair(s2, "src3@a.com", "dst3@b.com"));
-        saveSubmission(s2, "alice@cloudfuze.com");
-        saveSignOff(s2, SignOffRole.MIGRATION_LEAD, "mgr@cloudfuze.com", SignOffStatus.APPROVED,
+        WorkspaceCombination c2 = new WorkspaceCombination(s2, "Combo A");
+        c2.setDeltaInitiatedAt(T_DELTA_INIT);
+        c2.setDeltaInitiatedBy("alice@cloudfuze.com");
+        c2.setDeltaStartedAt(T_DELTA_START);
+        c2.setDeltaStartedBy("alice@cloudfuze.com");
+        c2.setDeltaFinishedAt(T_DELTA_FINISH);
+        c2.setDeltaFinishedBy("alice@cloudfuze.com");
+        c2 = combinationRepository.save(c2);
+        workspacePairRepository.save(pair(s2, "src3@a.com", "dst3@b.com", c2.getName()));
+        saveSubmission(c2, "alice@cloudfuze.com");
+        saveSignOff(c2, SignOffRole.MIGRATION_LEAD, "mgr@cloudfuze.com", SignOffStatus.APPROVED,
                 "mgr@cloudfuze.com", T_MM_APPROVED, T_SIGN_1, null);
-        saveSignOff(s2, SignOffRole.DEV_LEAD, "Any Dev Lead", SignOffStatus.APPROVED,
+        saveSignOff(c2, SignOffRole.DEV_LEAD, "Any Dev Lead", SignOffStatus.APPROVED,
                 "dev@cloudfuze.com", T_DEV_APPROVED, T_SIGN_2, Boolean.TRUE);
-        saveSignOff(s2, SignOffRole.QA_LEAD, "Any QA Lead", SignOffStatus.APPROVED,
+        saveSignOff(c2, SignOffRole.QA_LEAD, "Any QA Lead", SignOffStatus.APPROVED,
                 "qa@cloudfuze.com", T_QA_APPROVED, T_SIGN_3, null);
     }
 
-    private void saveSubmission(Server server, String who) {
-        PreCheckSubmission sub = new PreCheckSubmission(server);
+    private WorkspacePair pair(Server server, String sourceEmail, String destinationEmail, String combination) {
+        WorkspacePair p = new WorkspacePair(server, sourceEmail, destinationEmail);
+        p.setCombination(combination);
+        return p;
+    }
+
+    private void saveSubmission(WorkspaceCombination combination, String who) {
+        PreCheckSubmission sub = new PreCheckSubmission(combination);
         sub.setStatus(SubmissionStatus.SUBMITTED);
         sub.setSubmittedBy(who);
         sub.setSubmittedAt(T_SUBMITTED);
@@ -144,9 +160,9 @@ class EndpointCharacterizationTest {
         submissionRepository.save(sub);
     }
 
-    private void saveSignOff(Server server, SignOffRole role, String signedBy, SignOffStatus status,
+    private void saveSignOff(WorkspaceCombination combination, SignOffRole role, String signedBy, SignOffStatus status,
                              String approvedBy, LocalDateTime approvedAt, LocalDateTime signedAt, Boolean qaRequired) {
-        SignOff so = new SignOff(server, role, signedBy);
+        SignOff so = new SignOff(combination, role, signedBy);
         so.setStatus(status);
         so.setApprovedBy(approvedBy);
         so.setApprovedAt(approvedAt);

@@ -5,10 +5,10 @@ import com.cloudfuze.deltatracker.dto.SubmissionSubmitRequest;
 import com.cloudfuze.deltatracker.entity.ItemStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckItem;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
-import com.cloudfuze.deltatracker.entity.ProductType;
 import com.cloudfuze.deltatracker.entity.Project;
 import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.entity.SubmissionStatus;
+import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.EvidenceRequiredException;
 import com.cloudfuze.deltatracker.repository.PreCheckItemRepository;
@@ -40,37 +40,43 @@ import static org.mockito.Mockito.when;
  * (every item has a status, evidence, and a note), the Migration-Manager-required guard, the
  * editor-lock ("locked by another editor"), the Delta Type exemption from evidence/notes, and the
  * withdraw state-transition guards.
+ *
+ * <p>Pre-checks are scoped to a WorkspaceCombination now, not a Server directly -- see the
+ * per-combination migration in decisions.md. {@code combination.getServer()} still resolves back to
+ * the server for the Migration Manager lookup.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class PreCheckSubmissionServiceTest {
 
-    private static final Long SID = 1L;
+    private static final Long CID = 1L;
     private static final String OWNER = "owner@cloudfuze.com";
 
     @Mock private PreCheckSubmissionRepository submissionRepository;
     @Mock private PreCheckItemRepository itemRepository;
-    @Mock private ServerService serverService;
+    @Mock private WorkspaceCombinationService combinationService;
     @Mock private SignOffService signOffService;
     @Mock private AppUserService appUserService;
 
     private PreCheckSubmissionService service;
-    private Server server;
+    private WorkspaceCombination combination;
     private Project project;
 
     @BeforeEach
     void setUp() {
-        service = new PreCheckSubmissionService(submissionRepository, itemRepository, serverService,
+        service = new PreCheckSubmissionService(submissionRepository, itemRepository, combinationService,
                 signOffService, appUserService);
-        project = new Project("Alpha", ProductType.MESSAGE, "eng@cloudfuze.com", MM(), null);
-        server = new Server("SRV-1");
-        server.setId(SID);
+        project = new Project("Alpha", "eng@cloudfuze.com", MM(), null);
+        Server server = new Server("SRV-1");
+        server.setId(10L);
         server.setProject(project);
+        combination = new WorkspaceCombination(server, "Box to OneDrive");
+        combination.setId(CID);
 
-        when(serverService.findOrThrow(SID)).thenReturn(server);
+        when(combinationService.findOrThrow(CID)).thenReturn(combination);
         when(submissionRepository.save(any(PreCheckSubmission.class))).thenAnswer(inv -> inv.getArgument(0));
         when(appUserService.isAdmin(anyString())).thenReturn(false);
-        when(itemRepository.findByServerId(anyLong())).thenReturn(List.of());
+        when(itemRepository.findByCombinationId(anyLong())).thenReturn(List.of());
     }
 
     private static String MM() {
@@ -78,7 +84,7 @@ class PreCheckSubmissionServiceTest {
     }
 
     private PreCheckItem item(String name, ItemStatus status, String evidence, String notes) {
-        PreCheckItem i = new PreCheckItem(server, name);
+        PreCheckItem i = new PreCheckItem(combination, name);
         i.setStatus(status);
         i.setEvidenceFilePath(evidence);
         i.setNotes(notes);
@@ -96,7 +102,7 @@ class PreCheckSubmissionServiceTest {
     }
 
     private PreCheckSubmission submission(SubmissionStatus status, String startedBy, String submittedBy) {
-        PreCheckSubmission s = new PreCheckSubmission(server);
+        PreCheckSubmission s = new PreCheckSubmission(combination);
         s.setStatus(status);
         s.setStartedByEmail(startedBy);
         s.setSubmittedBy(submittedBy);
@@ -107,35 +113,35 @@ class PreCheckSubmissionServiceTest {
 
     @Test
     void submitTransitionsToSubmittedAndCreatesChain() {
-        when(submissionRepository.findByServerId(SID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
-        when(itemRepository.findByServerId(SID)).thenReturn(List.of(goodItem("Item A")));
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
+        when(itemRepository.findByCombinationId(CID)).thenReturn(List.of(goodItem("Item A")));
 
-        PreCheckSubmissionDto dto = service.submit(SID, request(OWNER));
+        PreCheckSubmissionDto dto = service.submit(CID, request(OWNER));
 
         assertThat(dto.getStatus()).isEqualTo(SubmissionStatus.SUBMITTED);
         assertThat(dto.getSubmittedBy()).isEqualTo(OWNER);
-        verify(signOffService).createChainIfAbsent(server);
-        verify(signOffService).notifyPreCheckSubmitted(server, OWNER, MM());
+        verify(signOffService).createChainIfAbsent(combination);
+        verify(signOffService).notifyPreCheckSubmitted(combination, OWNER, MM());
     }
 
     @Test
     void submitExemptsDeltaTypeItemFromEvidenceAndNotes() {
         PreCheckItem deltaType = item(ServerService.DELTA_TYPE_ITEM, ItemStatus.PRE_DELTA, null, null);
-        when(submissionRepository.findByServerId(SID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
-        when(itemRepository.findByServerId(SID)).thenReturn(List.of(deltaType, goodItem("Item A")));
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
+        when(itemRepository.findByCombinationId(CID)).thenReturn(List.of(deltaType, goodItem("Item A")));
 
-        PreCheckSubmissionDto dto = service.submit(SID, request(OWNER));
+        PreCheckSubmissionDto dto = service.submit(CID, request(OWNER));
 
         assertThat(dto.getStatus()).isEqualTo(SubmissionStatus.SUBMITTED);
     }
 
     @Test
     void submitAllowsAdminToBypassEditorLock() {
-        when(submissionRepository.findByServerId(SID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, "someone-else@cloudfuze.com", null)));
-        when(itemRepository.findByServerId(SID)).thenReturn(List.of(goodItem("Item A")));
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, "someone-else@cloudfuze.com", null)));
+        when(itemRepository.findByCombinationId(CID)).thenReturn(List.of(goodItem("Item A")));
         when(appUserService.isAdmin("admin@cloudfuze.com")).thenReturn(true);
 
-        PreCheckSubmissionDto dto = service.submit(SID, request("admin@cloudfuze.com"));
+        PreCheckSubmissionDto dto = service.submit(CID, request("admin@cloudfuze.com"));
 
         assertThat(dto.getStatus()).isEqualTo(SubmissionStatus.SUBMITTED);
     }
@@ -144,9 +150,9 @@ class PreCheckSubmissionServiceTest {
 
     @Test
     void submitRejectedWhenLockedByAnotherEditor() {
-        when(submissionRepository.findByServerId(SID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, "someone-else@cloudfuze.com", null)));
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, "someone-else@cloudfuze.com", null)));
 
-        assertThatThrownBy(() -> service.submit(SID, request(OWNER)))
+        assertThatThrownBy(() -> service.submit(CID, request(OWNER)))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
         verify(submissionRepository, never()).save(any());
@@ -155,10 +161,10 @@ class PreCheckSubmissionServiceTest {
     @Test
     void submitRejectedWhenNoMigrationManager() {
         project.setMigrationManagerName(null);
-        when(submissionRepository.findByServerId(SID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
-        when(itemRepository.findByServerId(SID)).thenReturn(List.of(goodItem("Item A")));
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
+        when(itemRepository.findByCombinationId(CID)).thenReturn(List.of(goodItem("Item A")));
 
-        assertThatThrownBy(() -> service.submit(SID, request(OWNER)))
+        assertThatThrownBy(() -> service.submit(CID, request(OWNER)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("no Migration Manager");
         verify(signOffService, never()).createChainIfAbsent(any());
@@ -166,46 +172,46 @@ class PreCheckSubmissionServiceTest {
 
     @Test
     void submitRejectedWhenAnItemHasNoStatus() {
-        when(submissionRepository.findByServerId(SID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
-        when(itemRepository.findByServerId(SID)).thenReturn(List.of(
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
+        when(itemRepository.findByCombinationId(CID)).thenReturn(List.of(
                 goodItem("Item A"),
                 item("Item B", ItemStatus.NOT_STARTED, "/uploads/e.png", "note")));
 
-        assertThatThrownBy(() -> service.submit(SID, request(OWNER)))
+        assertThatThrownBy(() -> service.submit(CID, request(OWNER)))
                 .isInstanceOf(EvidenceRequiredException.class)
                 .hasMessageContaining("status selected");
     }
 
     @Test
     void submitRejectedWhenAnItemHasNoEvidence() {
-        when(submissionRepository.findByServerId(SID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
-        when(itemRepository.findByServerId(SID)).thenReturn(List.of(
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
+        when(itemRepository.findByCombinationId(CID)).thenReturn(List.of(
                 goodItem("Item A"),
                 item("Item B", ItemStatus.COMPLETED, null, "note")));
 
-        assertThatThrownBy(() -> service.submit(SID, request(OWNER)))
+        assertThatThrownBy(() -> service.submit(CID, request(OWNER)))
                 .isInstanceOf(EvidenceRequiredException.class)
                 .hasMessageContaining("Attach evidence");
     }
 
     @Test
     void submitRejectedWhenAnItemHasNoNote() {
-        when(submissionRepository.findByServerId(SID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
-        when(itemRepository.findByServerId(SID)).thenReturn(List.of(
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
+        when(itemRepository.findByCombinationId(CID)).thenReturn(List.of(
                 goodItem("Item A"),
                 item("Item B", ItemStatus.COMPLETED, "/uploads/e.png", "   ")));
 
-        assertThatThrownBy(() -> service.submit(SID, request(OWNER)))
+        assertThatThrownBy(() -> service.submit(CID, request(OWNER)))
                 .isInstanceOf(EvidenceRequiredException.class)
                 .hasMessageContaining("Add a note");
     }
 
     @Test
     void submitRejectedWhenNoItemsExist() {
-        when(submissionRepository.findByServerId(SID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
-        when(itemRepository.findByServerId(SID)).thenReturn(List.of());
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
+        when(itemRepository.findByCombinationId(CID)).thenReturn(List.of());
 
-        assertThatThrownBy(() -> service.submit(SID, request(OWNER)))
+        assertThatThrownBy(() -> service.submit(CID, request(OWNER)))
                 .isInstanceOf(EvidenceRequiredException.class)
                 .hasMessageContaining("status selected");
     }
@@ -214,20 +220,20 @@ class PreCheckSubmissionServiceTest {
 
     @Test
     void withdrawByOwnerRevertsToDraftAndRemovesChain() {
-        when(submissionRepository.findByServerId(SID)).thenReturn(Optional.of(submission(SubmissionStatus.SUBMITTED, OWNER, OWNER)));
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.SUBMITTED, OWNER, OWNER)));
 
-        PreCheckSubmissionDto dto = service.withdraw(SID, OWNER);
+        PreCheckSubmissionDto dto = service.withdraw(CID, OWNER);
 
         assertThat(dto.getStatus()).isEqualTo(SubmissionStatus.DRAFT);
         assertThat(dto.getSubmittedBy()).isNull();
-        verify(signOffService).removeChainForWithdrawal(server, false);
+        verify(signOffService).removeChainForWithdrawal(combination, false);
     }
 
     @Test
     void withdrawRejectedWhenNotSubmitted() {
-        when(submissionRepository.findByServerId(SID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
 
-        assertThatThrownBy(() -> service.withdraw(SID, OWNER))
+        assertThatThrownBy(() -> service.withdraw(CID, OWNER))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("nothing to withdraw");
         verify(signOffService, never()).removeChainForWithdrawal(any(), anyBoolean());
@@ -235,9 +241,9 @@ class PreCheckSubmissionServiceTest {
 
     @Test
     void withdrawRejectedForNonOwnerNonAdmin() {
-        when(submissionRepository.findByServerId(SID)).thenReturn(Optional.of(submission(SubmissionStatus.SUBMITTED, OWNER, OWNER)));
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.SUBMITTED, OWNER, OWNER)));
 
-        assertThatThrownBy(() -> service.withdraw(SID, "intruder@cloudfuze.com"))
+        assertThatThrownBy(() -> service.withdraw(CID, "intruder@cloudfuze.com"))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
         verify(signOffService, never()).removeChainForWithdrawal(any(), anyBoolean());
@@ -245,9 +251,9 @@ class PreCheckSubmissionServiceTest {
 
     @Test
     void withdrawThrowsWhenNoSubmissionExists() {
-        when(submissionRepository.findByServerId(SID)).thenReturn(Optional.empty());
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.withdraw(SID, OWNER))
+        assertThatThrownBy(() -> service.withdraw(CID, OWNER))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
     }

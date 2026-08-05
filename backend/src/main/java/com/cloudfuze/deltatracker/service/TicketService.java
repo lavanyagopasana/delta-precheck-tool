@@ -13,7 +13,10 @@ import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
 import com.cloudfuze.deltatracker.repository.TicketRepository;
 import com.cloudfuze.deltatracker.repository.WorkspaceCombinationRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
@@ -22,10 +25,13 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @Transactional
 public class TicketService {
+
+    private static final Logger log = LoggerFactory.getLogger(TicketService.class);
 
     private final TicketRepository ticketRepository;
     private final WorkspaceCombinationRepository workspaceCombinationRepository;
@@ -84,10 +90,40 @@ public class TicketService {
         });
     }
 
-    public TicketDto resolve(Long id, String callerEmail, AppUserRole callerRole) {
-        Ticket ticket = requireManageable(id, callerEmail, callerRole);
-        ticket.setStatus(TicketStatus.RESOLVED);
-        return TicketDto.fromEntity(ticketRepository.save(ticket));
+    // Keeps an OPEN ticket in sync with Jira without anyone having to notice the change over there
+    // first. Runs every 15 minutes; only re-checks tickets that are still OPEN and actually came from
+    // Jira (jiraKey set) -- a manually logged plain URL has no ticket number to poll, and a ticket we
+    // already marked RESOLVED doesn't need re-checking. Deliberately NOT transactional at the method
+    // level (same reasoning as create()): each ticket's Jira fetch is a slow external call, and this
+    // runs one per open ticket in a loop -- wrapping the whole loop in one transaction would hold a
+    // DB connection open for the entire batch's worth of Jira round-trips. Each ticket's own
+    // read-modify-save is small enough that Spring Data's own per-call transactional proxy on
+    // findByStatusAndJiraKeyIsNotNull/save is sufficient without an explicit TransactionTemplate.
+    // One ticket's Jira error (e.g. it was deleted from Jira) is logged and skipped rather than
+    // aborting the rest of the batch.
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @Scheduled(fixedDelay = 15, initialDelay = 15, timeUnit = TimeUnit.MINUTES)
+    public void syncOpenTicketsFromJira() {
+        List<Ticket> openJiraTickets = ticketRepository.findByStatusAndJiraKeyIsNotNull(TicketStatus.OPEN);
+        if (openJiraTickets.isEmpty()) {
+            return;
+        }
+        int resolvedCount = 0;
+        for (Ticket ticket : openJiraTickets) {
+            try {
+                JiraIssueDto issue = jiraService.fetchIssue(ticket.getJiraKey());
+                if (issue.isResolved()) {
+                    ticket.setStatus(TicketStatus.RESOLVED);
+                    ticketRepository.save(ticket);
+                    resolvedCount++;
+                }
+            } catch (Exception e) {
+                log.warn("Could not sync ticket {} ({}) from Jira: {}", ticket.getId(), ticket.getJiraKey(), e.toString());
+            }
+        }
+        if (resolvedCount > 0) {
+            log.info("Jira sync: {} of {} open ticket(s) are now resolved.", resolvedCount, openJiraTickets.size());
+        }
     }
 
     // Edit an existing ticket. Same team-scoped access as viewing it -- if you can see it, you can
@@ -120,14 +156,10 @@ public class TicketService {
             // 404 (not 403) so a non-team member can't even confirm the ticket exists.
             throw new ResourceNotFoundException("Ticket not found: " + id);
         }
-        // Editing/resolving/deleting a ticket is limited to the person who logged it (createdBy holds
-        // their email) or an admin -- Migration Managers, Dev/QA Leads, and other engineers can view a
-        // ticket but not change it. callerEmail == null means auth is off, so everything is permitted.
-        if (callerEmail != null
-                && callerRole != AppUserRole.ADMIN
-                && !callerEmail.equalsIgnoreCase(ticket.getCreatedBy())) {
-            throw new ApiException(HttpStatus.FORBIDDEN,
-                    "Only the engineer who logged this ticket (or an admin) can change it.");
+        // Editing/deleting a ticket is admin-only -- even the engineer who logged it can no longer
+        // change it themselves. callerEmail == null means auth is off, so everything is permitted.
+        if (callerEmail != null && callerRole != AppUserRole.ADMIN) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "Only an admin can change this ticket.");
         }
         return ticket;
     }

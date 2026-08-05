@@ -63,8 +63,11 @@ export const SAMPLE_CSV_COLUMNS = [
   "combination",
 ];
 
-export const createServerForProject = (projectId, name) =>
-  client.post(`/projects/${projectId}/servers`, { name }).then((r) => r.data);
+export const createServerForProject = (projectId, name, productType) =>
+  client.post(`/projects/${projectId}/servers`, { name, productType: productType || null }).then((r) => r.data);
+
+export const updateServerProductType = (serverId, productType) =>
+  client.patch(`/servers/${serverId}`, { productType }).then((r) => r.data);
 
 // Server + combination are both chosen in the UI before the file is picked, so this CSV carries
 // neither a server_url nor a combination column -- just the four fields below.
@@ -124,8 +127,6 @@ export const getOpenTicketCount = () =>
 export const validateTicketUrl = (url) =>
   client.post("/tickets/validate-url", { url }).then((r) => r.data);
 export const createTicket = (payload) => client.post("/tickets", payload).then((r) => r.data);
-export const resolveTicket = (id) =>
-  client.patch(`/tickets/${id}/resolve`).then((r) => r.data);
 export const updateTicket = (id, payload) =>
   client.put(`/tickets/${id}`, payload).then((r) => r.data);
 export const removeTicket = (id) => client.delete(`/tickets/${id}`).then((r) => r.data);

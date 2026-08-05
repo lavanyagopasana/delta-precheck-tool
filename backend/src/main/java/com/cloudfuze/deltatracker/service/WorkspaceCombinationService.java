@@ -88,7 +88,8 @@ public class WorkspaceCombinationService {
     }
 
     private void seedPreCheckItems(WorkspaceCombination combination) {
-        for (String itemName : ServerService.PRE_CHECK_ITEMS) {
+        List<String> items = ServerService.preCheckItemsFor(combination.getServer().getProductType());
+        for (String itemName : items) {
             preCheckItemRepository.save(new PreCheckItem(combination, itemName));
         }
         preCheckSubmissionRepository.save(new PreCheckSubmission(combination));
@@ -154,14 +155,13 @@ public class WorkspaceCombinationService {
         if (project == null || !StringUtils.hasText(project.getMigrationManagerName())) {
             return;
         }
-        String label = server.getName() + " / " + combination.getName();
         int pairCount = pairCount(server.getId(), combination.getName());
         if (started) {
-            emailService.notifyMigrationManagerDeltaStarted(project.getName(), label, pairCount,
-                    combination.getDeltaStartedBy(), combination.getDeltaStartedAt(), project.getMigrationManagerName());
+            emailService.notifyMigrationManagerDeltaStarted(project.getName(), server.getName(), combination.getName(),
+                    pairCount, combination.getDeltaStartedBy(), combination.getDeltaStartedAt(), project.getMigrationManagerName());
         } else {
-            emailService.notifyMigrationManagerDeltaFinished(project.getName(), label, pairCount,
-                    combination.getDeltaFinishedBy(), combination.getDeltaFinishedAt(), project.getMigrationManagerName());
+            emailService.notifyMigrationManagerDeltaFinished(project.getName(), server.getName(), combination.getName(),
+                    pairCount, combination.getDeltaFinishedBy(), combination.getDeltaFinishedAt(), project.getMigrationManagerName());
         }
     }
 

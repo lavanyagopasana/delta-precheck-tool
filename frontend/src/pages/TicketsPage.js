@@ -5,7 +5,6 @@ import {
   createTicket,
   updateTicket,
   removeTicket,
-  resolveTicket,
   validateTicketUrl,
   getServers,
   getProjects,
@@ -16,7 +15,7 @@ import Modal from "../components/Modal";
 import { useToast } from "../components/Toast";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
-import { EditIcon, TrashIcon, CheckIcon, PlusIcon } from "../components/Icons";
+import { EditIcon, TrashIcon, PlusIcon } from "../components/Icons";
 import { useConfirm } from "../components/ConfirmDialog";
 import { apiErrorMessage } from "../utils/apiError";
 import { emailLocalPart } from "../utils/format";
@@ -308,39 +307,6 @@ function LogTicketForm({ projects, servers, onCreated }) {
   );
 }
 
-function ResolveControl({ ticket, onResolved }) {
-  const [saving, setSaving] = useState(false);
-  const showToast = useToast();
-
-  if (ticket.status !== "OPEN") return null;
-
-  const handleResolve = async (e) => {
-    e.stopPropagation();
-    setSaving(true);
-    try {
-      await resolveTicket(ticket.id);
-      showToast("Ticket resolved.", "success");
-      onResolved();
-    } catch (err) {
-      showToast(apiErrorMessage(err, "Failed to resolve ticket."), "error");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <button
-      className="btn icon-btn success"
-      title="Mark resolved"
-      aria-label="Mark resolved"
-      onClick={handleResolve}
-      disabled={saving}
-    >
-      <CheckIcon size={18} style={{ marginRight: 0 }} />
-    </button>
-  );
-}
-
 export default function TicketsPage() {
   const currentUser = useCurrentUser();
   const [tickets, setTickets] = useState([]);
@@ -425,13 +391,10 @@ export default function TicketsPage() {
       (projectFilter === "ALL" || String(t.projectId) === String(projectFilter))
   );
 
-  // Edit/resolve/delete are limited to the engineer who logged the ticket (createdBy is their email)
-  // or an admin. Mirrors the backend rule in TicketService.requireManageable; when auth is off,
+  // Edit/delete are admin-only -- not even the engineer who logged the ticket can change it
+  // themselves. Mirrors the backend rule in TicketService.requireManageable; when auth is off,
   // everything is permitted. This only hides the buttons -- the backend is the real gate.
-  const canManage = (t) =>
-    !AUTH_CONFIGURED ||
-    currentUser?.role === "ADMIN" ||
-    (!!currentUser?.email && !!t.createdBy && currentUser.email.toLowerCase() === t.createdBy.toLowerCase());
+  const canManage = () => !AUTH_CONFIGURED || currentUser?.role === "ADMIN";
 
   return (
     <div>
@@ -488,19 +451,6 @@ export default function TicketsPage() {
             label: "Ticket",
             render: (t) => (
               <div style={{ maxWidth: 360, margin: "0 auto" }}>
-                {t.jiraKey && (
-                  <div
-                    style={{
-                      fontSize: 10.5,
-                      fontWeight: 700,
-                      color: "var(--color-text-faint)",
-                      textTransform: "uppercase",
-                      letterSpacing: 0.4,
-                    }}
-                  >
-                    Ticket No.
-                  </div>
-                )}
                 <a
                   href={t.ticketUrl}
                   target="_blank"
@@ -511,7 +461,13 @@ export default function TicketsPage() {
                   {t.jiraKey || t.ticketUrl}
                 </a>
                 {t.jiraSummary && (
-                  <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2 }}>{t.jiraSummary}</div>
+                  <div
+                    className="text-clamp-2"
+                    title={t.jiraSummary}
+                    style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2, textAlign: "left" }}
+                  >
+                    {t.jiraSummary}
+                  </div>
                 )}
               </div>
             ),
@@ -520,9 +476,12 @@ export default function TicketsPage() {
             key: "createdBy",
             label: "Reported By",
             render: (t) => (
-              <div title={`Logged in tracker by ${t.createdBy}`}>
+              <div>
                 <div style={{ fontSize: 13, whiteSpace: "nowrap" }}>
                   {t.jiraReporter || emailLocalPart(t.createdBy)}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--color-text-muted)", whiteSpace: "nowrap" }}>
+                  {t.createdBy}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--color-text-faint)", whiteSpace: "nowrap" }}>
                   {new Date(t.jiraCreatedAt || t.createdAt).toLocaleString()}
@@ -545,32 +504,26 @@ export default function TicketsPage() {
             sortable: false,
             filterable: false,
             render: (t) =>
-              canManage(t) ? (
-                <div
-                  style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}
-                  onClick={(evt) => evt.stopPropagation()}
-                >
-                  <ResolveControl ticket={t} onResolved={reloadTickets} />
+              canManage() ? (
+                <div className="row-actions" onClick={(evt) => evt.stopPropagation()}>
                   <button
-                    className="btn icon-btn secondary"
+                    className="row-action"
                     title="Edit ticket"
                     aria-label="Edit ticket"
                     onClick={() => setEditing(t)}
                   >
-                    <EditIcon size={18} style={{ marginRight: 0 }} />
+                    <EditIcon size={17} style={{ marginRight: 0 }} />
                   </button>
                   <button
-                    className="btn icon-btn danger"
+                    className="row-action danger"
                     title="Delete ticket"
                     aria-label="Delete ticket"
                     onClick={() => handleDelete(t)}
                   >
-                    <TrashIcon size={18} style={{ marginRight: 0 }} />
+                    <TrashIcon size={17} style={{ marginRight: 0 }} />
                   </button>
                 </div>
-              ) : (
-                <span style={{ color: "var(--color-text-faint)", fontSize: 12 }}>—</span>
-              ),
+              ) : null,
           },
         ]}
       />

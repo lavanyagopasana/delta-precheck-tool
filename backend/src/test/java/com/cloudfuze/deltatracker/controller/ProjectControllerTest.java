@@ -4,6 +4,7 @@ import com.cloudfuze.deltatracker.config.SecurityConfig;
 import com.cloudfuze.deltatracker.entity.AppUserRole;
 import com.cloudfuze.deltatracker.service.AppUserService;
 import com.cloudfuze.deltatracker.service.ProjectService;
+import com.cloudfuze.deltatracker.service.ServerService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -42,6 +43,7 @@ class ProjectControllerTest {
 
     @MockBean private ProjectService projectService;
     @MockBean private AppUserService appUserService;
+    @MockBean private ServerService serverService;
 
     private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder asUser(
             org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder b) {
@@ -54,12 +56,12 @@ class ProjectControllerTest {
 
         mockMvc.perform(asUser(post("/api/projects"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\":\"\",\"productType\":\"MESSAGE\"}"))
+                        .content("{\"name\":\"\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(400))
                 .andExpect(jsonPath("$.error").value("Bad Request"))
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("name")));
-        verify(projectService, never()).create(any(), any(), any(), any());
+        verify(projectService, never()).create(any(), any(), any());
     }
 
     @Test
@@ -69,7 +71,7 @@ class ProjectControllerTest {
 
         mockMvc.perform(asUser(patch("/api/projects/5"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\":\"\",\"productType\":\"MESSAGE\"}"))
+                        .content("{\"name\":\"\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(400))
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("name")));

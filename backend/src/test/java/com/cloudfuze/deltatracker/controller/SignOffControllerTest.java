@@ -43,7 +43,7 @@ class SignOffControllerTest {
     @MockBean private SignOffService signOffService;
     @MockBean private AppUserService appUserService;
 
-    private static final String APPROVE_URL = "/api/servers/1/signoffs/DEV_LEAD/approve";
+    private static final String APPROVE_URL = "/api/combinations/1/signoffs/DEV_LEAD/approve";
 
     @Test
     void unauthenticatedRequestIs401() throws Exception {

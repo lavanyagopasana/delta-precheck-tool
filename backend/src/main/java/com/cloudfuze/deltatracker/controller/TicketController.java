@@ -57,12 +57,6 @@ public class TicketController {
         return ticketService.create(request);
     }
 
-    @PatchMapping("/{id}/resolve")
-    public TicketDto resolve(@PathVariable Long id, @AuthenticationPrincipal Jwt jwt) {
-        String email = JwtEmailUtil.extractEmail(jwt);
-        return ticketService.resolve(id, email, roleOf(email));
-    }
-
     @PutMapping("/{id}")
     public TicketDto update(@PathVariable Long id, @Valid @RequestBody TicketUpdateRequest request,
                             @AuthenticationPrincipal Jwt jwt) {

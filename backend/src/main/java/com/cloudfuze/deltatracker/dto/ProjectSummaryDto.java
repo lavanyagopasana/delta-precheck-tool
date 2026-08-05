@@ -1,6 +1,5 @@
 package com.cloudfuze.deltatracker.dto;
 
-import com.cloudfuze.deltatracker.entity.ProductType;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -13,7 +12,6 @@ public class ProjectSummaryDto {
 
     private Long id;
     private String name;
-    private ProductType productType;
     private int serverCount;
     private long totalPairs;
     private long readyServerCount;

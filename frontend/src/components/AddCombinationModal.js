@@ -1,29 +1,58 @@
 import React, { useRef, useState } from "react";
 import { importWorkspacePairsCsvForCombination } from "../api/client";
 import Modal from "./Modal";
+import { SwapIcon, UploadIcon, CheckIcon } from "./Icons";
 
-// Adding a combination is a one-shot popup (name + CSV file, side by side in one row) rather than
-// an always-visible draft row -- it only ever creates a *new* combination, so it closes itself as
+// Placeholder catalogs per product type -- swap these for the real per-type lists later.
+const OPTIONS_BY_PRODUCT_TYPE = {
+  CONTENT: ["Google Drive", "OneDrive", "Box", "Dropbox", "SharePoint"],
+  EMAIL: ["Gmail", "Outlook", "Yahoo Mail", "Exchange"],
+  MESSAGE: ["Slack", "Microsoft Teams", "Google Chat"],
+};
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Adding a combination is a one-shot popup (source/destination + CSV file) rather than an
+// always-visible draft row -- it only ever creates a *new* combination, so it closes itself as
 // soon as the add succeeds and the caller's reload picks it up as a normal persisted row. Picking a
 // file only stages it locally; nothing is sent to the backend until "Add Combination" is clicked, so
 // choosing the wrong file doesn't immediately create a combination. The CSV format is identical for
 // every combination, so "View CSV format"/"Download sample CSV" live once above the server list (see
-// ServerUrlsPanel's CsvFormatHelp) instead of being repeated here. Shared by ServerUrlsPanel (per
-// server, on the project page) and ServerDetailsPage (per server, on the combination detail page).
+// ServerUrlsPanel's CsvFormatHelp) instead of being repeated here. Source/destination options are
+// scoped to the server's product type -- set a product type on the server to enable these dropdowns.
 export default function AddCombinationModal({ server, open, onClose, onSaved }) {
-  const [combination, setCombination] = useState("");
+  const [source, setSource] = useState("");
+  const [destination, setDestination] = useState("");
   const [file, setFile] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState(null);
   const fileInputRef = useRef(null);
 
   if (!open) return null;
 
-  const combinationEntered = combination.trim().length > 0;
-  const canAdd = combinationEntered && !!file && !adding;
+  const options = OPTIONS_BY_PRODUCT_TYPE[server.productType] || [];
+  const combination = source && destination ? `${source} to ${destination}` : "";
+  const canAdd = !!source && !!destination && !!file && !adding;
+
+  const clearFile = () => {
+    setFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
   const handleFileChange = (e) => {
     setFile(e.target.files[0] || null);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const dropped = e.dataTransfer.files[0];
+    if (dropped) setFile(dropped);
   };
 
   const handleAdd = async () => {
@@ -31,7 +60,7 @@ export default function AddCombinationModal({ server, open, onClose, onSaved }) 
     setAdding(true);
     setError(null);
     try {
-      await importWorkspacePairsCsvForCombination(server.serverId, combination.trim(), file);
+      await importWorkspacePairsCsvForCombination(server.serverId, combination, file);
       onSaved();
       onClose();
     } catch (err) {
@@ -42,47 +71,127 @@ export default function AddCombinationModal({ server, open, onClose, onSaved }) 
   };
 
   const handleClose = () => {
-    setCombination("");
-    setFile(null);
+    setSource("");
+    setDestination("");
+    clearFile();
     setError(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    setDragOver(false);
     onClose();
   };
 
   return (
-    <Modal title={`Add a combination — ${server.serverName}`} onClose={handleClose} width={480} closeIcon>
+    <Modal title={`Add a combination — ${server.serverName}`} onClose={handleClose} width={520} closeIcon>
+      {!options.length && (
+        <div className="inline-hint" style={{ marginBottom: 16 }}>
+          Set a product type on this server to see source/destination options.
+        </div>
+      )}
+
       <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
         <div style={{ flex: 1 }}>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 6 }}>
-            Combination
+            Source
           </label>
-          <input
-            type="text"
-            placeholder="Combination (e.g. Google Drive -> OneDrive)"
-            value={combination}
-            onChange={(e) => setCombination(e.target.value)}
+          <select
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            disabled={!options.length}
             style={{ width: "100%" }}
-          />
+          >
+            <option value="">Select...</option>
+            {options.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
         </div>
-        <label className="btn secondary" style={{ cursor: "pointer", whiteSpace: "nowrap" }}>
-          Choose CSV
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".csv"
-            onChange={handleFileChange}
-            style={{ display: "none" }}
-          />
-        </label>
+
+        <SwapIcon
+          size={16}
+          style={{ marginRight: 0, marginBottom: 10, color: "var(--color-text-faint)", flexShrink: 0 }}
+        />
+
+        <div style={{ flex: 1 }}>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 6 }}>
+            Destination
+          </label>
+          <select
+            value={destination}
+            onChange={(e) => setDestination(e.target.value)}
+            disabled={!options.length}
+            style={{ width: "100%" }}
+          >
+            <option value="">Select...</option>
+            {options.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
-      {file && (
-        <div style={{ fontSize: 12.5, color: "var(--color-text-muted)", marginTop: 8 }}>
-          Selected file: <strong>{file.name}</strong>
+
+      <div style={{ marginTop: 20 }}>
+        <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 6 }}>
+          Migration Pairs CSV
+        </label>
+        <div
+          className={`precheck-dropzone-lg${dragOver ? " drag-over" : ""}`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}
+        >
+          {file ? (
+            <>
+              <CheckIcon size={18} style={{ marginRight: 0, color: "var(--color-green)" }} />
+              <div style={{ textAlign: "left" }}>
+                <div style={{ fontWeight: 600, fontSize: 13.5 }}>{file.name}</div>
+                <div style={{ fontSize: 11.5, color: "var(--color-text-faint)" }}>{formatFileSize(file.size)}</div>
+              </div>
+              <button
+                type="button"
+                className="modal-close-icon"
+                style={{
+                  width: 26,
+                  height: 26,
+                  marginLeft: "auto",
+                  color: "var(--color-red)",
+                  borderColor: "var(--color-red)",
+                  background: "var(--color-red-soft)",
+                }}
+                title="Remove file"
+                aria-label="Remove file"
+                onClick={clearFile}
+              >
+                &times;
+              </button>
+            </>
+          ) : (
+            <>
+              <UploadIcon size={20} style={{ marginRight: 0, color: "var(--color-text-faint)" }} />
+              <label style={{ cursor: "pointer" }}>
+                <span style={{ color: "var(--color-primary)", fontWeight: 600 }}>Upload CSV</span>
+                {" "}or drag and drop it here
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv"
+                  onChange={handleFileChange}
+                  style={{ display: "none" }}
+                />
+              </label>
+            </>
+          )}
         </div>
-      )}
-      {!combinationEntered && (
-        <div style={{ fontSize: 12, color: "var(--color-text-faint)", marginTop: 8 }}>
-          Enter a combination name and choose a CSV file to enable adding.
+      </div>
+
+      {!(source && destination) && options.length > 0 && (
+        <div style={{ fontSize: 12, color: "var(--color-text-faint)", marginTop: 10 }}>
+          Select a source, a destination, and upload a CSV file to enable adding.
         </div>
       )}
       {error && <div className="inline-hint" style={{ marginTop: 10 }}>{error}</div>}

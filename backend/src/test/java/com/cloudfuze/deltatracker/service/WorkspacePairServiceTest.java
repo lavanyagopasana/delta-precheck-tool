@@ -29,6 +29,11 @@ import static org.mockito.Mockito.when;
  * as a "Row N: <field> exceeds maximum length" entry in errors[] and skipped, while every other row
  * in the same file still imports -- instead of a DataIntegrityViolationException aborting the whole
  * import at the first oversized value.
+ *
+ * <p>A pair's duplicate identity includes its combination now (see
+ * WorkspaceCombinationService.getOrCreate, called from processRow), so the repository lookup takes
+ * combination as a 5th key column -- {@code any()} (not {@code anyString()}) is used where a row has
+ * no combination value at all, since Mockito's {@code anyString()} doesn't match a null argument.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -38,7 +43,7 @@ class WorkspacePairServiceTest {
 
     @Mock private WorkspacePairRepository workspacePairRepository;
     @Mock private ServerRepository serverRepository;
-    @Mock private ServerService serverService;
+    @Mock private WorkspaceCombinationService workspaceCombinationService;
     @Mock private ProjectRepository projectRepository;
 
     private WorkspacePairService service;
@@ -46,14 +51,14 @@ class WorkspacePairServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new WorkspacePairService(workspacePairRepository, serverRepository, serverService, projectRepository);
+        service = new WorkspacePairService(workspacePairRepository, serverRepository, workspaceCombinationService, projectRepository);
         server = new Server("SRV-1");
         server.setId(SID);
 
         when(serverRepository.findById(SID)).thenReturn(Optional.of(server));
         when(workspacePairRepository
-                .findByServerIdAndSourceEmailAndSourcePathAndDestinationEmailAndDestinationPath(
-                        anyLong(), anyString(), anyString(), anyString(), anyString()))
+                .findByServerIdAndSourceEmailAndSourcePathAndDestinationEmailAndDestinationPathAndCombination(
+                        anyLong(), anyString(), anyString(), anyString(), anyString(), any(String.class)))
                 .thenReturn(Optional.empty());
         when(workspacePairRepository.save(any(WorkspacePair.class))).thenAnswer(inv -> inv.getArgument(0));
         when(workspacePairRepository.countByServerId(SID)).thenReturn(1L);
@@ -92,8 +97,8 @@ class WorkspacePairServiceTest {
         existing.setDestinationPath("/dst");
         existing.setCombination("Gmail->Outlook");
         when(workspacePairRepository
-                .findByServerIdAndSourceEmailAndSourcePathAndDestinationEmailAndDestinationPath(
-                        SID, "dup@x.com", "/ok", "dst@x.com", "/dst"))
+                .findByServerIdAndSourceEmailAndSourcePathAndDestinationEmailAndDestinationPathAndCombination(
+                        SID, "dup@x.com", "/ok", "dst@x.com", "/dst", "Gmail->Outlook"))
                 .thenReturn(Optional.of(existing));
 
         String csv = "source_email,source_path,destination_email,destination_path,combination\n"
@@ -110,6 +115,6 @@ class WorkspacePairServiceTest {
         assertThat(result.getErrors()).isEmpty();
         assertThat(result.getDuplicates()).hasSize(1);
         assertThat(result.getDuplicates().get(0))
-                .isEqualTo("Row 2: dup@x.com \u2192 dst@x.com already exists (skipped)");
+                .isEqualTo("Row 2: dup@x.com → dst@x.com already exists (skipped)");
     }
 }

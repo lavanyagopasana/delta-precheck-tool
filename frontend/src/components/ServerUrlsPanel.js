@@ -2,9 +2,9 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   createServerForProject,
+  updateServerProductType,
   importWorkspacePairsCsvForCombination,
   deletePairsByCombination,
-  updateProjectDetails,
   SAMPLE_CSV_COLUMNS_COMBINATION,
 } from "../api/client";
 import { useToast } from "./Toast";
@@ -12,8 +12,8 @@ import { useConfirm } from "./ConfirmDialog";
 import Modal from "./Modal";
 import CsvImportPanel from "./CsvImportPanel";
 import AddCombinationModal from "./AddCombinationModal";
-import { DownloadIcon, UploadIcon, TrashIcon, PlusIcon, SwapIcon, ServerIcon } from "./Icons";
-import { downloadSampleCsv } from "../utils/csv";
+import { DownloadIcon, UploadIcon, TrashIcon, PlusIcon, SwapIcon, ServerIcon, EditIcon } from "./Icons";
+import { downloadSampleCsv, downloadCsv } from "../utils/csv";
 import { groupByCombination } from "../utils/pairs";
 
 const PRODUCT_TYPE_OPTIONS = [
@@ -29,8 +29,16 @@ const SAMPLE_ROW_COMBINATION = [
   "/sites/migrated/jane.doe",
 ];
 
+function slugFor(combination) {
+  return combination.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
 function sampleFileNameFor(combination) {
-  return `${combination.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-sample.csv`;
+  return `${slugFor(combination)}-sample.csv`;
+}
+
+function exportFileNameFor(combination) {
+  return `${slugFor(combination)}-export.csv`;
 }
 
 const PRODUCT_TYPE_LABELS = PRODUCT_TYPE_OPTIONS.reduce((acc, opt) => ({ ...acc, [opt.value]: opt.label }), {});
@@ -40,33 +48,12 @@ const PRODUCT_TYPE_LABELS = PRODUCT_TYPE_OPTIONS.reduce((acc, opt) => ({ ...acc,
 // form by default -- open/onClose are fully controlled by the parent.
 function AddServerModal({ project, canManage, onSaved, open, onClose }) {
   const showToast = useToast();
-  const [productType, setProductType] = useState(project.productType || "");
-  const [savingProductType, setSavingProductType] = useState(false);
+  const [productType, setProductType] = useState("");
   const [newServerUrl, setNewServerUrl] = useState("");
   const [addingServer, setAddingServer] = useState(false);
   const [serverError, setServerError] = useState(null);
 
   if (!canManage || !open) return null;
-
-  const handleProductTypeChange = async (value) => {
-    const previous = productType;
-    setProductType(value);
-    setSavingProductType(true);
-    try {
-      await updateProjectDetails(project.id, {
-        name: project.name,
-        productType: value,
-        migrationManagerName: project.migrationManagerName || null,
-      });
-      showToast("Product type updated.");
-      onSaved();
-    } catch (err) {
-      showToast(err.response?.data?.message || "Failed to update product type.", "error");
-      setProductType(previous);
-    } finally {
-      setSavingProductType(false);
-    }
-  };
 
   const handleAddServer = async () => {
     const trimmed = newServerUrl.trim();
@@ -74,9 +61,10 @@ function AddServerModal({ project, canManage, onSaved, open, onClose }) {
     setAddingServer(true);
     setServerError(null);
     try {
-      await createServerForProject(project.id, trimmed);
+      await createServerForProject(project.id, trimmed, productType);
       showToast(`Server "${trimmed}" added.`);
       setNewServerUrl("");
+      setProductType("");
       onSaved();
       onClose();
     } catch (err) {
@@ -94,8 +82,7 @@ function AddServerModal({ project, canManage, onSaved, open, onClose }) {
         </label>
         <select
           value={productType}
-          onChange={(e) => handleProductTypeChange(e.target.value)}
-          disabled={savingProductType}
+          onChange={(e) => setProductType(e.target.value)}
           style={{ width: "100%" }}
         >
           <option value="">Select...</option>
@@ -174,7 +161,7 @@ function CsvFormatHelp() {
 // A combination row only exists once its CSV is actually uploaded -- ServerCard derives it fresh
 // from the server's real data on every render (see groupByCombination below), so it keeps showing
 // up correctly after a reload.
-function CombinationRow({ server, row, onSaved }) {
+function CombinationRow({ server, row, isAdmin, onSaved }) {
   const navigate = useNavigate();
   const showToast = useToast();
   const confirm = useConfirm();
@@ -188,8 +175,11 @@ function CombinationRow({ server, row, onSaved }) {
     return result;
   };
 
-  const handleDownloadSample = () => {
-    downloadSampleCsv(SAMPLE_CSV_COLUMNS_COMBINATION, SAMPLE_ROW_COMBINATION, sampleFileNameFor(row.combination));
+  // Exports the migration pairs actually uploaded under this combination -- not the sample
+  // template (that's still available above via "Download sample CSV").
+  const handleDownload = () => {
+    const rows = (row.pairs || []).map((p) => [p.sourceEmail, p.sourcePath, p.destinationEmail, p.destinationPath]);
+    downloadCsv(SAMPLE_CSV_COLUMNS_COMBINATION, rows, exportFileNameFor(row.combination));
   };
 
   const handleDelete = async () => {
@@ -221,7 +211,7 @@ function CombinationRow({ server, row, onSaved }) {
           title={`View ${row.combination} migration pairs`}
         >
           <SwapIcon style={{ marginRight: 0, color: "var(--color-text-muted)" }} />
-          <strong style={{ fontSize: 13.5 }}>{row.combination}</strong>
+          <span style={{ fontSize: 13.5, fontWeight: 600 }}>{row.combination}</span>
           {row.pairCount != null && (
             <span className="badge gray">
               {row.pairCount} pair{row.pairCount === 1 ? "" : "s"}
@@ -229,7 +219,7 @@ function CombinationRow({ server, row, onSaved }) {
           )}
         </div>
         <div style={{ display: "flex", gap: 6 }}>
-          <button className="btn icon-btn secondary" title="Download sample CSV" aria-label="Download sample CSV" onClick={handleDownloadSample}>
+          <button className="btn icon-btn secondary" title="Download CSV" aria-label="Download CSV" onClick={handleDownload}>
             <DownloadIcon style={{ marginRight: 0 }} />
           </button>
           <button
@@ -240,15 +230,17 @@ function CombinationRow({ server, row, onSaved }) {
           >
             <UploadIcon style={{ marginRight: 0 }} />
           </button>
-          <button
-            className="btn icon-btn danger"
-            title="Delete combination"
-            aria-label="Delete combination"
-            onClick={handleDelete}
-            disabled={deleting}
-          >
-            <TrashIcon style={{ marginRight: 0 }} />
-          </button>
+          {isAdmin && (
+            <button
+              className="btn icon-btn danger"
+              title="Delete combination"
+              aria-label="Delete combination"
+              onClick={handleDelete}
+              disabled={deleting}
+            >
+              <TrashIcon style={{ marginRight: 0 }} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -268,8 +260,78 @@ function CombinationRow({ server, row, onSaved }) {
   );
 }
 
-function ServerCard({ server, productType, onSaved }) {
-  const navigate = useNavigate();
+// Product type is chosen once, when the server is added -- this badge is a static label for
+// everyone. Only an admin gets a pencil icon to correct it afterward (e.g. it was set wrong, or
+// wasn't set at all before this field existed).
+function ServerProductTypeBadge({ server, isAdmin, onSaved }) {
+  const showToast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const handleChange = async (e) => {
+    const value = e.target.value;
+    setSaving(true);
+    try {
+      await updateServerProductType(server.serverId, value || null);
+      onSaved();
+      setEditing(false);
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to update product type.", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <select
+        autoFocus
+        value={server.productType || ""}
+        disabled={saving}
+        onChange={handleChange}
+        onBlur={() => setEditing(false)}
+        onClick={(e) => e.stopPropagation()}
+        style={{ fontSize: 12 }}
+      >
+        <option value="">Select...</option>
+        {PRODUCT_TYPE_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  if (!isAdmin) {
+    return server.productType ? (
+      <span className="badge blue">{PRODUCT_TYPE_LABELS[server.productType] || server.productType}</span>
+    ) : null;
+  }
+
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <span className={`badge ${server.productType ? "blue" : "gray"}`}>
+        {server.productType ? PRODUCT_TYPE_LABELS[server.productType] || server.productType : "No product type"}
+      </span>
+      <button
+        type="button"
+        className="btn icon-btn secondary"
+        title="Edit product type"
+        aria-label="Edit product type"
+        style={{ padding: 4, width: 22, height: 22 }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setEditing(true);
+        }}
+      >
+        <EditIcon size={12} style={{ marginRight: 0 }} />
+      </button>
+    </span>
+  );
+}
+
+function ServerCard({ server, isAdmin, onSaved }) {
   const [showAddCombination, setShowAddCombination] = useState(false);
 
   // The combinations that actually have uploaded pairs -- derived fresh from the server's real
@@ -279,14 +341,10 @@ function ServerCard({ server, productType, onSaved }) {
   return (
     <div className="subpanel">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
-        <div
-          style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}
-          onClick={() => navigate(`/servers/${server.serverId}`)}
-          title={`View ${server.serverName}`}
-        >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <ServerIcon style={{ marginRight: 0, color: "var(--color-primary)" }} />
-          <strong style={{ fontSize: 14 }}>{server.serverName}</strong>
-          {productType && <span className="badge gray">{PRODUCT_TYPE_LABELS[productType] || productType}</span>}
+          <span style={{ fontSize: 14, fontWeight: 600 }}>{server.serverName}</span>
+          <ServerProductTypeBadge server={server} isAdmin={isAdmin} onSaved={onSaved} />
         </div>
         <button
           type="button"
@@ -304,7 +362,8 @@ function ServerCard({ server, productType, onSaved }) {
         <CombinationRow
           key={`persisted-${g.combination}`}
           server={server}
-          row={{ combination: g.combination, pairCount: g.pairs.length }}
+          row={{ combination: g.combination, pairCount: g.pairs.length, pairs: g.pairs }}
+          isAdmin={isAdmin}
           onSaved={onSaved}
         />
       ))}
@@ -319,14 +378,17 @@ function ServerCard({ server, productType, onSaved }) {
   );
 }
 
-export default function ServerUrlsPanel({ project, canManage, onSaved, showAddServer, onCloseAddServer }) {
+export default function ServerUrlsPanel({ project, canManage, isAdmin, onSaved, showAddServer, onCloseAddServer }) {
   const [filterText, setFilterText] = useState("");
+  const [productTypeFilter, setProductTypeFilter] = useState("ALL");
 
   if (!canManage) return null;
 
   const servers = project.servers || [];
-  const filteredServers = servers.filter((s) =>
-    s.serverName.toLowerCase().includes(filterText.trim().toLowerCase())
+  const filteredServers = servers.filter(
+    (s) =>
+      s.serverName.toLowerCase().includes(filterText.trim().toLowerCase()) &&
+      (productTypeFilter === "ALL" || s.productType === productTypeFilter)
   );
 
   return (
@@ -340,13 +402,27 @@ export default function ServerUrlsPanel({ project, canManage, onSaved, showAddSe
             {!!servers.length && <span className="badge gray">{servers.length}</span>}
           </h3>
           {!!servers.length && (
-            <input
-              type="text"
-              placeholder="Filter server URLs..."
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
-              style={{ width: 260 }}
-            />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <select
+                value={productTypeFilter}
+                onChange={(e) => setProductTypeFilter(e.target.value)}
+                style={{ minWidth: 150 }}
+              >
+                <option value="ALL">All product types</option>
+                {PRODUCT_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="text"
+                placeholder="Filter server URLs..."
+                value={filterText}
+                onChange={(e) => setFilterText(e.target.value)}
+                style={{ width: 260 }}
+              />
+            </div>
           )}
         </div>
 
@@ -355,14 +431,14 @@ export default function ServerUrlsPanel({ project, canManage, onSaved, showAddSe
         {!servers.length ? (
           <p className="empty-state">No servers yet. Use "Add Server" above to get started.</p>
         ) : !filteredServers.length ? (
-          <p className="empty-state">No servers match "{filterText}".</p>
+          <p className="empty-state">No servers match the current filters.</p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 18 }}>
             {filteredServers.map((server) => (
               <ServerCard
                 key={server.serverId}
                 server={server}
-                productType={project.productType}
+                isAdmin={isAdmin}
                 onSaved={onSaved}
               />
             ))}

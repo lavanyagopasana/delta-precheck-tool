@@ -10,7 +10,6 @@ import com.cloudfuze.deltatracker.entity.PairStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckItem;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
 import com.cloudfuze.deltatracker.entity.WorkspacePair;
-import com.cloudfuze.deltatracker.entity.ProductType;
 import com.cloudfuze.deltatracker.entity.Project;
 import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.entity.SignOff;
@@ -181,7 +180,7 @@ public class ProjectService {
     // selection needed. Anyone else (an engineer, an admin) must pick one from the roster.
     // A Migration Engineer creating a project is likewise automatically one of its assigned
     // engineers -- they're clearly going to be working on it, no separate assignment step needed.
-    public ProjectSummaryDto create(String name, ProductType productType, String createdBy,
+    public ProjectSummaryDto create(String name, String createdBy,
                                      String migrationManagerName) {
         String trimmed = name.trim();
         // Project names are globally unique (case-insensitive), not just per product type -- this
@@ -197,7 +196,7 @@ public class ProjectService {
         String effectiveManager = creatorIsManager ? createdBy : blankToNull(migrationManagerName);
         Set<String> initialEngineers = creatorIsEngineer ? new LinkedHashSet<>(Set.of(createdBy)) : null;
 
-        Project project = new Project(trimmed, productType, createdBy, effectiveManager, initialEngineers);
+        Project project = new Project(trimmed, createdBy, effectiveManager, initialEngineers);
         Project saved = projectRepository.save(project);
         return buildSummary(saved, serverRepository.findAll());
     }
@@ -276,7 +275,6 @@ public class ProjectService {
         }
 
         project.setName(trimmedName);
-        project.setProductType(request.getProductType());
         Project saved = projectRepository.save(project);
         return buildSummary(saved, serverRepository.findAll());
     }
@@ -414,7 +412,6 @@ public class ProjectService {
     private static void copySummary(ProjectSummaryDto from, ProjectSummaryDto to) {
         to.setId(from.getId());
         to.setName(from.getName());
-        to.setProductType(from.getProductType());
         to.setServerCount(from.getServerCount());
         to.setTotalPairs(from.getTotalPairs());
         to.setReadyServerCount(from.getReadyServerCount());
@@ -515,7 +512,6 @@ public class ProjectService {
         ProjectSummaryDto dto = new ProjectSummaryDto();
         dto.setId(project.getId());
         dto.setName(project.getName());
-        dto.setProductType(project.getProductType());
         dto.setServerCount(servers.size());
         dto.setTotalPairs(totalPairs);
         dto.setReadyServerCount(readyServers);

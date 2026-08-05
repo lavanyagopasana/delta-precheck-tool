@@ -23,10 +23,6 @@ public class Project {
     @Column(nullable = false, unique = true)
     private String name;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "product_type")
-    private ProductType productType;
-
     @Column(name = "created_by")
     private String createdBy;
 
@@ -43,10 +39,9 @@ public class Project {
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 
-    public Project(String name, ProductType productType, String createdBy, String migrationManagerName,
+    public Project(String name, String createdBy, String migrationManagerName,
                     Set<String> engineerEmails) {
         this.name = name;
-        this.productType = productType;
         this.createdBy = createdBy;
         this.migrationManagerName = migrationManagerName;
         if (engineerEmails != null) {
