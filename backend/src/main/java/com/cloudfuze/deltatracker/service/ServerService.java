@@ -14,6 +14,7 @@ import com.cloudfuze.deltatracker.entity.WorkspacePair;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
 import org.springframework.http.HttpStatus;
+import com.cloudfuze.deltatracker.repository.DeltaCycleRepository;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
 import com.cloudfuze.deltatracker.repository.ProjectRepository;
 import com.cloudfuze.deltatracker.repository.ServerRepository;
@@ -22,6 +23,7 @@ import com.cloudfuze.deltatracker.repository.WorkspacePairRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -33,13 +35,31 @@ public class ServerService {
     public static final String DELTA_TYPE_ITEM = "Delta Type";
     // Only required/counted when Delta Type's own status is PRE_DELTA -- see
     // PreCheckSubmissionService.isPreDeltaMigrationRequired.
-    public static final String PRE_DELTA_MIGRATION_ITEM = "Pre Delta Migration";
+    public static final String PRE_DELTA_MIGRATION_ITEM = "Previous Delta Migration";
+
+    // Renamed from "Pre Delta Migration" on 2026-08-06. The item NAME is the matching key (there is no
+    // stable item type/code column), and it's persisted per row, so every checklist seeded before the
+    // rename still carries the old string. Matching must accept both or the conditional-requirement
+    // rule silently stops applying to existing combinations -- the item would become permanently
+    // mandatory on a Final delta, with nothing in the UI explaining why. New rows get the new name.
+    private static final String LEGACY_PRE_DELTA_MIGRATION_ITEM = "Pre Delta Migration";
+
+    /** True for the Previous Delta Migration item under either its current or pre-rename name. */
+    public static boolean isPreDeltaMigrationItem(String itemName) {
+        return PRE_DELTA_MIGRATION_ITEM.equals(itemName) || LEGACY_PRE_DELTA_MIGRATION_ITEM.equals(itemName);
+    }
 
     // The Content checklist -- also still the default/fallback list (used for a combination whose
     // server has no product type set, e.g. one created before this field existed).
+    // Delta Type is deliberately first: it decides whether PRE_DELTA_MIGRATION_ITEM is required at all
+    // (see PreCheckSubmissionService.isPreDeltaMigrationRequired), so answering anything else before it
+    // means a conditional item appearing partway down a form the engineer has already started filling.
+    // This list is also what orders an existing checklist on read (PreCheckSubmissionService sorts by
+    // it rather than by a stored per-row column), so reordering here reorders combinations already in
+    // flight -- intended, since the order is presentation, not data.
     public static final List<String> PRE_CHECK_ITEMS = List.of(
-            "OneTime Migration",
             DELTA_TYPE_ITEM,
+            "OneTime Migration",
             PRE_DELTA_MIGRATION_ITEM,
             "Data Verified",
             "Permissions Verified",
@@ -48,14 +68,31 @@ public class ServerService {
             "Drive changes"
     );
 
-    // Email and Message checklists are placeholders reusing the Content list for now -- swap these
-    // for the real per-type item sets once they're provided. Keeping them non-empty (rather than
-    // List.of()) matters: an empty checklist can never be submitted (PreCheckSubmissionService.submit
-    // requires at least one item), so a genuinely empty list would silently lock out every Email/
-    // Message combination from ever completing its pre-check.
+    /**
+     * The Email checklist, confirmed with the team on 2026-08-06. Deliberately shorter than Content:
+     * an email migration has no folder permissions, no hyperlinks and no local drive to reconcile, so
+     * Permissions Verified / Hyperlinks Verified / Drive changes don't apply. There is also no
+     * "Previous Delta Migration" item -- that one exists to record the prior delta's data movement for
+     * Content, and Email tracks the same thing through One Time Migration.
+     *
+     * <p>Delta Type stays first for the same reason it leads the Content list: it settles whether this
+     * cycle is a pre-delta or the final one. Every item except Delta Type requires a status, an evidence
+     * file and a note, Email included.
+     */
+    public static final List<String> EMAIL_PRE_CHECK_ITEMS = List.of(
+            DELTA_TYPE_ITEM,
+            "OneTime Migration",
+            "Data Verified",
+            "Workspace Status Updated in DB"
+    );
+
+    // Message is still a placeholder reusing the Content list -- awaiting the real item set. Keeping it
+    // non-empty (rather than List.of()) matters: an empty checklist can never be submitted
+    // (PreCheckSubmissionService.submit requires at least one item), so a genuinely empty list would
+    // silently lock every Message combination out of ever completing its pre-check.
     private static final Map<ProductType, List<String>> PRE_CHECK_ITEMS_BY_PRODUCT_TYPE = Map.of(
             ProductType.CONTENT, PRE_CHECK_ITEMS,
-            ProductType.EMAIL, PRE_CHECK_ITEMS,
+            ProductType.EMAIL, EMAIL_PRE_CHECK_ITEMS,
             ProductType.MESSAGE, PRE_CHECK_ITEMS
     );
 
@@ -75,19 +112,28 @@ public class ServerService {
     private final PreCheckSubmissionRepository preCheckSubmissionRepository;
     private final TicketService ticketService;
     private final ProjectRepository projectRepository;
+    private final DeltaCycleRepository deltaCycleRepository;
+    private final AppUserService appUserService;
+    private final ServerPurgeService serverPurgeService;
 
     public ServerService(ServerRepository serverRepository,
                           WorkspacePairRepository workspacePairRepository,
                           WorkspaceCombinationRepository workspaceCombinationRepository,
                           PreCheckSubmissionRepository preCheckSubmissionRepository,
                           TicketService ticketService,
-                          ProjectRepository projectRepository) {
+                          ProjectRepository projectRepository,
+                          DeltaCycleRepository deltaCycleRepository,
+                          AppUserService appUserService,
+                          ServerPurgeService serverPurgeService) {
         this.serverRepository = serverRepository;
         this.workspacePairRepository = workspacePairRepository;
         this.workspaceCombinationRepository = workspaceCombinationRepository;
         this.preCheckSubmissionRepository = preCheckSubmissionRepository;
         this.ticketService = ticketService;
         this.projectRepository = projectRepository;
+        this.deltaCycleRepository = deltaCycleRepository;
+        this.appUserService = appUserService;
+        this.serverPurgeService = serverPurgeService;
     }
 
     public Server findOrThrow(Long id) {
@@ -159,6 +205,63 @@ public class ServerService {
         serverRepository.save(server);
     }
 
+    /**
+     * True when every combination under this server has completed its Final Delta -- i.e. there's no
+     * migration work left and the source server can be turned off.
+     *
+     * <p>Keyed off {@code finalDeltaCompletedAt}, deliberately NOT {@code deltaFinishedAt}: the latter
+     * is stamped by every intermediate pre-delta too, so using it would call a server ready after its
+     * first of several pre-deltas finished.
+     *
+     * <p>A server with no combinations is never ready -- otherwise a freshly created, empty server
+     * would report itself decommissionable.
+     */
+    public boolean isDecommissionReady(Server server) {
+        return allFinalDeltasComplete(workspaceCombinationRepository.findByServerId(server.getId()));
+    }
+
+    // The single definition of "no migration work left", shared with buildReadiness (which already has
+    // the combinations loaded and shouldn't re-query for them) so the two can't drift apart.
+    private static boolean allFinalDeltasComplete(List<WorkspaceCombination> combinations) {
+        return !combinations.isEmpty() && combinations.stream().allMatch(WorkspaceCombination::isFinalDeltaComplete);
+    }
+
+    /**
+     * Decommissioning ERASES the server. Every combination, workspace pair, pre-check item (and its
+     * uploaded evidence file on disk), sign-off, Delta cycle and ticket is deleted, then the Server row
+     * itself -- the server disappears from the project entirely. This is irreversible by design
+     * (product decision, 2026-08-06): a decommissioned server is finished work that shouldn't keep
+     * accumulating in the tool. There is deliberately no undo, which is why the previous reinstate()
+     * was removed rather than kept alongside -- with the rows gone there would be nothing to restore.
+     *
+     * Note this destroys the sign-off/evidence audit trail for the server. That was accepted knowingly.
+     * If an external record is ever needed, it has to be exported BEFORE this runs.
+     *
+     * ADMIN-only, enforced both here and in SecurityConfig -- the same defense-in-depth split
+     * AppUserService.requireAdmin uses for the allowlist, so the rule survives a routing change. The
+     * all-Final-Deltas-complete guard is what stops this being a way to delete in-flight work.
+     */
+    public void decommission(Long serverId, String callerEmail) {
+        requireAdmin(callerEmail);
+        Server server = findOrThrow(serverId);
+
+        if (!isDecommissionReady(server)) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Every combination on this server must complete its Final Delta before it can be decommissioned.");
+        }
+
+        serverPurgeService.purge(server);
+    }
+
+    // Not AppUserService.requireAdmin: that one's message is specific to managing app access, and this
+    // isn't that. A null email means auth isn't configured, which the whole app deliberately treats as
+    // open (see SecurityConfig.authConfigured).
+    private void requireAdmin(String callerEmail) {
+        if (callerEmail != null && !appUserService.isAdmin(callerEmail)) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "Only an admin can decommission a server.");
+        }
+    }
+
     public ServerReadinessDto assignProject(Long serverId, Long projectId) {
         Server server = findOrThrow(serverId);
         if (projectId == null) {
@@ -222,6 +325,11 @@ public class ServerService {
         Map<Long, PreCheckSubmission> submissionByCombination = preCheckSubmissionRepository
                 .findByCombinationIdIn(combinationIds).stream()
                 .collect(Collectors.toMap(s -> s.getCombination().getId(), s -> s));
+        // One query for every combination's cycle count rather than one per combination -- this method
+        // runs once per server in listReadiness/listReadinessForProject, so a per-combination query here
+        // would be an N*M round trip on the projects page.
+        Map<Long, Long> cycleCountByCombination = deltaCycleRepository.findByCombinationIdIn(combinationIds).stream()
+                .collect(Collectors.groupingBy(cycle -> cycle.getCombinationId(), Collectors.counting()));
 
         dto.setCombinations(combinations.stream()
                 .map(c -> {
@@ -234,9 +342,28 @@ public class ServerService {
                     summary.setSubmissionStatus(java.util.Optional.ofNullable(submissionByCombination.get(c.getId()))
                             .map(PreCheckSubmission::getStatus)
                             .orElse(SubmissionStatus.NOT_STARTED));
+                    summary.setCurrentCycleNumber(c.getCurrentCycleNumber());
+                    summary.setCurrentDeltaType(c.getCurrentDeltaType());
+                    summary.setCurrentDeltaLabel(c.getCurrentDeltaType() == null
+                            ? null
+                            : c.getCurrentDeltaType().label(c.getCurrentCycleNumber()));
+                    summary.setCompletedCycleCount(cycleCountByCombination.getOrDefault(c.getId(), 0L));
+                    summary.setFinalDeltaComplete(c.isFinalDeltaComplete());
                     return summary;
                 })
                 .toList());
+
+        int finalDeltaComplete = (int) combinations.stream().filter(WorkspaceCombination::isFinalDeltaComplete).count();
+        dto.setFinalDeltaCompleteCount(finalDeltaComplete);
+        dto.setTotalDeltaCycleCount(cycleCountByCombination.values().stream().mapToLong(Long::longValue).sum());
+        dto.setDecommissionedAt(server.getDecommissionedAt());
+        dto.setDecommissionedBy(server.getDecommissionedBy());
+        dto.setDecommissioned(server.isDecommissioned());
+        // Deliberately does NOT exclude servers whose decommissioned flag is already set. Decommissioning
+        // erases the server now, so a live row can only carry that flag if it was marked under the
+        // previous marker-only behaviour -- excluding those would leave them permanently stuck: flagged,
+        // still present, and with no action available to actually clear them out.
+        dto.setDecommissionReady(allFinalDeltasComplete(combinations));
 
         if (includePairs) {
             dto.setPairs(pairs.stream().map(WorkspacePairDto::fromEntity).toList());

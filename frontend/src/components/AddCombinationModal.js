@@ -3,10 +3,15 @@ import { importWorkspacePairsCsvForCombination } from "../api/client";
 import Modal from "./Modal";
 import { SwapIcon, UploadIcon, CheckIcon } from "./Icons";
 
-// Placeholder catalogs per product type -- swap these for the real per-type lists later.
+// One catalog per product type, feeding both the Source and Destination dropdowns (the same platform
+// can be either side, e.g. Outlook to Outlook across tenants).
+//
+// EMAIL is confirmed as Gmail and Outlook only (2026-08-06) -- Yahoo Mail and Exchange were removed
+// because they aren't supported. CONTENT and MESSAGE are still placeholder lists awaiting the real
+// supported-platform sets.
 const OPTIONS_BY_PRODUCT_TYPE = {
   CONTENT: ["Google Drive", "OneDrive", "Box", "Dropbox", "SharePoint"],
-  EMAIL: ["Gmail", "Outlook", "Yahoo Mail", "Exchange"],
+  EMAIL: ["Gmail", "Outlook"],
   MESSAGE: ["Slack", "Microsoft Teams", "Google Chat"],
 };
 
@@ -20,9 +25,9 @@ function formatFileSize(bytes) {
 // always-visible draft row -- it only ever creates a *new* combination, so it closes itself as
 // soon as the add succeeds and the caller's reload picks it up as a normal persisted row. Picking a
 // file only stages it locally; nothing is sent to the backend until "Add Combination" is clicked, so
-// choosing the wrong file doesn't immediately create a combination. The CSV format is identical for
-// every combination, so "View CSV format"/"Download sample CSV" live once above the server list (see
-// ServerUrlsPanel's CsvFormatHelp) instead of being repeated here. Source/destination options are
+// choosing the wrong file doesn't immediately create a combination. The CSV format differs per product
+// type, so it isn't restated here -- the server card's "CSV format" link opens ServerUrlsPanel's
+// CsvFormatModal for this server's own shape, sample download included. Source/destination options are
 // scoped to the server's product type -- set a product type on the server to enable these dropdowns.
 export default function AddCombinationModal({ server, open, onClose, onSaved }) {
   const [source, setSource] = useState("");

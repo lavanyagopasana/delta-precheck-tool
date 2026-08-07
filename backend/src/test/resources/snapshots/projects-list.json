@@ -16,7 +16,9 @@
   "lastPreCheckSubmittedAt" : "2026-01-02T10:00:00",
   "createdBy" : "alice@cloudfuze.com",
   "createdAt" : "2026-01-01T09:00:00",
-  "decommissionReady" : false
+  "decommissionReady" : false,
+  "serversReadyToDecommission" : 0,
+  "serversDecommissioned" : 0
 }, {
   "id" : 2,
   "name" : "Beta Project",
@@ -35,5 +37,7 @@
   "lastPreCheckSubmittedAt" : null,
   "createdBy" : "bob@cloudfuze.com",
   "createdAt" : "2026-01-01T09:00:00",
-  "decommissionReady" : false
+  "decommissionReady" : false,
+  "serversReadyToDecommission" : 0,
+  "serversDecommissioned" : 0
 } ]

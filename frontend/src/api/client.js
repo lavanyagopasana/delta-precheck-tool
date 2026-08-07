@@ -1,9 +1,10 @@
 import axios from "axios";
 import { getAccessToken } from "../auth/getAccessToken";
 
-// Set REACT_APP_API_BASE in frontend/.env.local (or the deployed build's env) to point at a
-// non-localhost backend -- localhost:8080 stays the default for local dev.
-const BACKEND_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8080";
+// Backend origin resolves at runtime (deploy-time file first, then build-time env, then this page's
+// own origin) so a bundle built anywhere works anywhere -- see config/runtimeConfig.js.
+import { BACKEND_BASE } from "../config/runtimeConfig";
+
 const API_BASE = `${BACKEND_BASE}/api`;
 
 const client = axios.create({ baseURL: API_BASE });
@@ -33,6 +34,17 @@ export const startCombinationDelta = (combinationId) =>
   client.post(`/combinations/${combinationId}/delta/start`).then((r) => r.data);
 export const finishCombinationDelta = (combinationId) =>
   client.post(`/combinations/${combinationId}/delta/finish`).then((r) => r.data);
+
+// A combination runs any number of Pre-Deltas before one Final Delta, and each finished cycle is
+// archived with a frozen copy of its checklist and sign-offs. This returns that history, oldest first.
+export const getDeltaCycles = (combinationId) =>
+  client.get(`/combinations/${combinationId}/delta-cycles`).then((r) => r.data);
+
+// Decommissioning is per-server (admin-only), available once every combination under a server has
+// completed its Final Delta. It ERASES the server and everything under it and returns 204 -- there is
+// deliberately no undo counterpart, since there would be nothing left to restore.
+export const decommissionServer = (serverId) =>
+  client.post(`/servers/${serverId}/decommission`).then((r) => r.data);
 
 export const getProjects = () => client.get("/projects").then((r) => r.data);
 export const getProjectDetail = (id) => client.get(`/projects/${id}`).then((r) => r.data);
@@ -70,8 +82,19 @@ export const updateServerProductType = (serverId, productType) =>
   client.patch(`/servers/${serverId}`, { productType }).then((r) => r.data);
 
 // Server + combination are both chosen in the UI before the file is picked, so this CSV carries
-// neither a server_url nor a combination column -- just the four fields below.
+// neither a server_url nor a combination column -- just the fields below.
 export const SAMPLE_CSV_COLUMNS_COMBINATION = ["source_email", "source_path", "destination_email", "destination_path"];
+
+// Email migrations move mailboxes, not folder trees, so there is no source/destination path to give --
+// just the two mailboxes. The backend already accepts this: WorkspacePairService.REQUIRED_COLUMNS is
+// only source_email + destination_email, and both path columns are nullable, so a two-column file
+// imports unchanged. This constant exists so the sample file and the "View CSV format" table stop
+// advertising two columns an email engineer has nothing to put in.
+export const SAMPLE_CSV_COLUMNS_COMBINATION_EMAIL = ["source_email", "destination_email"];
+
+// The CSV shape for a server's product type. Content and Message keep the four-column form.
+export const sampleCsvColumnsForProductType = (productType) =>
+  productType === "EMAIL" ? SAMPLE_CSV_COLUMNS_COMBINATION_EMAIL : SAMPLE_CSV_COLUMNS_COMBINATION;
 
 export const importWorkspacePairsCsvForCombination = (serverId, combination, file) => {
   const formData = new FormData();

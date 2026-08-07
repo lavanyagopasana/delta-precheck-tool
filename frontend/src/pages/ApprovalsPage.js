@@ -4,6 +4,7 @@ import { getSignOffApprovals, approveSignOff, declineSignOff } from "../api/clie
 import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
 import PreCheckPanel from "../components/PreCheckPanel";
+import DeltaBadge from "../components/DeltaBadge";
 import { useToast } from "../components/Toast";
 import { useConfirm } from "../components/ConfirmDialog";
 import { apiErrorMessage } from "../utils/apiError";
@@ -102,7 +103,9 @@ function ActionsCell({ approval, onActed }) {
 
   const roleLabel = ROLE_LABELS[approval.role] || approval.role;
 
-  const label = `${approval.serverName} / ${approval.combinationName}`;
+  // Reads as a sentence, since this only ever appears inside prose (toasts, confirm dialogs).
+  // serverName is a URL, so "<url> / <combination>" ran the two together as one long path.
+  const label = `"${approval.combinationName}" on ${approval.serverName}`;
 
   const runApprove = async (qaRequired) => {
     setActing(true);
@@ -293,7 +296,9 @@ export default function ApprovalsPage() {
           { key: "projectName", label: "Project", render: (a) => a.projectName || "-" },
           {
             key: "serverName",
-            label: "Server / Combination",
+            // "&" not "/": serverName is a URL, and a slash in the header of a column full of URLs
+            // read as part of a path rather than as "two things stacked here".
+            label: "Server & Combination",
             render: (a) => (
               <div>
                 <div style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{a.serverName}</div>
@@ -304,6 +309,25 @@ export default function ApprovalsPage() {
                   </div>
                 )}
               </div>
+            ),
+          },
+          {
+            key: "deltaLabel",
+            label: "Delta",
+            // Approving a Final Delta is irreversible and makes the server decommissionable, whereas a
+            // Pre-Delta will come round again -- approvers need to see which one this is before acting.
+            filterValue: (a) => a.deltaLabel || "",
+            sortValue: (a) => `${a.deltaType || ""}-${String(a.cycleNumber).padStart(3, "0")}`,
+            render: (a) => (
+              <DeltaBadge
+                deltaType={a.deltaType}
+                label={a.deltaLabel}
+                title={
+                  a.deltaType === "FINAL_DELTA"
+                    ? "Final Delta — approving this leads to the combination being closed permanently."
+                    : "Pre-Delta — further deltas will follow this one."
+                }
+              />
             ),
           },
           {
@@ -361,7 +385,7 @@ export default function ApprovalsPage() {
 
       {preCheckFor && (
         <Modal
-          title={`Pre-Check — ${preCheckFor.serverName} / ${preCheckFor.combinationName}`}
+          title={`Pre-Check — "${preCheckFor.combinationName}" on ${preCheckFor.serverName}`}
           onClose={() => setPreCheckFor(null)}
           width={860}
           closeIcon

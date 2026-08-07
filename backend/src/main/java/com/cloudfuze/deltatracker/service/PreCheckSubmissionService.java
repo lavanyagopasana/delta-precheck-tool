@@ -3,6 +3,7 @@ package com.cloudfuze.deltatracker.service;
 import com.cloudfuze.deltatracker.dto.PreCheckItemDto;
 import com.cloudfuze.deltatracker.dto.PreCheckSubmissionDto;
 import com.cloudfuze.deltatracker.dto.SubmissionSubmitRequest;
+import com.cloudfuze.deltatracker.entity.DeltaType;
 import com.cloudfuze.deltatracker.entity.ItemStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckItem;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
@@ -45,11 +46,17 @@ public class PreCheckSubmissionService {
 
     public PreCheckSubmissionDto getByCombination(Long combinationId, String viewerEmail) {
         WorkspaceCombination combination = combinationService.findOrThrow(combinationId);
+        // Brings an untouched checklist in line with its product type's item set before rendering it.
+        // Needed because items are rows seeded at creation time, so a combination created before Email
+        // got its own (shorter) list still holds the Content one. No-ops unless the shape actually
+        // differs AND nothing has been filled in -- see realignPreCheckItemsIfUntouched.
+        combinationService.realignPreCheckItemsIfUntouched(combination);
         return toDto(getOrCreate(combination), viewerEmail);
     }
 
     public PreCheckSubmissionDto submit(Long combinationId, SubmissionSubmitRequest request) {
         WorkspaceCombination combination = combinationService.findOrThrow(combinationId);
+        requireNotFinalised(combination);
         PreCheckSubmission submission = getOrCreate(combination);
 
         if (StringUtils.hasText(submission.getStartedByEmail())
@@ -72,15 +79,15 @@ public class PreCheckSubmissionService {
                 .orElse(false);
 
         boolean allCompleted = !items.isEmpty() && items.stream()
-                .filter(i -> preDeltaMigrationRequired || !ServerService.PRE_DELTA_MIGRATION_ITEM.equals(i.getItemName()))
+                .filter(i -> preDeltaMigrationRequired || !ServerService.isPreDeltaMigrationItem(i.getItemName()))
                 .allMatch(PreCheckSubmissionService::isItemComplete);
         boolean allHaveEvidence = items.stream()
                 .filter(i -> !ServerService.DELTA_TYPE_ITEM.equals(i.getItemName()))
-                .filter(i -> preDeltaMigrationRequired || !ServerService.PRE_DELTA_MIGRATION_ITEM.equals(i.getItemName()))
+                .filter(i -> preDeltaMigrationRequired || !ServerService.isPreDeltaMigrationItem(i.getItemName()))
                 .allMatch(i -> StringUtils.hasText(i.getEvidenceFilePath()));
         boolean allHaveNotes = items.stream()
                 .filter(i -> !ServerService.DELTA_TYPE_ITEM.equals(i.getItemName()))
-                .filter(i -> preDeltaMigrationRequired || !ServerService.PRE_DELTA_MIGRATION_ITEM.equals(i.getItemName()))
+                .filter(i -> preDeltaMigrationRequired || !ServerService.isPreDeltaMigrationItem(i.getItemName()))
                 .allMatch(i -> StringUtils.hasText(i.getNotes()));
 
         String migrationManagerEmail = combination.getServer().getProject() != null
@@ -103,7 +110,14 @@ public class PreCheckSubmissionService {
         submission.setSubmittedBy(request.getSubmittedBy());
         submission.setSubmittedAt(LocalDateTime.now());
 
+        // Lock in what kind of Delta this cycle is at the moment it goes for review. Copied off the
+        // checklist item rather than read from it later because the item resets to NOT_STARTED on the
+        // next rollover -- and because pinning it here means an admin editing a submitted form can't
+        // retroactively turn a pre-delta into a final one under an approver who already signed off.
+        combination.setCurrentDeltaType(resolveDeltaType(items));
+
         submission = submissionRepository.save(submission);
+        combinationService.save(combination);
         combinationService.recomputeStatus(combination);
         signOffService.createChainIfAbsent(combination);
         signOffService.notifyPreCheckSubmitted(combination, request.getSubmittedBy(), migrationManagerEmail);
@@ -111,12 +125,50 @@ public class PreCheckSubmissionService {
         return toDto(submission, request.getSubmittedBy());
     }
 
-    // Un-submits a pre-check that was submitted by mistake so it can be corrected and resubmitted:
-    // reverts SUBMITTED -> DRAFT (items keep their data, form unlocks) and removes the pending
-    // approval chain. Only works while nobody has approved yet -- SignOffService.removeChainForWithdrawal
-    // enforces that and throws a 409 otherwise. Allowed for the person who submitted/started it or the
-    // project's Migration Manager (ADMIN is intentionally out here, mirroring how ADMIN is excluded
-    // from filling out/submitting pre-checks in SecurityConfig).
+    // The "Delta Type" item's status doubles as this cycle's declared type (its dropdown offers only
+    // Not Started / Pre delta / Final delta). allCompleted above already rejects NOT_STARTED, so
+    // reaching the throw means the item is missing entirely -- a combination seeded before the item
+    // existed -- which has to block rather than default, since guessing wrong either skips the
+    // remaining pre-deltas or never ends the migration.
+    private static DeltaType resolveDeltaType(List<PreCheckItem> items) {
+        return items.stream()
+                .filter(i -> ServerService.DELTA_TYPE_ITEM.equals(i.getItemName()))
+                .findFirst()
+                .map(PreCheckItem::getStatus)
+                .map(status -> switch (status) {
+                    case PRE_DELTA -> DeltaType.PRE_DELTA;
+                    case FINAL_DELTA -> DeltaType.FINAL_DELTA;
+                    default -> null;
+                })
+                .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST,
+                        "Choose whether this is a Pre delta or a Final delta under \"" + ServerService.DELTA_TYPE_ITEM
+                                + "\" before submitting for review."));
+    }
+
+    // A combination whose Final Delta is done is finished for good -- no more pre-check work on it.
+    // Guards submit and (via PreCheckItemService) item edits, so the form can't be quietly refilled
+    // after the migration has been signed off as complete.
+    private void requireNotFinalised(WorkspaceCombination combination) {
+        if (combination.isFinalDeltaComplete()) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "The Final Delta for this combination is already complete -- its pre-check can't be reopened.");
+        }
+    }
+
+    /**
+     * Un-submits a pre-check so it can be corrected and resubmitted: reverts SUBMITTED -> DRAFT (items
+     * keep their data, form unlocks) and removes the approval chain.
+     *
+     * <p><b>ADMIN only</b>, by explicit product decision -- engineers and Migration Managers no longer
+     * withdraw. Since an admin is now the only possible caller, the rollback override is always in
+     * effect: a chain that's already been approved, or a Delta that's already been initiated, can
+     * still be rolled back here.
+     *
+     * <p>Consequence worth knowing: a Migration Manager decline leaves the chain with no valid next
+     * actor (SignOffService.currentTurn returns null), and the engineer can no longer unblock it
+     * themselves -- an admin has to withdraw it. The frontend says so explicitly on a declined form
+     * rather than just showing a locked one.
+     */
     public PreCheckSubmissionDto withdraw(Long combinationId, String callerEmail) {
         WorkspaceCombination combination = combinationService.findOrThrow(combinationId);
         PreCheckSubmission submission = submissionRepository.findByCombinationId(combinationId)
@@ -126,42 +178,31 @@ public class PreCheckSubmissionService {
             throw new ApiException(HttpStatus.BAD_REQUEST,
                     "This pre-check isn't submitted, so there's nothing to withdraw.");
         }
-        // Admins have full access: they can withdraw anyone's submission AND roll back a chain that's
-        // already been approved or even had Delta initiated (removeChainForWithdrawal's allowRollback).
-        boolean isAdmin = appUserService.isAdmin(callerEmail);
-        if (!isAdmin && !canWithdraw(submission, callerEmail)) {
+        // callerEmail == null means auth isn't configured at all -- matches how the rest of the app
+        // deliberately degrades open in that mode (see SecurityConfig.authConfigured).
+        if (callerEmail != null && !appUserService.isAdmin(callerEmail)) {
             throw new ApiException(HttpStatus.FORBIDDEN,
-                    "Only the person who submitted this pre-check can withdraw it (or an admin). "
-                            + "Migration Managers review it -- to send it back, decline it instead.");
+                    "Only an admin can withdraw a submitted pre-check. Migration Managers review it -- "
+                            + "to send it back for rework, decline it instead.");
         }
 
-        signOffService.removeChainForWithdrawal(combination, isAdmin);
-        if (isAdmin && combination.getDeltaInitiatedAt() != null) {
-            // Admin rollback of a finalized Delta -- un-stamp it so the combination returns to pre-submit.
-            combination.setDeltaInitiatedAt(null);
-            combination.setDeltaInitiatedBy(null);
-            combinationService.save(combination);
-        }
+        signOffService.removeChainForWithdrawal(combination, true);
+        // Roll back a finalized Delta too, so the combination returns to its pre-submit state. The
+        // cycle's own type is cleared with it: the engineer may well pick a different one on resubmit,
+        // and a stale value would otherwise decide the next rollover.
+        combination.setDeltaInitiatedAt(null);
+        combination.setDeltaInitiatedBy(null);
+        combination.setCurrentDeltaType(null);
+        combinationService.save(combination);
 
         submission.setStatus(SubmissionStatus.DRAFT);
         submission.setSubmittedBy(null);
         submission.setSubmittedAt(null);
-        // startedByEmail is kept so the same person retains the edit lock and can fix + resubmit.
+        // startedByEmail is kept so the original author retains the edit lock and can fix + resubmit.
         submission = submissionRepository.save(submission);
         combinationService.recomputeStatus(combination);
 
         return toDto(submission, callerEmail);
-    }
-
-    // Withdraw is the engineer's "undo my submission" -- only the person who submitted it or started
-    // (owns) the pre-check. Migration Managers do NOT withdraw (in review they approve/decline);
-    // admins withdraw/roll back via the isAdmin bypass in withdraw(), not through this check.
-    private boolean canWithdraw(PreCheckSubmission submission, String callerEmail) {
-        if (callerEmail == null) {
-            return true; // auth not configured -- matches how the rest of the app degrades open
-        }
-        return callerEmail.equalsIgnoreCase(submission.getSubmittedBy())
-                || callerEmail.equalsIgnoreCase(submission.getStartedByEmail());
     }
 
     private PreCheckSubmission getOrCreate(WorkspaceCombination combination) {
@@ -192,7 +233,7 @@ public class PreCheckSubmissionService {
 
         List<String> orderedItemNames = ServerService.preCheckItemsFor(combination.getServer().getProductType());
         List<PreCheckItem> ordered = items.stream()
-                .sorted(Comparator.comparing(i -> orderedItemNames.indexOf(i.getItemName())))
+                .sorted(Comparator.comparingInt(i -> sortIndexOf(orderedItemNames, i.getItemName())))
                 .toList();
 
         if (lockedByOther) {
@@ -203,6 +244,31 @@ public class PreCheckSubmissionService {
             dto.setItems(ordered.stream().map(PreCheckItemDto::fromEntity).toList());
         }
         return dto;
+    }
+
+    /**
+     * Position of a stored item within the canonical checklist order.
+     *
+     * <p>A plain {@code indexOf} is wrong here: it returns -1 for any name not in the canonical list,
+     * which sorts that item FIRST -- ahead of Delta Type, which is supposed to lead the form. That is
+     * not hypothetical. Item names are persisted per row and are the matching key, so renaming an item
+     * ("Pre Delta Migration" -> "Previous Delta Migration", 2026-08-06) leaves every already-seeded
+     * checklist holding a name the canonical list no longer contains. Those rows belong in the renamed
+     * item's own slot; anything genuinely unrecognised belongs at the end, never at the front.
+     * DeltaCycleService.snapshotItems guards the same way for the frozen snapshot.
+     */
+    private static int sortIndexOf(List<String> orderedItemNames, String itemName) {
+        int index = orderedItemNames.indexOf(itemName);
+        if (index >= 0) {
+            return index;
+        }
+        if (ServerService.isPreDeltaMigrationItem(itemName)) {
+            int canonical = orderedItemNames.indexOf(ServerService.PRE_DELTA_MIGRATION_ITEM);
+            if (canonical >= 0) {
+                return canonical;
+            }
+        }
+        return Integer.MAX_VALUE;
     }
 
     // Any real choice counts as done -- Not Started is the only status that blocks submission.

@@ -1,6 +1,8 @@
 package com.cloudfuze.deltatracker.dto;
 
+import com.cloudfuze.deltatracker.entity.DeltaType;
 import com.cloudfuze.deltatracker.entity.PairStatus;
+import com.cloudfuze.deltatracker.entity.SignOffRole;
 import com.cloudfuze.deltatracker.entity.SubmissionStatus;
 import lombok.Getter;
 import lombok.Setter;
@@ -34,6 +36,33 @@ public class CombinationReadinessDto {
     // of aggregating across a server's several.
     private String readinessStage;
     private String readinessDetail;
+
+    // --- Multi-cycle Delta state (see DeltaCycle) ---
+    // Which cycle is being filled/reviewed/run right now, 1-based.
+    private int currentCycleNumber;
+    // The current cycle's declared type, settled at submit time. Null until the pre-check is
+    // submitted -- nothing has decided this cycle's nature before then.
+    private DeltaType currentDeltaType;
+    // "Pre-Delta 2" / "Final Delta" for the current cycle, or null when currentDeltaType is.
+    // Resolved server-side (DeltaType.label) so the numbering rule lives in one place.
+    private String currentDeltaLabel;
+    // How many cycles have been approved and recorded so far -- the "N deltas done" figure.
+    private long completedCycleCount;
+    // Non-null once the Final Delta has been marked finished: the combination is locked and now
+    // counts toward its server becoming decommission-ready.
+    private LocalDateTime finalDeltaCompletedAt;
+    private String finalDeltaCompletedBy;
+    private boolean finalDeltaComplete;
+
+    // --- Decline state ---
+    // True when someone in the chain has declined. Matters because withdrawal is admin-only: a decline
+    // stalls the pre-check and the engineer can't reopen it themselves, so the UI has to say who
+    // declined it and that an admin needs to withdraw it. Without this the form just looks locked.
+    private boolean blockedByDecline;
+    private SignOffRole declinedByRole;
+    private String declinedByRoleLabel;
+    private String declinedBy;
+    private LocalDateTime declinedAt;
 
     private LocalDateTime deltaInitiatedAt;
     private String deltaInitiatedBy;

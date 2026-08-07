@@ -13,6 +13,12 @@
       rel="stylesheet"
     />
     <title>Delta Pre-Check Tool</title>
+    <!-- Deploy-time configuration, loaded before the bundle so it is available on first render.
+         Not processed by webpack (public/ is copied verbatim), so it stays editable on the server
+         after a build -- see public/runtime-config.js for why that matters. Its filename is
+         deliberately unhashed so ops can edit it in place; serve it with a short/no-cache header so
+         an edit takes effect on the next load rather than after a browser cache expires. -->
+    <script src="%PUBLIC_URL%/runtime-config.js"></script>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>

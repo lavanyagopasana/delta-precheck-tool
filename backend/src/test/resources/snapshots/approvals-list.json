@@ -20,7 +20,10 @@
   "overallStatus" : "Pending with Dev Lead",
   "currentStatus" : "Approved by Migration Manager",
   "turnReady" : false,
-  "canAct" : false
+  "canAct" : false,
+  "cycleNumber" : 1,
+  "deltaType" : null,
+  "deltaLabel" : null
 }, {
   "id" : 2,
   "combinationId" : 1,
@@ -43,7 +46,10 @@
   "overallStatus" : "Pending with Dev Lead",
   "currentStatus" : "Approved by Migration Manager",
   "turnReady" : true,
-  "canAct" : false
+  "canAct" : false,
+  "cycleNumber" : 1,
+  "deltaType" : null,
+  "deltaLabel" : null
 }, {
   "id" : 6,
   "combinationId" : 2,
@@ -66,7 +72,10 @@
   "overallStatus" : "Approved",
   "currentStatus" : "Delta Ready",
   "turnReady" : false,
-  "canAct" : false
+  "canAct" : false,
+  "cycleNumber" : 1,
+  "deltaType" : null,
+  "deltaLabel" : null
 }, {
   "id" : 5,
   "combinationId" : 2,
@@ -89,7 +98,10 @@
   "overallStatus" : "Approved",
   "currentStatus" : "Delta Ready",
   "turnReady" : false,
-  "canAct" : false
+  "canAct" : false,
+  "cycleNumber" : 1,
+  "deltaType" : null,
+  "deltaLabel" : null
 }, {
   "id" : 1,
   "combinationId" : 1,
@@ -112,7 +124,10 @@
   "overallStatus" : "Pending with Dev Lead",
   "currentStatus" : "Approved by Migration Manager",
   "turnReady" : false,
-  "canAct" : false
+  "canAct" : false,
+  "cycleNumber" : 1,
+  "deltaType" : null,
+  "deltaLabel" : null
 }, {
   "id" : 4,
   "combinationId" : 2,
@@ -135,5 +150,8 @@
   "overallStatus" : "Approved",
   "currentStatus" : "Delta Ready",
   "turnReady" : false,
-  "canAct" : false
+  "canAct" : false,
+  "cycleNumber" : 1,
+  "deltaType" : null,
+  "deltaLabel" : null
 } ]

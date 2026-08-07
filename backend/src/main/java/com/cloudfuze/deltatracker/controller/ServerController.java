@@ -7,6 +7,10 @@ import com.cloudfuze.deltatracker.dto.WorkspacePairImportResultDto;
 import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.service.ServerService;
 import com.cloudfuze.deltatracker.service.WorkspacePairService;
+import com.cloudfuze.deltatracker.util.JwtEmailUtil;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -69,6 +73,17 @@ public class ServerController {
     @PostMapping("/{id}/project")
     public ServerReadinessDto assignProject(@PathVariable Long id, @RequestBody AssignProjectRequest request) {
         return serverService.assignProject(id, request.getProjectId());
+    }
+
+    // Decommissioning is per-server: available once every combination under it has completed its Final
+    // Delta. ADMIN-only, gated both in SecurityConfig and again in ServerService. This ERASES the
+    // server and everything under it (see ServerService.decommission) -- 204 rather than a
+    // ServerReadinessDto because there is no server left to describe, and there is no undo endpoint
+    // for the same reason.
+    @PostMapping("/{id}/decommission")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void decommission(@PathVariable Long id, @AuthenticationPrincipal Jwt jwt) {
+        serverService.decommission(id, JwtEmailUtil.extractEmail(jwt));
     }
 
 }

@@ -1,7 +1,9 @@
 package com.cloudfuze.deltatracker.service;
 
+import com.cloudfuze.deltatracker.dto.PreCheckItemDto;
 import com.cloudfuze.deltatracker.dto.PreCheckSubmissionDto;
 import com.cloudfuze.deltatracker.dto.SubmissionSubmitRequest;
+import com.cloudfuze.deltatracker.entity.DeltaType;
 import com.cloudfuze.deltatracker.entity.ItemStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckItem;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
@@ -22,6 +24,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpStatus;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -95,6 +98,13 @@ class PreCheckSubmissionServiceTest {
         return item(name, ItemStatus.COMPLETED, "/uploads/e.png", "looks good");
     }
 
+    // Every submittable checklist now needs a "Delta Type" answer -- it's what settles whether the
+    // cycle is a pre-delta (checklist reopens afterwards) or the final one (combination closes), and
+    // submit refuses without it. Evidence/notes are deliberately null: this item is exempt from both.
+    private PreCheckItem deltaTypeItem(ItemStatus status) {
+        return item(ServerService.DELTA_TYPE_ITEM, status, null, null);
+    }
+
     private SubmissionSubmitRequest request(String submittedBy) {
         SubmissionSubmitRequest r = new SubmissionSubmitRequest();
         r.setSubmittedBy(submittedBy);
@@ -114,14 +124,52 @@ class PreCheckSubmissionServiceTest {
     @Test
     void submitTransitionsToSubmittedAndCreatesChain() {
         when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
-        when(itemRepository.findByCombinationId(CID)).thenReturn(List.of(goodItem("Item A")));
+        when(itemRepository.findByCombinationId(CID))
+                .thenReturn(List.of(deltaTypeItem(ItemStatus.PRE_DELTA), goodItem("Item A")));
 
         PreCheckSubmissionDto dto = service.submit(CID, request(OWNER));
 
         assertThat(dto.getStatus()).isEqualTo(SubmissionStatus.SUBMITTED);
         assertThat(dto.getSubmittedBy()).isEqualTo(OWNER);
+        // The cycle's type is pinned onto the combination at submit time so a later rollover knows
+        // whether to reopen the checklist or close the combination for good.
+        assertThat(combination.getCurrentDeltaType()).isEqualTo(DeltaType.PRE_DELTA);
         verify(signOffService).createChainIfAbsent(combination);
         verify(signOffService).notifyPreCheckSubmitted(combination, OWNER, MM());
+    }
+
+    @Test
+    void submitPinsFinalDeltaTypeWhenChosen() {
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
+        when(itemRepository.findByCombinationId(CID))
+                .thenReturn(List.of(deltaTypeItem(ItemStatus.FINAL_DELTA), goodItem("Item A")));
+
+        service.submit(CID, request(OWNER));
+
+        assertThat(combination.getCurrentDeltaType()).isEqualTo(DeltaType.FINAL_DELTA);
+    }
+
+    @Test
+    void submitRejectedWhenDeltaTypeItemIsMissingEntirely() {
+        // A combination seeded before the Delta Type item existed. Guessing either way is wrong --
+        // pre-delta would never end the migration, final would end it prematurely -- so this blocks.
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
+        when(itemRepository.findByCombinationId(CID)).thenReturn(List.of(goodItem("Item A")));
+
+        assertThatThrownBy(() -> service.submit(CID, request(OWNER)))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Pre delta or a Final delta");
+    }
+
+    @Test
+    void submitRejectedOnceFinalDeltaIsComplete() {
+        combination.setFinalDeltaCompletedAt(LocalDateTime.of(2026, 3, 1, 12, 0));
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.NOT_STARTED, OWNER, null)));
+
+        assertThatThrownBy(() -> service.submit(CID, request(OWNER)))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT));
+        verify(submissionRepository, never()).save(any());
     }
 
     @Test
@@ -138,7 +186,8 @@ class PreCheckSubmissionServiceTest {
     @Test
     void submitAllowsAdminToBypassEditorLock() {
         when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, "someone-else@cloudfuze.com", null)));
-        when(itemRepository.findByCombinationId(CID)).thenReturn(List.of(goodItem("Item A")));
+        when(itemRepository.findByCombinationId(CID))
+                .thenReturn(List.of(deltaTypeItem(ItemStatus.PRE_DELTA), goodItem("Item A")));
         when(appUserService.isAdmin("admin@cloudfuze.com")).thenReturn(true);
 
         PreCheckSubmissionDto dto = service.submit(CID, request("admin@cloudfuze.com"));
@@ -219,14 +268,34 @@ class PreCheckSubmissionServiceTest {
     // ---- withdraw ----
 
     @Test
-    void withdrawByOwnerRevertsToDraftAndRemovesChain() {
+    void withdrawByAdminRevertsToDraftAndRollsBackChain() {
         when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.SUBMITTED, OWNER, OWNER)));
+        when(appUserService.isAdmin("admin@cloudfuze.com")).thenReturn(true);
+        combination.setCurrentDeltaType(DeltaType.PRE_DELTA);
+        combination.setDeltaInitiatedAt(LocalDateTime.of(2026, 2, 1, 10, 0));
 
-        PreCheckSubmissionDto dto = service.withdraw(CID, OWNER);
+        PreCheckSubmissionDto dto = service.withdraw(CID, "admin@cloudfuze.com");
 
         assertThat(dto.getStatus()).isEqualTo(SubmissionStatus.DRAFT);
         assertThat(dto.getSubmittedBy()).isNull();
-        verify(signOffService).removeChainForWithdrawal(combination, false);
+        // allowRollback is unconditionally true now: an admin is the only possible caller, and they're
+        // allowed to roll back an approved chain or an already-initiated Delta.
+        verify(signOffService).removeChainForWithdrawal(combination, true);
+        assertThat(combination.getDeltaInitiatedAt()).isNull();
+        // Cleared so a stale type can't decide the next rollover -- the engineer may pick differently.
+        assertThat(combination.getCurrentDeltaType()).isNull();
+    }
+
+    @Test
+    void withdrawRejectedForTheOwnerNowThatItIsAdminOnly() {
+        // Explicit product decision: engineers no longer withdraw their own submissions. The known
+        // consequence is that a Migration Manager decline needs an admin to unblock it.
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.SUBMITTED, OWNER, OWNER)));
+
+        assertThatThrownBy(() -> service.withdraw(CID, OWNER))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+        verify(signOffService, never()).removeChainForWithdrawal(any(), anyBoolean());
     }
 
     @Test
@@ -240,7 +309,7 @@ class PreCheckSubmissionServiceTest {
     }
 
     @Test
-    void withdrawRejectedForNonOwnerNonAdmin() {
+    void withdrawRejectedForNonAdmin() {
         when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.SUBMITTED, OWNER, OWNER)));
 
         assertThatThrownBy(() -> service.withdraw(CID, "intruder@cloudfuze.com"))
@@ -250,11 +319,70 @@ class PreCheckSubmissionServiceTest {
     }
 
     @Test
+    void withdrawStillWorksWhenAuthIsNotConfigured() {
+        // A null caller email means SecurityConfig is in its fully-open local-dev mode; the whole app
+        // degrades open there, and withdraw must not become the one thing that's impossible offline.
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.SUBMITTED, OWNER, OWNER)));
+
+        PreCheckSubmissionDto dto = service.withdraw(CID, null);
+
+        assertThat(dto.getStatus()).isEqualTo(SubmissionStatus.DRAFT);
+    }
+
+    @Test
     void withdrawThrowsWhenNoSubmissionExists() {
         when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.withdraw(CID, OWNER))
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
+    }
+
+    // ---- checklist ordering ----
+
+    @Test
+    void deltaTypeIsTheFirstItemOnTheForm() {
+        // It decides whether Previous Delta Migration applies at all, so it has to be answered first.
+        givenStoredItems("Data Verified", "OneTime Migration", ServerService.DELTA_TYPE_ITEM);
+
+        assertThat(itemNamesFromForm()).startsWith(ServerService.DELTA_TYPE_ITEM);
+    }
+
+    @Test
+    void anItemStoredUnderItsPreRenameNameDoesNotJumpToTheFrontOfTheForm() {
+        // The regression this exists for: ordering is `orderedItemNames.indexOf(name)`, and indexOf
+        // returns -1 for a name the canonical list no longer contains -- which sorts it FIRST, above
+        // Delta Type. Every checklist seeded before "Pre Delta Migration" was renamed to "Previous
+        // Delta Migration" still stores the old name, so this hit real data, not a hypothetical.
+        givenStoredItems("Pre Delta Migration", ServerService.DELTA_TYPE_ITEM, "OneTime Migration");
+
+        List<String> names = itemNamesFromForm();
+        assertThat(names).startsWith(ServerService.DELTA_TYPE_ITEM);
+        // It sorts into the renamed item's own slot rather than being dumped at either end.
+        assertThat(names.indexOf("Pre Delta Migration")).isEqualTo(2);
+    }
+
+    @Test
+    void aGenuinelyUnknownItemSortsLastNotFirst() {
+        givenStoredItems("Some Removed Item", ServerService.DELTA_TYPE_ITEM, "OneTime Migration");
+
+        assertThat(itemNamesFromForm()).containsExactly(
+                ServerService.DELTA_TYPE_ITEM, "OneTime Migration", "Some Removed Item");
+    }
+
+    private void givenStoredItems(String... names) {
+        List<PreCheckItem> stored = new java.util.ArrayList<>();
+        for (String name : names) {
+            stored.add(item(name, ItemStatus.NOT_STARTED, null, null));
+        }
+        when(itemRepository.findByCombinationId(CID)).thenReturn(stored);
+        when(submissionRepository.findByCombinationId(CID))
+                .thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
+    }
+
+    private List<String> itemNamesFromForm() {
+        return service.getByCombination(CID, OWNER).getItems().stream()
+                .map(PreCheckItemDto::getItemName)
+                .toList();
     }
 }

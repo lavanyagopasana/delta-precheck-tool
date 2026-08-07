@@ -6,6 +6,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -50,7 +51,21 @@ public class Server {
     @OneToMany(mappedBy = "server", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<WorkspacePair> workspacePairs = new ArrayList<>();
 
+    // Decommissioning is per-server (not per-project): a server becomes eligible once every one of
+    // its combinations has completed its FINAL_DELTA, and an ADMIN then confirms it explicitly. Kept
+    // as a stamped timestamp rather than a derived flag because "eligible to decommission" and
+    // "actually decommissioned" are different facts -- see ServerService.decommission.
+    @Column(name = "decommissioned_at")
+    private LocalDateTime decommissionedAt;
+
+    @Column(name = "decommissioned_by")
+    private String decommissionedBy;
+
     public Server(String name) {
         this.name = name;
+    }
+
+    public boolean isDecommissioned() {
+        return decommissionedAt != null;
     }
 }

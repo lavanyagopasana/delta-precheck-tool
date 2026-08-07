@@ -5,14 +5,17 @@ import {
   updateServerProductType,
   importWorkspacePairsCsvForCombination,
   deletePairsByCombination,
+  decommissionServer,
   SAMPLE_CSV_COLUMNS_COMBINATION,
+  sampleCsvColumnsForProductType,
 } from "../api/client";
 import { useToast } from "./Toast";
 import { useConfirm } from "./ConfirmDialog";
 import Modal from "./Modal";
 import CsvImportPanel from "./CsvImportPanel";
 import AddCombinationModal from "./AddCombinationModal";
-import { DownloadIcon, UploadIcon, TrashIcon, PlusIcon, SwapIcon, ServerIcon, EditIcon } from "./Icons";
+import DeltaBadge from "./DeltaBadge";
+import { DownloadIcon, UploadIcon, TrashIcon, PlusIcon, SwapIcon, ServerIcon, EditIcon, TableIcon } from "./Icons";
 import { downloadSampleCsv, downloadCsv } from "../utils/csv";
 import { groupByCombination } from "../utils/pairs";
 
@@ -22,12 +25,36 @@ const PRODUCT_TYPE_OPTIONS = [
   { value: "CONTENT", label: "Content" },
 ];
 
-const SAMPLE_ROW_COMBINATION = [
-  "jane.doe@source-tenant.com",
-  "/jane.doe/My Drive",
-  "jane.doe@company.com",
-  "/sites/migrated/jane.doe",
-];
+// The CSV shape per product type: header columns plus one example row, kept together so the two can
+// never disagree about column count (a 4-column header over a 2-value row writes a broken sample file).
+//
+// Email takes just the two mailboxes -- an email migration moves mailboxes, not folder trees, so there
+// is no path to give. Message still uses the Content shape pending its real format; when that arrives it
+// is one entry here and nothing else changes, because every consumer goes through csvSampleFor.
+const CSV_SHAPES = {
+  CONTENT: {
+    label: "Content",
+    columns: SAMPLE_CSV_COLUMNS_COMBINATION,
+    row: ["jane.doe@source-tenant.com", "/jane.doe/My Drive", "jane.doe@company.com", "/sites/migrated/jane.doe"],
+  },
+  EMAIL: {
+    label: "Email",
+    columns: sampleCsvColumnsForProductType("EMAIL"),
+    row: ["jane.doe@source-tenant.com", "jane.doe@company.com"],
+  },
+};
+
+function csvSampleFor(productType) {
+  return CSV_SHAPES[productType] || CSV_SHAPES.CONTENT;
+}
+
+// Values for a single pair row, matched to the shape above so an export's rows always line up with its
+// header. Email omits the path fields rather than exporting two permanently empty columns.
+function csvRowForPair(productType, pair) {
+  return productType === "EMAIL"
+    ? [pair.sourceEmail, pair.destinationEmail]
+    : [pair.sourceEmail, pair.sourcePath, pair.destinationEmail, pair.destinationPath];
+}
 
 function slugFor(combination) {
   return combination.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -115,53 +142,100 @@ function AddServerModal({ project, canManage, onSaved, open, onClose }) {
   );
 }
 
-// Shown once above the server list (the CSV shape is identical for every combination) instead of
-// repeating "View CSV format"/"Download sample CSV" inside every Add Combination popup.
-function CsvFormatHelp() {
-  const [showSchema, setShowSchema] = useState(false);
-
-  const handleDownloadSample = () => {
-    downloadSampleCsv(SAMPLE_CSV_COLUMNS_COMBINATION, SAMPLE_ROW_COMBINATION, "migration-pairs-sample.csv");
-  };
+/**
+ * The CSV formats in use across a project, in a popup.
+ *
+ * Two earlier versions were wrong in opposite directions. A single inline table above the server list
+ * expanded a full-width block that buried the servers, and showed one shape for a project that might
+ * have several. Moving it to a button per server card fixed the correctness but repeated the identical
+ * table once per server -- four Content servers, four buttons, one format.
+ *
+ * The shape is a property of the product type, not of the server, so this groups by shape: one button
+ * for the project, one section per distinct format actually present, each with its own sample download.
+ */
+function CsvFormatModal({ servers, onClose }) {
+  // One entry per DISTINCT shape in the project, not per server. Four Content servers share one format,
+  // so repeating the identical table four times (and putting a button on every card to reach it) was
+  // noise. Servers with no product type fall back to the Content shape, so they collapse into that same
+  // entry rather than producing a duplicate.
+  const shapes = [];
+  servers.forEach((s) => {
+    const shape = csvSampleFor(s.productType);
+    if (!shapes.some((existing) => existing.label === shape.label)) {
+      shapes.push(shape);
+    }
+  });
 
   return (
-    <div style={{ marginTop: 14 }}>
-      <div style={{ display: "flex", gap: 10 }}>
-        <button type="button" className="btn secondary" onClick={() => setShowSchema((s) => !s)}>
-          {showSchema ? "Hide" : "View"} CSV format
-        </button>
-        <button type="button" className="btn secondary" onClick={handleDownloadSample}>
-          Download sample CSV
-        </button>
-      </div>
-      {showSchema && (
-        <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <table>
-            <thead>
-              <tr>
-                {SAMPLE_CSV_COLUMNS_COMBINATION.map((col) => (
-                  <th key={col}>{col}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                {SAMPLE_ROW_COMBINATION.map((cell, i) => (
-                  <td key={i}>{cell}</td>
-                ))}
-              </tr>
-            </tbody>
-          </table>
+    <Modal
+      title={shapes.length > 1 ? "CSV formats" : `CSV format — ${shapes[0]?.label}`}
+      onClose={onClose}
+      width={720}
+      closeIcon
+    >
+      <p style={{ marginTop: 0, fontSize: 13, color: "var(--color-text-muted)" }}>
+        Header names are matched case-insensitively and common aliases are accepted, so column order
+        doesn&apos;t matter.
+        {shapes.length > 1 && " This project has servers of more than one product type, so both formats apply."}
+      </p>
+
+      {shapes.map((shape) => (
+        <div key={shape.label} style={{ marginBottom: 18 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              marginBottom: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <strong style={{ fontSize: 13.5 }}>{shape.label}</strong>
+            <button
+              type="button"
+              className="btn secondary"
+              style={{ padding: "5px 12px", fontSize: 12 }}
+              onClick={() =>
+                downloadSampleCsv(shape.columns, shape.row, `${shape.label.toLowerCase()}-migration-pairs-sample.csv`)
+              }
+            >
+              <DownloadIcon size={13} /> Download sample
+            </button>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table>
+              <thead>
+                <tr>
+                  {shape.columns.map((col) => (
+                    <th key={col}>{col}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  {shape.row.map((cell, i) => (
+                    <td key={i}>{cell}</td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          {shape.label === "Email" && (
+            <div style={{ fontSize: 12, color: "var(--color-text-faint)", marginTop: 6 }}>
+              Email takes only the two mailboxes — there are no source or destination paths.
+            </div>
+          )}
         </div>
-      )}
-    </div>
+      ))}
+    </Modal>
   );
 }
 
 // A combination row only exists once its CSV is actually uploaded -- ServerCard derives it fresh
 // from the server's real data on every render (see groupByCombination below), so it keeps showing
 // up correctly after a reload.
-function CombinationRow({ server, row, isAdmin, onSaved }) {
+function CombinationRow({ server, row, isAdmin, canManage, onSaved }) {
   const navigate = useNavigate();
   const showToast = useToast();
   const confirm = useConfirm();
@@ -177,9 +251,12 @@ function CombinationRow({ server, row, isAdmin, onSaved }) {
 
   // Exports the migration pairs actually uploaded under this combination -- not the sample
   // template (that's still available above via "Download sample CSV").
+  // Exported columns follow the server's product type, so an Email export doesn't ship two
+  // always-empty path columns that then look like missing data when reopened.
   const handleDownload = () => {
-    const rows = (row.pairs || []).map((p) => [p.sourceEmail, p.sourcePath, p.destinationEmail, p.destinationPath]);
-    downloadCsv(SAMPLE_CSV_COLUMNS_COMBINATION, rows, exportFileNameFor(row.combination));
+    const { columns } = csvSampleFor(server.productType);
+    const rows = (row.pairs || []).map((p) => csvRowForPair(server.productType, p));
+    downloadCsv(columns, rows, exportFileNameFor(row.combination));
   };
 
   const handleDelete = async () => {
@@ -217,19 +294,41 @@ function CombinationRow({ server, row, isAdmin, onSaved }) {
               {row.pairCount} pair{row.pairCount === 1 ? "" : "s"}
             </span>
           )}
+          {/* Where this combination's Delta stands, inline -- the pair count alone said nothing about
+              whether the migration had started, finished, or is on its third pre-delta. */}
+          {row.summary?.finalDeltaComplete ? (
+            <span className="badge purple">Complete</span>
+          ) : (
+            row.summary?.currentDeltaLabel && (
+              <DeltaBadge deltaType={row.summary.currentDeltaType} label={row.summary.currentDeltaLabel} />
+            )
+          )}
+          {/* "1 delta done" rather than "1 done" -- next to a pair count and a stage badge, a bare
+              "done" read as though the combination itself was finished. Green because it's completed
+              work: the previous faint grey made real progress look like incidental metadata. Kept as
+              text rather than a third badge so it doesn't compete with the pair count and stage pills. */}
+          {!row.summary?.finalDeltaComplete && row.summary?.completedCycleCount > 0 && (
+            <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--color-green)" }}>
+              {row.summary.completedCycleCount} delta{row.summary.completedCycleCount === 1 ? "" : "s"} done
+            </span>
+          )}
         </div>
         <div style={{ display: "flex", gap: 6 }}>
           <button className="btn icon-btn secondary" title="Download CSV" aria-label="Download CSV" onClick={handleDownload}>
             <DownloadIcon style={{ marginRight: 0 }} />
           </button>
-          <button
-            className="btn icon-btn secondary"
-            title="Re-upload CSV"
-            aria-label="Re-upload CSV"
-            onClick={() => setReuploading((v) => !v)}
-          >
-            <UploadIcon style={{ marginRight: 0 }} />
-          </button>
+          {/* Download stays available to everyone who can see the combination -- reading the pair list
+              is exactly what a reviewing lead needs. Re-upload replaces it, so it's manage-only. */}
+          {canManage && (
+            <button
+              className="btn icon-btn secondary"
+              title="Re-upload CSV"
+              aria-label="Re-upload CSV"
+              onClick={() => setReuploading((v) => !v)}
+            >
+              <UploadIcon style={{ marginRight: 0 }} />
+            </button>
+          )}
           {isAdmin && (
             <button
               className="btn icon-btn danger"
@@ -248,8 +347,8 @@ function CombinationRow({ server, row, isAdmin, onSaved }) {
         <div style={{ marginTop: 10 }}>
           <CsvImportPanel
             title={`Re-upload CSV for "${row.combination}" on ${server.serverName}`}
-            columns={SAMPLE_CSV_COLUMNS_COMBINATION}
-            sampleRow={SAMPLE_ROW_COMBINATION}
+            columns={csvSampleFor(server.productType).columns}
+            sampleRow={csvSampleFor(server.productType).row}
             sampleFileName={sampleFileNameFor(row.combination)}
             onUpload={handleUpload}
             onImported={onSaved}
@@ -331,7 +430,81 @@ function ServerProductTypeBadge({ server, isAdmin, onSaved }) {
   );
 }
 
-function ServerCard({ server, isAdmin, onSaved }) {
+// Admin-only, and deliberately destructive: decommissioning ERASES the server and everything under it
+// (see ServerService.decommission). There is no undo, so the confirm spells out exactly what goes
+// rather than asking a generic "are you sure?". Rendered for every server rather than only ready ones,
+// disabled with the reason as its tooltip -- an admin looking for the action shouldn't have to guess
+// whether it's missing because of permissions or because work is outstanding.
+function DecommissionButton({ server, onSaved }) {
+  const [busy, setBusy] = useState(false);
+  const showToast = useToast();
+  const confirm = useConfirm();
+
+  const ready = Boolean(server.decommissionReady);
+
+  const handleClick = async () => {
+    // Leads with the consequence, then lists exactly what goes, then the irreversibility. The previous
+    // version ran all three together in one block that read as boilerplate -- easy to click past on the
+    // one action in this app that cannot be undone.
+    const ok = await confirm({
+      title: `Permanently erase ${server.serverName}?`,
+      message:
+        "This deletes the server and everything under it:\n\n" +
+        "•  All combinations and migration pairs\n" +
+        "•  Every pre-check item and uploaded evidence file\n" +
+        "•  The full sign-off history and Delta cycles\n" +
+        "•  All tickets raised against it\n\n" +
+        "This cannot be undone. Export anything you need to keep before continuing.",
+      confirmLabel: "Erase server",
+      danger: true,
+    });
+    if (!ok) return;
+
+    setBusy(true);
+    try {
+      await decommissionServer(server.serverId);
+      showToast(`${server.serverName} decommissioned and erased.`, "success");
+      onSaved();
+    } catch (err) {
+      showToast(err?.response?.data?.message || "Could not decommission this server.", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Solid red, same treatment as the delete-combination button, because it does the same kind of
+  // thing -- it erases the server and everything under it. An outlined secondary button understated
+  // the most destructive action in the app.
+  //
+  // Tooltips are kept short on purpose: a native title renders as one unwrapped strip, so the previous
+  // "Every combination on this server must complete its Final Delta first" stretched most of the way
+  // across the window. The disabled state carries the short version; the full explanation lives in the
+  // confirm dialog, where there is room for it.
+  return (
+    <button
+      type="button"
+      className={ready ? "btn danger" : "btn secondary"}
+      style={{ padding: "6px 14px", fontSize: 12.5, whiteSpace: "nowrap" }}
+      disabled={!ready || busy}
+      title={ready ? "Erase this server permanently" : "Final Deltas still outstanding"}
+      onClick={handleClick}
+    >
+      {busy ? (
+        <>
+          <span className="spinner" style={{ marginRight: 6 }} />
+          Erasing…
+        </>
+      ) : (
+        <>
+          <TrashIcon size={13} />
+          Decommission
+        </>
+      )}
+    </button>
+  );
+}
+
+function ServerCard({ server, isAdmin, canManage, onSaved }) {
   const [showAddCombination, setShowAddCombination] = useState(false);
 
   // The combinations that actually have uploaded pairs -- derived fresh from the server's real
@@ -343,17 +516,45 @@ function ServerCard({ server, isAdmin, onSaved }) {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <ServerIcon style={{ marginRight: 0, color: "var(--color-primary)" }} />
-          <span style={{ fontSize: 14, fontWeight: 600 }}>{server.serverName}</span>
+          <span
+            style={{
+              fontSize: 14,
+              fontWeight: 600,
+              textDecoration: server.decommissioned ? "line-through" : undefined,
+              color: server.decommissioned ? "var(--color-text-muted)" : undefined,
+            }}
+          >
+            {server.serverName}
+          </span>
           <ServerProductTypeBadge server={server} isAdmin={isAdmin} onSaved={onSaved} />
+          {/* Shown to every role, not just admins -- knowing a server's migration work is finished is
+              useful to anyone working the project; only the action below it is admin-gated. There is no
+              "Decommissioned" state to render anymore: decommissioning erases the server, so a
+              decommissioned one no longer exists to be listed. */}
+          {server.decommissionReady && <span className="badge green">Ready to decommission</span>}
         </div>
-        <button
-          type="button"
-          className="btn secondary"
-          style={{ padding: "6px 14px", fontSize: 12.5 }}
-          onClick={() => setShowAddCombination(true)}
-        >
-          <PlusIcon /> Add combination
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* No CSV format button here. The shape is per product type, not per server, so a project with
+              four Content servers repeated the same table behind four identical buttons. It lives once in
+              the Server URLs header instead. */}
+          {canManage && (
+            <button
+              type="button"
+              className="btn secondary"
+              style={{ padding: "6px 14px", fontSize: 12.5 }}
+              onClick={() => setShowAddCombination(true)}
+            >
+              <PlusIcon /> Add combination
+            </button>
+          )}
+          {/* Destructive action last, set slightly apart from the routine ones. Sitting flush between
+              two things people click often made an irreversible erase easy to hit by accident. */}
+          {isAdmin && (
+            <span style={{ marginLeft: 6, display: "inline-flex" }}>
+              <DecommissionButton server={server} onSaved={onSaved} />
+            </span>
+          )}
+        </div>
       </div>
       {!persistedGroups.length && (
         <div style={{ fontSize: 12.5, color: "var(--color-text-faint)", marginTop: 10 }}>No combinations added yet.</div>
@@ -362,8 +563,19 @@ function ServerCard({ server, isAdmin, onSaved }) {
         <CombinationRow
           key={`persisted-${g.combination}`}
           server={server}
-          row={{ combination: g.combination, pairCount: g.pairs.length, pairs: g.pairs }}
+          row={{
+            combination: g.combination,
+            pairCount: g.pairs.length,
+            pairs: g.pairs,
+            // Combinations are derived from the pairs' free-text column, so the WorkspaceCombination
+            // record carrying the Delta state has to be matched back by name (case-insensitively,
+            // exactly as the backend does).
+            summary: (server.combinations || []).find(
+              (c) => c.name.trim().toLowerCase() === g.combination.trim().toLowerCase()
+            ),
+          }}
           isAdmin={isAdmin}
+          canManage={canManage}
           onSaved={onSaved}
         />
       ))}
@@ -381,9 +593,13 @@ function ServerCard({ server, isAdmin, onSaved }) {
 export default function ServerUrlsPanel({ project, canManage, isAdmin, onSaved, showAddServer, onCloseAddServer }) {
   const [filterText, setFilterText] = useState("");
   const [productTypeFilter, setProductTypeFilter] = useState("ALL");
+  const [showCsvFormat, setShowCsvFormat] = useState(false);
 
-  if (!canManage) return null;
-
+  // Deliberately NOT gated on canManage. This used to `return null` for anyone outside the project's
+  // manager/creator/engineers, which meant a Dev Lead or QA Lead opening the project saw only the
+  // Assignments card -- no servers, no combinations, no Delta state. They are the people asked to
+  // approve that work, so they need to read it; canManage now only controls the write actions inside
+  // (add server, add combination, CSV re-upload), which stay hidden for them.
   const servers = project.servers || [];
   const filteredServers = servers.filter(
     (s) =>
@@ -402,7 +618,19 @@ export default function ServerUrlsPanel({ project, canManage, isAdmin, onSaved, 
             {!!servers.length && <span className="badge gray">{servers.length}</span>}
           </h3>
           {!!servers.length && (
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              {/* One button for the whole project, opening a popup that lists each DISTINCT format in
+                  use here. The CSV shape depends on product type, not on the individual server, so a
+                  button per card repeated the same table once per server. */}
+              <button
+                type="button"
+                className="btn secondary"
+                style={{ padding: "8px 14px", fontSize: 12.5, whiteSpace: "nowrap" }}
+                title="View the CSV columns used in this project"
+                onClick={() => setShowCsvFormat(true)}
+              >
+                <TableIcon size={13} /> CSV format
+              </button>
               <select
                 value={productTypeFilter}
                 onChange={(e) => setProductTypeFilter(e.target.value)}
@@ -426,10 +654,14 @@ export default function ServerUrlsPanel({ project, canManage, isAdmin, onSaved, 
           )}
         </div>
 
-        {!!servers.length && <CsvFormatHelp />}
+        {showCsvFormat && <CsvFormatModal servers={servers} onClose={() => setShowCsvFormat(false)} />}
 
         {!servers.length ? (
-          <p className="empty-state">No servers yet. Use "Add Server" above to get started.</p>
+          <p className="empty-state">
+            {canManage
+              ? 'No servers yet. Use "Add Server" above to get started.'
+              : "No servers have been added to this project yet."}
+          </p>
         ) : !filteredServers.length ? (
           <p className="empty-state">No servers match the current filters.</p>
         ) : (
@@ -439,6 +671,7 @@ export default function ServerUrlsPanel({ project, canManage, isAdmin, onSaved, 
                 key={server.serverId}
                 server={server}
                 isAdmin={isAdmin}
+                canManage={canManage}
                 onSaved={onSaved}
               />
             ))}

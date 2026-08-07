@@ -12,12 +12,23 @@ import AttachmentPreview from "./AttachmentPreview";
 import { useToast } from "./Toast";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
-import { UndoIcon, SendIcon } from "./Icons";
+import { UndoIcon, SendIcon, ServerIcon, SwapIcon } from "./Icons";
 import { useConfirm } from "./ConfirmDialog";
-import { MAX_EVIDENCE_FILE_SIZE_MB } from "../constants";
+import {
+  MAX_EVIDENCE_FILE_SIZE_MB,
+  DELTA_TYPE_ITEM,
+  isPreDeltaMigrationItem,
+} from "../constants";
+import DeltaBadge from "./DeltaBadge";
+import { emailLocalPart } from "../utils/format";
 
-// ADMIN included by explicit product decision -- admins have full access to pre-checks too.
-const PRECHECK_EDIT_ROLES = ["ADMIN", "MIGRATION_ENGINEER", "MIGRATION_MANAGER"];
+// Filling out and submitting a pre-check is a MIGRATION_ENGINEER action. MIGRATION_MANAGER was removed
+// on 2026-08-06: the manager is the first approver in the sign-off chain, so filling in the form they
+// then approve collapses two steps into one person. DEV_LEAD/QA_LEAD were never allowed. ADMIN stays as
+// the unblock path for a pre-check locked to an unavailable engineer. Mirrors SecurityConfig's matcher
+// for /api/combinations/*/precheck-items/** -- keep the two in step, this only hides the controls; the
+// backend is what actually enforces it.
+const PRECHECK_EDIT_ROLES = ["ADMIN", "MIGRATION_ENGINEER"];
 
 const STATUS_BADGE = {
   NOT_STARTED: { color: "gray", label: "Not Started" },
@@ -32,11 +43,10 @@ const BASE_STATUS_OPTIONS = [
   { value: "COMPLETED", label: "Completed" },
 ];
 
-const DELTA_TYPE_ITEM = "Delta Type";
-// Only shown/required when Delta Type's own status is PRE_DELTA -- see preDeltaMigrationRequired
-// below. Mirrors ServerService.PRE_DELTA_MIGRATION_ITEM on the backend.
-const PRE_DELTA_MIGRATION_ITEM = "Pre Delta Migration";
-
+// Choosing "Pre delta" here means this cycle finishes and the checklist reopens for another one;
+// choosing "Final delta" ends the combination for good and makes its server decommissionable. The
+// descriptions are surfaced next to the dropdown (DeltaTypeHint) because the two options have very
+// different consequences and the labels alone don't convey that.
 const DELTA_TYPE_STATUS_OPTIONS = [
   { value: "NOT_STARTED", label: "Not Started" },
   { value: "PRE_DELTA", label: "Pre delta" },
@@ -50,7 +60,7 @@ function statusOptionsFor(itemName) {
   if (itemName === "Drive changes") {
     return BASE_STATUS_OPTIONS.map((o) => (o.value === "COMPLETED" ? { ...o, label: "Not up to date" } : o));
   }
-  if (itemName === PRE_DELTA_MIGRATION_ITEM) {
+  if (isPreDeltaMigrationItem(itemName)) {
     return [...BASE_STATUS_OPTIONS, { value: "NOT_AVAILABLE", label: "Not available" }];
   }
   return BASE_STATUS_OPTIONS;
@@ -160,6 +170,15 @@ function ItemRow({ item, locked, combinationId, editingAs, onSaved }) {
   const displayName = evidenceDisplayName(item);
   const isDeltaType = item.itemName === DELTA_TYPE_ITEM;
   const visual = statusVisual(item.status);
+  // Spelled out at the point of choice rather than left to a tooltip: "Final delta" permanently closes
+  // the combination, and an engineer picking it by mistake can only be undone by an admin.
+  const deltaTypeHint = !isDeltaType
+    ? null
+    : item.status === "PRE_DELTA"
+    ? "Another pre-delta will be possible after this one finishes."
+    : item.status === "FINAL_DELTA"
+    ? "This is the last delta — finishing it closes this combination for good and makes its server ready to decommission."
+    : "Choose Pre delta if more deltas will follow, or Final delta if this is the last one.";
 
   const removeEvidence = () => {
     if (locked) return;
@@ -190,6 +209,18 @@ function ItemRow({ item, locked, combinationId, editingAs, onSaved }) {
           ))}
         </select>
       </div>
+
+      {deltaTypeHint && (
+        <div
+          style={{
+            fontSize: 11.5,
+            color: item.status === "FINAL_DELTA" ? "var(--color-purple)" : "var(--color-text-muted)",
+            padding: "0 14px 12px",
+          }}
+        >
+          {deltaTypeHint}
+        </div>
+      )}
 
       {!isDeltaType && (
         <div className="precheck-item-card-body">
@@ -256,7 +287,12 @@ function ItemRow({ item, locked, combinationId, editingAs, onSaved }) {
   );
 }
 
-function PreCheckBackNav({ fromSignoff, projectId, projectName, serverName, combinationName }) {
+// The server and combination deliberately do NOT appear here. serverName is a URL
+// ("https://demoprjct-server1"), so slash-joining it with the combination produced
+// "https://demoprjct-server1 / Google to One Drive / Pre-Check" -- which reads as one long URL path
+// rather than a trail of separate places. PreCheckHeader directly below shows both properly, so the
+// crumb only has to answer "where am I and how do I get back".
+function PreCheckBackNav({ fromSignoff, projectId, projectName }) {
   const navigate = useNavigate();
   if (fromSignoff) {
     return (
@@ -265,13 +301,33 @@ function PreCheckBackNav({ fromSignoff, projectId, projectName, serverName, comb
       </button>
     );
   }
-  const trail = `${serverName} / ${combinationName} / Pre-Check`;
   if (!projectId) {
-    return <div className="breadcrumb">{trail}</div>;
+    return <div className="breadcrumb">Pre-Check</div>;
   }
   return (
     <div className="breadcrumb">
-      <Link to={`/projects/${projectId}`}>{projectName || "Project"}</Link> / {trail}
+      <Link to={`/projects/${projectId}`}>{projectName || "Project"}</Link> / Pre-Check
+    </div>
+  );
+}
+
+// Server on its own line with the server icon, combination beneath it with the swap icon -- the same
+// shape ServerDetailsPage uses, so the two pages read consistently and a URL-shaped server name never
+// sits next to a slash.
+function PreCheckHeader({ serverName, combinationName, children }) {
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <ServerIcon size={20} style={{ marginRight: 0, color: "var(--color-primary)" }} />
+        <h2 style={{ margin: 0, wordBreak: "break-all" }}>{serverName}</h2>
+        {children}
+      </div>
+      {combinationName && (
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 6, color: "var(--color-text-muted)" }}>
+          <SwapIcon size={15} style={{ marginRight: 0 }} />
+          <span style={{ fontSize: 13.5, fontWeight: 600 }}>{combinationName}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -337,11 +393,11 @@ export default function PreCheckPanel({ combinationId, showBackNav = true, showH
             fromSignoff={fromSignoff}
             projectId={combination.projectId}
             projectName={combination.projectName}
-            serverName={combination.serverName}
-            combinationName={combination.combinationName}
           />
         )}
-        {showHeader && <h2>{combination.serverName} / {combination.combinationName}</h2>}
+        {showHeader && (
+          <PreCheckHeader serverName={combination.serverName} combinationName={combination.combinationName} />
+        )}
         <div className="card">
           <strong style={{ fontSize: 14 }}>This pre-check is in progress</strong>
           <p style={{ color: "var(--color-text-muted)", fontSize: 13.5 }}>
@@ -357,23 +413,21 @@ export default function PreCheckPanel({ combinationId, showBackNav = true, showH
   const canEdit = !AUTH_CONFIGURED || PRECHECK_EDIT_ROLES.includes(currentUser?.role);
 
   const items = submission.items;
-  const locked = submission.status === "SUBMITTED" || !canEdit;
+  // finalDeltaComplete is a permanent lock, not the temporary submitted-lock: the migration is over and
+  // the backend refuses edits from everyone including admins (PreCheckItemService.requireNotFinalised).
+  const locked = submission.status === "SUBMITTED" || !canEdit || combination.finalDeltaComplete;
 
   // "Pre Delta Migration" only applies once Delta Type has actually been set to "Pre delta" --
   // before that (Not Started) or once it's "Final delta", the item is hidden and not required.
   const deltaTypeItem = items.find((i) => i.itemName === DELTA_TYPE_ITEM);
   const preDeltaMigrationRequired = deltaTypeItem?.status === "PRE_DELTA";
-  const visibleItems = items.filter((i) => i.itemName !== PRE_DELTA_MIGRATION_ITEM || preDeltaMigrationRequired);
+  const visibleItems = items.filter((i) => !isPreDeltaMigrationItem(i.itemName) || preDeltaMigrationRequired);
 
-  // A mistakenly-submitted pre-check can be withdrawn (un-submitted) only by the person who
-  // submitted/started it, or an admin -- NOT the Migration Manager (managers approve/decline in
-  // review; to send it back they decline). The backend also refuses if an approver already approved.
-  const emailLc = currentUser?.email?.toLowerCase();
-  const isSubmitter = emailLc && submission.submittedBy?.toLowerCase() === emailLc;
-  const isOwner = emailLc && submission.startedByEmail?.toLowerCase() === emailLc;
+  // Withdrawing a submitted pre-check is ADMIN-only by explicit product decision -- engineers and
+  // Migration Managers no longer have it (managers review: to send something back they decline).
+  // Mirrored in PreCheckSubmissionService.withdraw, which enforces it server-side.
   const isAdmin = currentUser?.role === "ADMIN";
-  const canWithdraw =
-    submission.status === "SUBMITTED" && canEdit && (!AUTH_CONFIGURED || isSubmitter || isOwner || isAdmin);
+  const canWithdraw = submission.status === "SUBMITTED" && (!AUTH_CONFIGURED || isAdmin);
   const completedCount = visibleItems.filter(isItemComplete).length;
   const allCompleted = visibleItems.length > 0 && completedCount === visibleItems.length;
   const allHaveEvidence = visibleItems
@@ -433,8 +487,11 @@ export default function PreCheckPanel({ combinationId, showBackNav = true, showH
   const handleWithdraw = async () => {
     const ok = await confirm({
       title: "Withdraw submission?",
-      message: "It returns to draft so you can fix it and resubmit. This only works while no approver has approved it yet.",
+      message:
+        "The form returns to draft so it can be corrected and resubmitted, and the approval chain is cleared. " +
+        "As an admin this also rolls back an already-approved chain or an initiated Delta.",
       confirmLabel: "Withdraw",
+      danger: true,
     });
     if (!ok) return;
     setBusy(true);
@@ -459,18 +516,69 @@ export default function PreCheckPanel({ combinationId, showBackNav = true, showH
           fromSignoff={fromSignoff}
           projectId={combination.projectId}
           projectName={combination.projectName}
-          serverName={combination.serverName}
-          combinationName={combination.combinationName}
         />
       )}
 
       {showHeader && (
         <>
-          <h2>{combination.serverName} / {combination.combinationName}</h2>
-          <p style={{ color: "var(--color-text-muted)", marginTop: -10, marginBottom: 20 }}>
+          <PreCheckHeader serverName={combination.serverName} combinationName={combination.combinationName}>
+            {combination.finalDeltaComplete ? (
+              <span className="badge purple">Final Delta complete</span>
+            ) : (
+              // Before submission nothing has settled this cycle's type, so name the cycle by number
+              // alone rather than guessing Pre vs Final.
+              <DeltaBadge
+                deltaType={combination.currentDeltaType}
+                label={combination.currentDeltaLabel}
+                fallback={`Delta ${combination.currentCycleNumber}`}
+              />
+            )}
+          </PreCheckHeader>
+          {/* Negative top margin pulls this back against the header, which owns the 20px gap below
+              itself for the case where no summary line follows it. */}
+          <p style={{ color: "var(--color-text-muted)", marginTop: -12, marginBottom: 20 }}>
             {combination.totalPairs} migration pair(s) under this combination share this pre-check.
+            {combination.completedCycleCount > 0 &&
+              ` ${combination.completedCycleCount} delta${
+                combination.completedCycleCount === 1 ? "" : "s"
+              } already completed here.`}
           </p>
         </>
+      )}
+
+      {combination.finalDeltaComplete && (
+        <div
+          className="card"
+          style={{ borderLeft: "3px solid var(--color-purple)", marginBottom: 16 }}
+        >
+          <strong style={{ fontSize: 14 }}>This combination's migration is complete</strong>
+          <p style={{ color: "var(--color-text-muted)", fontSize: 13.5, marginBottom: 0 }}>
+            The Final Delta was finished
+            {combination.finalDeltaCompletedBy ? ` by ${emailLocalPart(combination.finalDeltaCompletedBy)}` : ""}
+            {combination.finalDeltaCompletedAt
+              ? ` on ${new Date(combination.finalDeltaCompletedAt).toLocaleString()}`
+              : ""}
+            . The checklist below is kept read-only as a record — no further deltas run on this
+            combination, and its server can be decommissioned once every combination is done.
+          </p>
+        </div>
+      )}
+
+      {/* A decline is a dead end for the engineer now that withdrawal is admin-only, so say so plainly
+          instead of just showing a locked form with no explanation. */}
+      {combination.blockedByDecline && !combination.finalDeltaComplete && (
+        <div className="card" style={{ borderLeft: "3px solid var(--color-red)", marginBottom: 16 }}>
+          <strong style={{ fontSize: 14 }}>
+            Declined by {combination.declinedByRoleLabel || "an approver"}
+          </strong>
+          <p style={{ color: "var(--color-text-muted)", fontSize: 13.5, marginBottom: 0 }}>
+            {combination.declinedBy ? `${emailLocalPart(combination.declinedBy)} declined this` : "This was declined"}
+            {combination.declinedAt ? ` on ${new Date(combination.declinedAt).toLocaleString()}` : ""}.{" "}
+            {isAdmin
+              ? "Withdraw it below to unlock the form so it can be corrected and resubmitted."
+              : "Ask an admin to withdraw it — that unlocks the form so you can correct and resubmit it."}
+          </p>
+        </div>
       )}
 
       <div className="card precheck-section">
@@ -479,6 +587,14 @@ export default function PreCheckPanel({ combinationId, showBackNav = true, showH
           <span style={{ color: "var(--color-text-faint)", fontWeight: 500 }}>
             {completedCount}/{visibleItems.length}
           </span>
+          {/* Which cycle this blank form belongs to. Without it, a freshly reset checklist is
+              indistinguishable from a brand-new combination's first one. */}
+          {!combination.finalDeltaComplete && combination.currentCycleNumber > 1 && (
+            <span style={{ color: "var(--color-text-muted)", fontWeight: 500, fontSize: 13 }}>
+              {" "}
+              · Delta cycle {combination.currentCycleNumber}
+            </span>
+          )}
         </h3>
 
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
@@ -494,7 +610,7 @@ export default function PreCheckPanel({ combinationId, showBackNav = true, showH
               onClick={handleWithdraw}
               disabled={busy}
               style={{ padding: "4px 12px", fontSize: 12.5 }}
-              title="Un-submit so you can fix a mistake and resubmit (only works before any approval)."
+              title="Admin only: un-submit this pre-check so it can be corrected and resubmitted."
             >
               {busy ? (
                 <>
@@ -595,6 +711,10 @@ export default function PreCheckPanel({ combinationId, showBackNav = true, showH
           </div>
         )}
       </div>
+      {/* No Delta history here. It lives on the server/combination page above the pre-check link
+          (WorkspacePairsPanel), which is where people go to review past cycles -- repeating it under
+          the live form put a read-only record of finished work at the bottom of a form someone is
+          trying to fill in. */}
     </div>
   );
 }

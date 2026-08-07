@@ -1,6 +1,10 @@
-const clientId = process.env.REACT_APP_AZURE_CLIENT_ID || "";
-const tenantId = process.env.REACT_APP_AZURE_TENANT_ID || "";
-const redirectUri = process.env.REACT_APP_AZURE_REDIRECT_URI || "http://localhost:3000";
+// All three resolve at runtime, never from a URL hardcoded here -- see config/runtimeConfig.js for
+// the precedence rules and why build-time values alone were not safe.
+import { AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_REDIRECT_URI } from "../config/runtimeConfig";
+
+const clientId = AZURE_CLIENT_ID;
+const tenantId = AZURE_TENANT_ID;
+const redirectUri = AZURE_REDIRECT_URI;
 
 export const AUTH_CONFIGURED = Boolean(clientId);
 

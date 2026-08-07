@@ -17,6 +17,8 @@
   "createdBy" : "alice@cloudfuze.com",
   "createdAt" : "2026-01-01T09:00:00",
   "decommissionReady" : false,
+  "serversReadyToDecommission" : 0,
+  "serversDecommissioned" : 0,
   "servers" : [ {
     "serverId" : 1,
     "serverName" : "SRV-ALPHA-1",
@@ -32,12 +34,23 @@
     "projectName" : "Alpha Project",
     "readinessStage" : "IN_PROGRESS",
     "readinessDetail" : "\"Combo A\": Dev Lead not approved yet",
+    "decommissionReady" : false,
+    "decommissionedAt" : null,
+    "decommissionedBy" : null,
+    "decommissioned" : false,
+    "finalDeltaCompleteCount" : 0,
+    "totalDeltaCycleCount" : 0,
     "combinations" : [ {
       "id" : 1,
       "name" : "Combo A",
       "pairCount" : 2,
       "status" : "PENDING",
-      "submissionStatus" : "SUBMITTED"
+      "submissionStatus" : "SUBMITTED",
+      "currentCycleNumber" : 1,
+      "currentDeltaType" : null,
+      "currentDeltaLabel" : null,
+      "completedCycleCount" : 0,
+      "finalDeltaComplete" : false
     } ],
     "pairs" : [ {
       "id" : 1,
@@ -73,12 +86,23 @@
     "projectName" : "Alpha Project",
     "readinessStage" : "READY",
     "readinessDetail" : null,
+    "decommissionReady" : false,
+    "decommissionedAt" : null,
+    "decommissionedBy" : null,
+    "decommissioned" : false,
+    "finalDeltaCompleteCount" : 0,
+    "totalDeltaCycleCount" : 0,
     "combinations" : [ {
       "id" : 2,
       "name" : "Combo A",
       "pairCount" : 1,
       "status" : "PENDING",
-      "submissionStatus" : "SUBMITTED"
+      "submissionStatus" : "SUBMITTED",
+      "currentCycleNumber" : 1,
+      "currentDeltaType" : null,
+      "currentDeltaLabel" : null,
+      "completedCycleCount" : 0,
+      "finalDeltaComplete" : false
     } ],
     "pairs" : [ {
       "id" : 3,

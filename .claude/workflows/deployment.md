@@ -1,16 +1,44 @@
 # Workflow: Deployment
 
-**This repo has no deploy process yet** — no Dockerfile, no cloud deploy scripts, no CI/CD (no
-`.github/workflows`), and it isn't even a git repository yet. There is deliberately no
-project-specific `deploy.md` command (see `.claude/memory/decisions.md`) — use gstack's
-`/land-and-deploy` for the generic orchestration once a real deploy target exists, and update this
-workflow with real steps the first time an actual deployment happens.
+This repo has no Dockerfile, no cloud deploy scripts, and no CI/CD (no `.github/workflows`) — but it
+**is** a git repository now (`github.com/lavanyagopasana/delta-precheck-tool`) and it **has been
+deployed at least once**. There is deliberately no project-specific `deploy.md` command (see
+`.claude/memory/decisions.md`) — use gstack's `/land-and-deploy` for generic orchestration.
 
-## What must be decided/fixed before any real deployment (not yet done)
+## The frontend does NOT need build-time URLs anymore (2026-08-06)
 
-1. **CORS** — `WebConfig.addCorsMappings` only allows `http://localhost:3000`. A deployed
-   frontend origin needs to be added, ideally via a configurable property rather than another
-   hardcoded string.
+The first production deploy failed with a login that worked perfectly on every laptop. Root cause:
+`react-scripts` inlines every `REACT_APP_*` value into `main.<hash>.js` at build time, so the bundle
+shipped `redirectUri: "http://localhost:3000"` and an API base of `http://localhost:8080`. Nothing
+set on the server could override it — the values were already frozen inside the JavaScript.
+
+Two things now prevent that recurring, both in `frontend/src/config/runtimeConfig.js`:
+
+- **`frontend/public/runtime-config.js`** is copied verbatim into `build/` (webpack doesn't process
+  `public/`), so it stays editable on the server after a build. It takes precedence over build-time
+  env vars. Deploy once, retarget without rebuilding.
+- **A localhost value from a build-time env var is ignored** when the page is served from a
+  non-loopback host, falling back to the page's own origin. A bundle built with dev settings still
+  works when deployed. Covered by `frontend/src/config/runtimeConfig.test.js`.
+
+**Consequence for a normal deploy: set nothing.** Serve `build/` and point a reverse proxy's `/api`
+at the backend, and both the redirect URI and the API base resolve to the deployed origin. Only edit
+`build/runtime-config.js` (`apiBase`) when the backend is on a **different** origin — which is also
+the only case where `APP_ALLOWED_ORIGINS` matters, since same-origin requests aren't CORS at all.
+
+Serve `runtime-config.js` with a short/no-cache header — it's intentionally unhashed so it can be
+edited in place, which also means a browser can cache a stale copy.
+
+Beware `frontend/.env.local`: `react-scripts` loads it for **production** builds too, at *higher*
+precedence than `.env.production`. Creating `.env.production` does not override it. Only a shell/CI
+variable or removing the key from `.env.local` does.
+
+## What must still be decided/fixed before a real deployment
+
+1. **CORS** — `app.allowed-origins` (`APP_ALLOWED_ORIGINS`) defaults to `http://localhost:3000`,
+   owned by `SecurityConfig`. Only needed for a cross-origin backend (see above). `SecurityConfig`
+   logs the effective list at startup and warns when it's still the localhost-only default, so a
+   misconfiguration is visible in the log instead of only as an opaque browser error.
 2. **Auth posture** — `AZURE_REQUIRE_ALLOWLIST=false` and a blank `AZURE_ALLOWED_EMAIL_DOMAIN` are
    both explicitly "temporarily off while testing." Decide the real intended production values
    before this is reachable outside local development.

@@ -17,6 +17,11 @@
   --color-red: #dc2626;
   --color-red-soft: #fdecec;
   --color-gray-soft: #eef0f4;
+  /* Reserved for the Final Delta / decommission milestones -- deliberately distinct from primary blue
+     (routine pre-deltas) and green (a step merely completing), because these mark the irreversible
+     end of a combination's migration and shouldn't read as just another success state. */
+  --color-purple: #7c3aed;
+  --color-purple-soft: #f1eafe;
 
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -284,6 +289,10 @@ th {
   font-size: 10.5px;
   letter-spacing: 0.06em;
   border-bottom: 1px solid var(--color-border);
+  /* Column labels are two or three words and already uppercase+letterspaced; wrapping them ("PRE-"
+     / "CHECK") made the header row taller than the data rows and hard to scan. Safe to keep on one
+     line because DataTable wraps every table in an overflow-x container. */
+  white-space: nowrap;
 }
 
 tr:last-child td {
@@ -344,6 +353,10 @@ tr.selected-row.clickable-row:hover td {
   font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.01em;
+  /* A pill must never wrap. In a narrow table column "Pre-Delta #2" broke across three lines and the
+     999px radius turned the result into an oval blob rather than a chip. Badge labels are short by
+     definition, so letting the column widen instead is always the better trade. */
+  white-space: nowrap;
 }
 
 .badge.green { background: var(--color-green-soft); color: var(--color-green); }
@@ -353,6 +366,7 @@ tr.selected-row.clickable-row:hover td {
 /* A categorical tag (e.g. product type) reads as more meaningful than a plain count -- give it the
    brand color instead of the same neutral gray every count/status pill already uses everywhere. */
 .badge.blue { background: var(--color-primary-soft); color: var(--color-primary-dark); }
+.badge.purple { background: var(--color-purple-soft); color: var(--color-purple); }
 
 .dot {
   display: inline-block;
@@ -574,18 +588,10 @@ tr.selected-row.clickable-row:hover td {
   flex-shrink: 0;
 }
 
-/* Action buttons inside table rows: give the flat/secondary ones a clear outlined-button look so
-   they still read as buttons over the row's gray hover highlight instead of blending into it.
-   Colored buttons (danger/success/primary) already stand out on their own. */
-tbody td .btn.secondary {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-}
-tbody td .btn.secondary:hover:not(:disabled) {
-  background: var(--color-gray-soft);
-  border-color: var(--color-text-faint);
-}
-/* Keep every in-row action button crisp on the tinted hover row. */
+/* Secondary buttons already have a clear outlined-blue look at the base .btn.secondary rule below --
+   no table-specific override needed, and having one here previously fought with it on specificity,
+   leaving table buttons stuck with the old flat-gray treatment. Colored buttons (danger/success/
+   primary) already stand out on their own. Keep every in-row action button crisp on the tinted hover row. */
 tbody td .btn {
   box-shadow: 0 1px 2px rgba(17, 21, 34, 0.08);
 }
@@ -1063,6 +1069,10 @@ input[type="checkbox"]:disabled {
   font-size: 13.5px;
   line-height: 1.5;
   color: var(--color-text-muted, #5b6478);
+  /* Honour newlines in the message so a destructive confirm can break "here is exactly what will be
+     deleted" into a scannable list instead of one dense block that reads as boilerplate. Existing
+     single-line messages are unaffected -- pre-wrap still wraps normally. */
+  white-space: pre-wrap;
 }
 
 .confirm-actions {
@@ -1654,5 +1664,206 @@ input[type="checkbox"]:disabled {
   }
   .login-form-panel {
     padding: 20px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Delta history -- one block per recorded cycle.
+
+   Deliberately NOT a table. This started as an 8-column table and every single
+   cell wrapped: nested inside a card inside a panel, each column got ~90px, so
+   "Pre-Delta #1" broke across three lines and the approvals cell across five.
+   A block per cycle gives the long values (approvals, dates) room to sit on one
+   line, and keeps the scannable facts aligned on the row above them.
+   --------------------------------------------------------------------------- */
+.delta-cycle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.delta-cycle {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  padding: 14px 16px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.delta-cycle:hover {
+  border-color: #d7dce6;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Badge, facts, status and action on one line; the facts block is the only thing
+   allowed to shrink, so the badge and the button never get squeezed. */
+.delta-cycle__row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.delta-cycle__facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 20px;
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+}
+
+/* nowrap per fact, not on the container: the row still wraps as a whole on a
+   narrow screen, but a single date or duration never splits mid-value. */
+.delta-cycle__fact {
+  white-space: nowrap;
+}
+
+.delta-cycle__fact-label {
+  color: var(--color-text-muted);
+  margin-right: 5px;
+}
+
+.delta-cycle__fact-value {
+  font-weight: 600;
+}
+
+/* Approvals get their own line: "Migration Manager: alex - Dev Lead: erik - QA
+   Lead: not required" is far too long to share a row and is reference detail,
+   not something being scanned. */
+.delta-cycle__approvals {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--color-border);
+  font-size: 12px;
+  color: var(--color-text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.delta-cycle__approval-role {
+  color: var(--color-text-faint);
+  margin-right: 4px;
+}
+
+@media (max-width: 900px) {
+  .delta-cycle__row {
+    flex-wrap: wrap;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Dashboard KPI strip.
+
+   Replaces `card-row card-row--nowrap` for the Dashboard's 7 metrics. nowrap
+   forced all seven onto one line at ~150px each, so every label wrapped ("Final
+   Deltas Done · 1 pre-delta in flight" took four lines) and the tallest label
+   stretched all seven cards, leaving dead space inside the short ones.
+
+   auto-fit + minmax lets the row reflow to 7/4/3/2 columns by available width
+   instead of squeezing. Matches the "Data-Dense Dashboard" pattern: KPI cards,
+   minimal padding, grid layout, space-efficient.
+   --------------------------------------------------------------------------- */
+/* Fixed column counts, not auto-fit. auto-fit packs as many as will fit and leaves whatever is left
+   over on a short final row -- with 7 metrics that produced a 5 + 2 split with two orphans, which
+   reads as broken rather than responsive. An explicit count keeps every row equal.
+
+   7 across is comfortable at the shell's 1180px max-width now that labels are single-line: 7 cards
+   plus six 10px gaps leaves ~150px each, and the widest label ("Pending Approvals") needs ~147px.
+   The breakpoints below step down to counts that divide 7 as evenly as possible. */
+.kpi-grid {
+  display: grid;
+  /* minmax(0, 1fr) not 1fr: 1fr floors at min-content, which would overflow the row rather than
+     letting the cards shrink. */
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+/* 4 + 3 -- still uneven, but two nearly-full rows read far better than 5 + 2, and below this width
+   seven across genuinely cannot fit. */
+@media (max-width: 1150px) {
+  .kpi-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* 3 + 3 + 1. */
+@media (max-width: 860px) {
+  .kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.kpi {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 13px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.kpi:hover {
+  border-color: #d7dce6;
+  box-shadow: var(--shadow-md);
+}
+
+.kpi__value {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  /* Tabular figures so the numbers line up across cards instead of drifting. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* Wraps to at most two lines, with the space for both reserved.
+
+   nowrap was wrong here: at 7 columns inside a 1180px shell each card is only
+   ~120px of content, and "Pending Approvals" needs more than that, so it spilled
+   past the card edge. Reserving two lines instead means the longer labels wrap
+   cleanly while every card keeps the same height and the meta line below stays on
+   a common baseline across the row -- which is what made the original four-line
+   labels look broken, not wrapping as such. */
+.kpi__label {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-text);
+  /* Exactly two lines at this size/line-height. */
+  min-height: 31px;
+  /* Belt and braces: a single unbreakable long word still can't escape the card. */
+  overflow-wrap: anywhere;
+}
+
+/* The secondary fact ("1 pre-delta in flight", "1 done") gets its own line
+   rather than being appended to the label with a "·" -- that concatenation is
+   what pushed labels to three and four lines. */
+.kpi__meta {
+  font-size: 11px;
+  color: var(--color-text-faint);
+  line-height: 1.35;
+  /* Reserves one line so a card with no meta text still ends at the same place as
+     one that has it. Grid items stretch to the tallest row anyway, so this is about
+     where the text sits inside the card, not the card's own height. */
+  min-height: 15px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 620px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  /* Two cards across is wide enough that every label fits on one line, so the
+     two-line reservation would just add dead space. */
+  .kpi__label {
+    min-height: 0;
   }
 }

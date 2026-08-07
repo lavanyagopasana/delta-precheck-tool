@@ -3,5 +3,10 @@
   "devApprovalsPending" : 1,
   "devApprovalsDone" : 1,
   "migrationManagerApprovalsPending" : 0,
-  "migrationManagerApprovalsDone" : 2
+  "migrationManagerApprovalsDone" : 2,
+  "serversReadyToDecommission" : 0,
+  "serversDecommissioned" : 0,
+  "finalDeltasComplete" : 0,
+  "preDeltaCyclesCompleted" : 0,
+  "preDeltasInFlight" : 0
 }

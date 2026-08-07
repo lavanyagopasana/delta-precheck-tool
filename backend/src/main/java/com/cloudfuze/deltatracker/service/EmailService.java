@@ -213,6 +213,43 @@ public class EmailService {
         send(new String[] { managerEmail }, subject, html, text);
     }
 
+    // The Final Delta is the one milestone that ends a combination's migration for good, so it gets its
+    // own notification rather than reusing the per-cycle "Delta Finished" mail above -- otherwise the
+    // event that actually completes the engagement is indistinguishable from every intermediate
+    // pre-delta. serverReady says whether this was the LAST combination on the server, i.e. whether the
+    // server can now be decommissioned.
+    public void notifyFinalDeltaComplete(String projectName, String serverName, String combinationName,
+                                          String completedBy, LocalDateTime completedAt, boolean serverReady,
+                                          String managerEmail) {
+        String subject = "Final Delta Complete: " + serverLabel(serverName, combinationName) + " (" + projectName + ")";
+        String decommissionNote = serverReady
+                ? "Every combination on this server has now completed its Final Delta — the server is ready to be decommissioned."
+                : "Other combinations on this server are still in progress, so the server isn't ready to decommission yet.";
+
+        List<String[]> fields = new ArrayList<>();
+        fields.add(new String[] { "Project", projectName });
+        fields.add(new String[] { "Server URL", serverName });
+        fields.add(new String[] { "Combination", combinationName });
+        fields.add(new String[] { "Completed by", orDash(completedBy) });
+        fields.add(new String[] { "Completed at", completedAt.format(DATE_FORMATTER) });
+        fields.add(new String[] { "Server status", serverReady ? "Ready to decommission" : "Other combinations pending" });
+
+        String lede = "The Final Delta for this combination is complete. No further pre-checks or deltas will run on it.";
+        String html = renderEmail("Final Delta Complete", "COMPLETED", true,
+                lede + " " + decommissionNote, fields, "Open Dashboard", frontendUrl);
+        String text = "Hi,\n\n"
+                + lede + "\n\n"
+                + decommissionNote + "\n\n"
+                + "Project: " + projectName + "\n"
+                + "Server URL: " + serverName + "\n"
+                + "Combination: " + combinationName + "\n"
+                + "Completed by: " + orDash(completedBy) + "\n"
+                + "Completed at: " + completedAt.format(DATE_FORMATTER) + "\n\n"
+                + "Open dashboard: " + frontendUrl;
+
+        send(new String[] { managerEmail }, subject, html, text);
+    }
+
     private List<String[]> fieldRows(String projectName, String serverName, String combinationName,
                                       int workspacePairCount, String submittedBy) {
         List<String[]> fields = new ArrayList<>();

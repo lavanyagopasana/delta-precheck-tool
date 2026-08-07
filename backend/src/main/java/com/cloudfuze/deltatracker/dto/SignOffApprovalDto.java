@@ -1,5 +1,6 @@
 package com.cloudfuze.deltatracker.dto;
 
+import com.cloudfuze.deltatracker.entity.DeltaType;
 import com.cloudfuze.deltatracker.entity.ProductType;
 import com.cloudfuze.deltatracker.entity.SignOffRole;
 import com.cloudfuze.deltatracker.entity.SignOffStatus;
@@ -36,4 +37,13 @@ public class SignOffApprovalDto {
     private String currentStatus;
     private boolean turnReady;
     private boolean canAct;
+
+    // Which Delta cycle this approval request belongs to, so approvers can see the stakes before
+    // acting: a Final Delta is irreversible and makes the server decommissionable, whereas a
+    // Pre-Delta will come round again. deltaType is null only if the request predates this field.
+    private int cycleNumber;
+    private DeltaType deltaType;
+    // "Pre-Delta 2" / "Final Delta" -- resolved server-side via DeltaType.label so the numbering
+    // rule isn't reimplemented per consumer.
+    private String deltaLabel;
 }

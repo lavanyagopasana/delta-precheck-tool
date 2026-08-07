@@ -39,17 +39,19 @@ public class SignOffService {
     private final AppUserService appUserService;
     private final PreCheckSubmissionRepository preCheckSubmissionRepository;
     private final TicketService ticketService;
+    private final DeltaCycleService deltaCycleService;
 
     public SignOffService(SignOffRepository signOffRepository, WorkspaceCombinationService combinationService,
                            EmailService emailService, AppUserService appUserService,
                            PreCheckSubmissionRepository preCheckSubmissionRepository,
-                           TicketService ticketService) {
+                           TicketService ticketService, DeltaCycleService deltaCycleService) {
         this.signOffRepository = signOffRepository;
         this.combinationService = combinationService;
         this.emailService = emailService;
         this.appUserService = appUserService;
         this.preCheckSubmissionRepository = preCheckSubmissionRepository;
         this.ticketService = ticketService;
+        this.deltaCycleService = deltaCycleService;
     }
 
     // Kicks off the Migration Manager -> Dev Lead -> QA Lead approval chain the moment a
@@ -365,7 +367,8 @@ public class SignOffService {
     }
 
     private void finalizeDelta(WorkspaceCombination combination) {
-        String requestedBy = preCheckSubmissionRepository.findByCombinationId(combination.getId())
+        var submission = preCheckSubmissionRepository.findByCombinationId(combination.getId());
+        String requestedBy = submission
                 .map(sub -> sub.getSubmittedBy())
                 .filter(s -> s != null && !s.isBlank())
                 .orElse("unknown");
@@ -373,6 +376,12 @@ public class SignOffService {
         combination.setDeltaInitiatedAt(LocalDateTime.now());
         combination.setDeltaInitiatedBy(requestedBy);
         WorkspaceCombination saved = combinationService.save(combination);
+
+        // The chain has fully resolved, so this cycle is settled -- freeze what was approved (checklist
+        // answers, evidence, and all three sign-off outcomes) into delta_cycles before any of it can be
+        // reset by a later rollover. This is the only place a cycle record is created.
+        deltaCycleService.recordApproval(saved, requestedBy,
+                submission.map(sub -> sub.getSubmittedAt()).orElse(null));
 
         Server server = saved.getServer();
         Project project = server.getProject();
@@ -444,6 +453,13 @@ public class SignOffService {
         dto.setTotalPairs(stats.totalPairs());
         dto.setOpenEscalationCount(stats.openEscalations());
         dto.setReadinessStatus(ServerReadinessDto.computeReadinessStatus(combination.getStatus(), stats.openEscalations()));
+        dto.setCycleNumber(combination.getCurrentCycleNumber());
+        dto.setDeltaType(combination.getCurrentDeltaType());
+        // Null type means the pre-check hasn't been submitted yet (nothing has settled this cycle's
+        // nature), so there's no honest label to show -- the frontend renders a dash for it.
+        dto.setDeltaLabel(combination.getCurrentDeltaType() == null
+                ? null
+                : combination.getCurrentDeltaType().label(combination.getCurrentCycleNumber()));
 
         if (server.getProject() != null) {
             dto.setProjectId(server.getProject().getId());

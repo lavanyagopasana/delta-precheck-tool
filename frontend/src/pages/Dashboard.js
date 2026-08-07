@@ -3,6 +3,32 @@ import { useNavigate } from "react-router-dom";
 import { getDashboardSummary, getProjects } from "../api/client";
 import DashboardCharts from "../components/DashboardCharts";
 
+const KPI_TONES = {
+  green: "var(--color-green)",
+  yellow: "var(--color-yellow)",
+  red: "var(--color-red)",
+  purple: "var(--color-purple)",
+};
+
+/**
+ * One dashboard metric.
+ *
+ * `tone` is applied only when the value is non-zero. A coloured zero is a lie in both directions:
+ * "0 Delta Ready" in green read as good news when it actually means nothing is ready, and "0 Open
+ * Tickets" in green competed for attention with metrics that genuinely needed it. Zero is the resting
+ * state, so it stays in the default text colour and the colour means "there is something here".
+ */
+function Kpi({ label, value, tone, meta }) {
+  const color = value > 0 && tone ? KPI_TONES[tone] : undefined;
+  return (
+    <div className="kpi">
+      <div className="kpi__value" style={{ color }}>{value}</div>
+      <div className="kpi__label">{label}</div>
+      <div className="kpi__meta">{meta}</div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
@@ -38,11 +64,12 @@ export default function Dashboard() {
     () => projects.reduce((sum, p) => sum + (p.openEscalationCount || 0), 0),
     [projects]
   );
-  // A project is ready to decommission once every one of its servers has finished its Delta.
-  const decommissionReady = useMemo(
-    () => projects.filter((p) => p.decommissionReady).length,
-    [projects]
-  );
+  // Decommissioning is a per-SERVER action now (a server is eligible once every combination under it
+  // has completed its Final Delta), so this tile counts servers rather than whole projects as it used
+  // to -- and it comes from the backend summary instead of being derived here, since the eligibility
+  // rule lives in ServerService and shouldn't be reimplemented client-side.
+  const decommissionReady = summary?.serversReadyToDecommission || 0;
+  const decommissioned = summary?.serversDecommissioned || 0;
 
   // Anything with an open ticket or an approval sitting in someone's queue -- the two things
   // that actually need a human to act, as opposed to routine in-progress work.
@@ -82,37 +109,32 @@ export default function Dashboard() {
         A quick look at migration progress across every project.
       </p>
 
-      <div className="card-row card-row--nowrap">
-        <div className="stat-card">
-          <div className="value">{projects.length}</div>
-          <div className="label">Projects</div>
-        </div>
-        <div className="stat-card">
-          <div className="value">{totalServers}</div>
-          <div className="label">Servers</div>
-        </div>
-        <div className="stat-card">
-          <div className="value" style={{ color: "var(--color-green)" }}>{readyServers}</div>
-          <div className="label">Delta Ready</div>
-        </div>
-        <div className="stat-card">
-          <div className="value" style={{ color: summary.totalApprovalRequests > 0 ? "var(--color-yellow)" : undefined }}>
-            {summary.totalApprovalRequests}
-          </div>
-          <div className="label">Pending Approvals</div>
-        </div>
-        <div className="stat-card">
-          <div className="value" style={{ color: openEscalations > 0 ? "var(--color-red)" : "var(--color-green)" }}>
-            {openEscalations}
-          </div>
-          <div className="label">Open Tickets</div>
-        </div>
-        <div className="stat-card">
-          <div className="value" style={{ color: decommissionReady > 0 ? "var(--color-green)" : undefined }}>
-            {decommissionReady}
-          </div>
-          <div className="label">Ready To Decommission</div>
-        </div>
+      {/* A grid, not a nowrap flex row: seven cards forced onto one line left each ~150px, so every
+          label wrapped and the longest one stretched all seven. See .kpi-grid in index.css.
+          Each metric's secondary fact goes in `meta` (its own line) rather than being appended to the
+          label with a "·", which is what produced four-line labels. */}
+      <div className="kpi-grid">
+        <Kpi label="Projects" value={projects.length} />
+        <Kpi label="Servers" value={totalServers} />
+        <Kpi label="Delta Ready" value={readyServers} tone="green" />
+        <Kpi label="Pending Approvals" value={summary.totalApprovalRequests} tone="yellow" />
+        <Kpi label="Open Tickets" value={openEscalations} tone="red" />
+        {/* Final Deltas are the migrations that actually finished, as distinct from "Delta Ready"
+            above (approved, but possibly only for an intermediate pre-delta). */}
+        <Kpi
+          label="Final Deltas Done"
+          value={summary.finalDeltasComplete}
+          tone="purple"
+          meta={summary.preDeltasInFlight > 0
+            ? `${summary.preDeltasInFlight} pre-delta${summary.preDeltasInFlight === 1 ? "" : "s"} in flight`
+            : null}
+        />
+        <Kpi
+          label="To Decommission"
+          value={decommissionReady}
+          tone="green"
+          meta={decommissioned > 0 ? `${decommissioned} already done` : null}
+        />
       </div>
 
       <div className="card" style={{ marginTop: 6 }}>

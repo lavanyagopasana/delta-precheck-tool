@@ -137,3 +137,15 @@ export function ServerIcon(props) {
     </Svg>
   );
 }
+
+// A gridded sheet -- used for "CSV format". Deliberately a table rather than a plain document, since
+// what the button opens is a column layout, not a file.
+export function TableIcon(props) {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <line x1="3" y1="9.5" x2="21" y2="9.5" />
+      <line x1="9.5" y1="9.5" x2="9.5" y2="20" />
+    </Svg>
+  );
+}

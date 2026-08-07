@@ -47,6 +47,8 @@ public class WorkspaceCombination {
 
     // Post-Delta lifecycle, driven by the engineer: after Delta is initiated they Start the actual
     // migration, then mark it Finished. Both are timestamps stamped at click time (null until then).
+    // All six delta_* columns above describe the CURRENT cycle only -- they're cleared on every
+    // rollover to a new pre-delta. The per-cycle history lives in delta_cycles (see DeltaCycle).
     @Column(name = "delta_started_at")
     private LocalDateTime deltaStartedAt;
 
@@ -59,8 +61,39 @@ public class WorkspaceCombination {
     @Column(name = "delta_finished_by")
     private String deltaFinishedBy;
 
+    // Which cycle is being filled out / reviewed / run right now. 1-based, incremented by
+    // DeltaCycleService.rollOver once a PRE_DELTA cycle finishes. Defaulted at both the Java and
+    // column level so rows predating this feature read as cycle 1 rather than 0 under ddl-auto=update.
+    @Column(name = "current_cycle_number", nullable = false, columnDefinition = "int default 1")
+    private int currentCycleNumber = 1;
+
+    // The current cycle's declared type, copied from the "Delta Type" checklist item at submit time
+    // (PreCheckSubmissionService.submit) and cleared on withdrawal or rollover. Denormalized onto the
+    // combination rather than re-read from the item on every request because it has to survive the
+    // item's reset to NOT_STARTED, and because it's what actually gets approved -- reading the live
+    // item instead would let an admin edit of a submitted form silently change a cycle's nature after
+    // an approver had already acted on it.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "current_delta_type")
+    private DeltaType currentDeltaType;
+
+    // Stamped when a FINAL_DELTA cycle is marked finished. Non-null means this combination is done
+    // for good: no further pre-check editing or submission, and it now counts toward its server
+    // becoming decommission-ready. This -- not deltaFinishedAt -- is the "migration complete" signal,
+    // since deltaFinishedAt is also set by every intermediate pre-delta.
+    @Column(name = "final_delta_completed_at")
+    private LocalDateTime finalDeltaCompletedAt;
+
+    @Column(name = "final_delta_completed_by")
+    private String finalDeltaCompletedBy;
+
     public WorkspaceCombination(Server server, String name) {
         this.server = server;
         this.name = name;
+    }
+
+    // True once the FINAL_DELTA cycle has been marked finished -- the combination is locked from here.
+    public boolean isFinalDeltaComplete() {
+        return finalDeltaCompletedAt != null;
     }
 }

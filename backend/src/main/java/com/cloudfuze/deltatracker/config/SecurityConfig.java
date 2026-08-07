@@ -3,6 +3,9 @@ package com.cloudfuze.deltatracker.config;
 import com.cloudfuze.deltatracker.entity.AppUserRole;
 import com.cloudfuze.deltatracker.service.AppUserService;
 import com.cloudfuze.deltatracker.util.JwtEmailUtil;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -63,6 +66,8 @@ import java.util.regex.Pattern;
 @EnableWebSecurity
 public class SecurityConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
+
     private static final String JWK_SET_URI = "https://login.microsoftonline.com/organizations/discovery/v2.0/keys";
     private static final Pattern ISSUER_PATTERN =
             Pattern.compile("^https://login\\.microsoftonline\\.com/[0-9a-fA-F-]{36}/v2\\.0$");
@@ -98,10 +103,53 @@ public class SecurityConfig {
         return StringUtils.hasText(clientId);
     }
 
+    /**
+     * Logs the two settings that decide whether a deployed frontend can talk to this backend at all.
+     * Both fail silently when wrong: a blank client-id makes every /api/** route permitAll (the app
+     * starts and serves happily, just with no authentication -- see .claude/rules/security-rules.md),
+     * and a CORS list that doesn't contain the real frontend origin surfaces in the browser as an
+     * opaque network error rather than anything identifiable in the logs. Printing both at startup
+     * means a misconfigured deploy is diagnosable from the log alone, instead of only from the
+     * symptom. Deliberately logs the effective values, not the raw env vars, so a default that
+     * quietly applied is as visible as one that was set explicitly.
+     */
+    @PostConstruct
+    void logEffectiveAuthAndCorsConfig() {
+        List<String> origins = parseAllowedOrigins();
+        if (authConfigured()) {
+            log.info("Auth ENABLED: client-id={}, tenant-id={}, allowed-email-domain={}",
+                    clientId,
+                    StringUtils.hasText(tenantId) ? tenantId : "(any -- multi-tenant)",
+                    StringUtils.hasText(allowedEmailDomain) ? allowedEmailDomain : "(none)");
+        } else {
+            log.warn("Auth DISABLED -- azure.client-id is blank, so every /api/** route is permitAll "
+                    + "and /api/me returns a null email for everyone. Set AZURE_CLIENT_ID before "
+                    + "exposing this anywhere real.");
+        }
+        log.info("CORS allowed origins for /api/**: {}", origins);
+        if (origins.size() == 1 && origins.get(0).contains("localhost")) {
+            log.warn("CORS is still at its localhost-only default. A deployed frontend on any other "
+                    + "origin will be blocked by the browser -- set APP_ALLOWED_ORIGINS to that "
+                    + "origin (comma-separated for more than one). Harmless for local development.");
+        }
+    }
+
+    /**
+     * Split out so the filter chain and the startup log can't disagree about what the effective list
+     * is. Blank entries are dropped rather than passed through -- a trailing comma in
+     * APP_ALLOWED_ORIGINS would otherwise register "" as an allowed origin.
+     */
+    private List<String> parseAllowedOrigins() {
+        return Arrays.stream(allowedOrigins.split(","))
+                .map(String::trim)
+                .filter(StringUtils::hasText)
+                .toList();
+    }
+
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(Arrays.asList(allowedOrigins.split("\\s*,\\s*")));
+        configuration.setAllowedOrigins(parseAllowedOrigins());
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
 
@@ -143,9 +191,24 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.PATCH, "/api/servers/*").access(roleRequired(
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER, AppUserRole.MIGRATION_MANAGER))
                         // Post-Delta lifecycle (Start / Finish the migration) -- engineer-driven, admins too.
-                        // Per-combination now, not per-server.
+                        // Per-combination now, not per-server. Finishing a Final Delta is what ends a
+                        // combination for good, so this is also the path that makes a server
+                        // decommissionable; the decommission action itself is admin-only, below.
                         .requestMatchers(HttpMethod.POST, "/api/combinations/*/delta/**").access(roleRequired(
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER))
+                        // Delta history (per-cycle snapshots) is read-only audit data -- visible to
+                        // anyone on the allowlist, same as viewing a pre-check form. Stated explicitly
+                        // rather than left to the anyRequest() default, per .claude/rules/api-conventions.md.
+                        .requestMatchers(HttpMethod.GET, "/api/combinations/*/delta-cycles")
+                                .access(allowlistRequired())
+                        // Decommissioning a server -- ADMIN only, matching the product decision that only
+                        // admins do this. It permanently erases the server and everything under it, so
+                        // this is the most destructive route in the app; also re-checked in ServerService
+                        // so the rule survives a routing change. Listed before the PATCH/DELETE
+                        // /api/servers/* rules below so it can't be widened by them. No DELETE
+                        // counterpart: the undo endpoint was removed when decommission became an erase.
+                        .requestMatchers(HttpMethod.POST, "/api/servers/*/decommission").access(roleRequired(
+                                AppUserRole.ADMIN))
                         // Deleting a project is gated here to the roles that could ever be allowed; the
                         // per-project ownership check (creator / managing MM / admin) and the
                         // Delta-initiated audit guard are enforced in ProjectService.delete.
@@ -157,11 +220,15 @@ public class SecurityConfig {
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER, AppUserRole.MIGRATION_ENGINEER))
                         .requestMatchers(HttpMethod.GET, "/api/combinations/*/precheck-items/**", "/api/combinations/*/precheck-submission/**")
                                 .access(allowlistRequired())
-                        // ADMIN included here by explicit product decision -- admins have full access
-                        // to everything, including filling out/submitting/withdrawing pre-checks. The
-                        // per-action admin bypasses live in the services (ownership lock, submitted lock).
+                        // Filling out and submitting a pre-check is a MIGRATION_ENGINEER action only, as of
+                        // 2026-08-06. MIGRATION_MANAGER was removed by product decision: the manager is the
+                        // first approver in the sign-off chain, so letting them also fill in the form they
+                        // then approve collapses two steps of the chain into one person. DEV_LEAD/QA_LEAD
+                        // were never here. ADMIN stays as the deliberate unblock path for a pre-check locked
+                        // to an engineer who has become unavailable -- without it that needs a database edit.
+                        // The per-action admin bypasses live in the services (ownership lock, submitted lock).
                         .requestMatchers("/api/combinations/*/precheck-items/**", "/api/combinations/*/precheck-submission/**")
-                                .access(roleRequired(AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER, AppUserRole.MIGRATION_MANAGER))
+                                .access(roleRequired(AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER))
                         .anyRequest().access(allowlistRequired()))
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.decoder(azureJwtDecoder())));
 

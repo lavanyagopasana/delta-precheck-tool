@@ -8,6 +8,7 @@ import React, { useMemo } from "react";
 const TRACK = "#eceef2";
 const GREEN = "var(--color-green)";
 const YELLOW = "var(--color-yellow)";
+const RED = "var(--color-red)";
 const INK = "var(--color-text)";
 const MUTED = "var(--color-text-muted)";
 
@@ -129,44 +130,55 @@ function ProjectBars({ projects }) {
 
 export default function DashboardCharts({ projects }) {
   // Chart aggregates memoized on `projects` -- expressions unchanged from their inline form.
-  const totalServers = useMemo(() => projects.reduce((s, p) => s + (p.serverCount || 0), 0), [projects]);
-  const readyServers = useMemo(() => projects.reduce((s, p) => s + (p.readyServerCount || 0), 0), [projects]);
+  // Project-level, not server-level. The per-server rollup duplicated the "Delta readiness by project"
+  // bars directly below it, and a server total isn't a unit anyone tracks -- "how many projects are
+  // clear" is. A project counts as ready only when every one of its servers is, and a project with no
+  // servers yet isn't ready (nothing has been imported to be ready about).
+  const totalProjects = projects.length;
+  const readyProjects = useMemo(
+    () => projects.filter((p) => (p.serverCount || 0) > 0 && (p.readyServerCount || 0) === p.serverCount).length,
+    [projects]
+  );
+  // Counted per COMBINATION, not per role-step. One combination has exactly one approval chain
+  // (Migration Manager -> Dev Lead -> QA Lead), so each one lands in exactly one bucket and the total
+  // reconciles against the Approvals page. The previous version summed
+  // migrationManagerApprovals* + devApprovals*, which double counted a combination across two roles and
+  // omitted QA Lead entirely -- so a combination waiting on QA showed up as "Pending (0)".
   const approvalsDone = useMemo(
-    () => projects.reduce(
-      (s, p) => s + (p.migrationManagerApprovalsDone || 0) + (p.devApprovalsDone || 0),
-      0
-    ),
+    () => projects.reduce((s, p) => s + (p.combinationsFullyApproved || 0), 0),
     [projects]
   );
   const approvalsPending = useMemo(
-    () => projects.reduce(
-      (s, p) => s + (p.migrationManagerApprovalsPending || 0) + (p.devApprovalsPending || 0),
-      0
-    ),
+    () => projects.reduce((s, p) => s + (p.combinationsAwaitingApproval || 0), 0),
     [projects]
   );
-  const approvalsTotal = approvalsDone + approvalsPending;
+  const approvalsDeclined = useMemo(
+    () => projects.reduce((s, p) => s + (p.combinationsDeclined || 0), 0),
+    [projects]
+  );
+  const approvalsTotal = approvalsDone + approvalsPending + approvalsDeclined;
 
   return (
     <div className="card" style={{ marginTop: 18 }}>
       <strong style={{ fontSize: 14 }}>Overview at a glance</strong>
       <div style={{ display: "flex", gap: 48, flexWrap: "wrap", alignItems: "flex-start", justifyContent: "center", marginTop: 18 }}>
         <Donut
-          title="Server readiness"
-          total={totalServers}
-          segments={[{ label: "Delta Ready", value: readyServers, color: GREEN }]}
+          title="Project readiness"
+          total={totalProjects}
+          segments={[{ label: "Delta Ready", value: readyProjects, color: GREEN }]}
           remainderLabel="Not ready"
-          center={totalServers > 0 ? `${readyServers}/${totalServers}` : "0"}
-          centerSub="servers ready"
+          center={totalProjects > 0 ? `${readyProjects}/${totalProjects}` : "0"}
+          centerSub={totalProjects === 1 ? "project ready" : "projects ready"}
         />
         <Donut
           title="Approvals"
           segments={[
-            { label: "Approved", value: approvalsDone, color: GREEN },
-            { label: "Pending", value: approvalsPending, color: YELLOW },
+            { label: "Fully approved", value: approvalsDone, color: GREEN },
+            { label: "Awaiting approval", value: approvalsPending, color: YELLOW },
+            { label: "Declined", value: approvalsDeclined, color: RED },
           ]}
           center={approvalsTotal}
-          centerSub={approvalsTotal === 1 ? "request" : "requests"}
+          centerSub={approvalsTotal === 1 ? "combination" : "combinations"}
         />
       </div>
 

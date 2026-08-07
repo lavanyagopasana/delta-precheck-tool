@@ -54,6 +54,7 @@ public class PreCheckItemService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Pre-check item does not belong to this combination");
         }
         boolean isAdmin = appUserService.isAdmin(request.getUpdatedBy());
+        requireNotFinalised(combination);
         requireUnlocked(combinationId, isAdmin);
         claimOrVerifyOwnership(combinationId, request.getUpdatedBy(), isAdmin);
 
@@ -75,6 +76,7 @@ public class PreCheckItemService {
     public void setAllStatus(Long combinationId, ItemStatus status, String updatedBy) {
         WorkspaceCombination combination = combinationService.findOrThrow(combinationId);
         boolean isAdmin = appUserService.isAdmin(updatedBy);
+        requireNotFinalised(combination);
         requireUnlocked(combinationId, isAdmin);
         claimOrVerifyOwnership(combinationId, updatedBy, isAdmin);
 
@@ -89,6 +91,19 @@ public class PreCheckItemService {
         preCheckItemRepository.saveAll(items);
 
         combinationService.recomputeStatus(combination);
+    }
+
+    // Once the Final Delta is done the combination is finished for good, so its checklist is frozen.
+    // Unlike the submitted-lock below, admins do NOT bypass this: the point is that the migration is
+    // complete and its record shouldn't be quietly rewritten afterwards. There is no in-app way to
+    // reopen it -- the decommission-undo that used to serve that purpose was removed when
+    // decommissioning became an erase (see ServerService.decommission), so reopening a finalised
+    // combination now means editing the database directly.
+    private void requireNotFinalised(WorkspaceCombination combination) {
+        if (combination.isFinalDeltaComplete()) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "The Final Delta for this combination is already complete -- its pre-check is closed.");
+        }
     }
 
     // Admins bypass the submitted-lock entirely -- full access to edit even a submitted pre-check.

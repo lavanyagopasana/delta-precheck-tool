@@ -64,6 +64,7 @@ class SignOffServiceTest {
     @Mock private AppUserService appUserService;
     @Mock private PreCheckSubmissionRepository preCheckSubmissionRepository;
     @Mock private TicketService ticketService;
+    @Mock private DeltaCycleService deltaCycleService;
 
     private SignOffService service;
     private WorkspaceCombination combination;
@@ -71,7 +72,7 @@ class SignOffServiceTest {
     @BeforeEach
     void setUp() {
         service = new SignOffService(signOffRepository, combinationService, emailService, appUserService,
-                preCheckSubmissionRepository, ticketService);
+                preCheckSubmissionRepository, ticketService, deltaCycleService);
         Project project = new Project("Alpha", "eng@cloudfuze.com", MM_EMAIL, null);
         Server server = new Server("SRV-1");
         server.setId(10L);

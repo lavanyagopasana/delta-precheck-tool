@@ -5,6 +5,7 @@ import com.cloudfuze.deltatracker.entity.ProductType;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Getter
@@ -30,6 +31,19 @@ public class ServerReadinessDto {
     // See ProjectService.applyReadinessStage.
     private String readinessStage;
     private String readinessDetail;
+
+    // --- Per-server decommission (see ServerService.isDecommissionReady) ---
+    // True once every combination on this server has completed its Final Delta and it hasn't already
+    // been decommissioned -- i.e. the admin's Decommission action is available right now.
+    private boolean decommissionReady;
+    private LocalDateTime decommissionedAt;
+    private String decommissionedBy;
+    private boolean decommissioned;
+    // How many of this server's combinations have finished their Final Delta, out of how many there
+    // are -- the "3 / 5 done" figure in the Delta Progress table.
+    private int finalDeltaCompleteCount;
+    // Total Delta cycles recorded across every combination on this server (pre-deltas + final).
+    private long totalDeltaCycleCount;
     // Each combination's own pre-check/sign-off/Delta lifecycle lives at
     // GET /api/combinations/{id} -- this list is just enough for the UI to pick one.
     private List<CombinationSummaryDto> combinations;

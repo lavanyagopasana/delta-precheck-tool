@@ -10,7 +10,9 @@ import {
 } from "../api/client";
 import CsvImportPanel from "./CsvImportPanel";
 import DataTable from "./DataTable";
+import DeltaHistoryPanel from "./DeltaHistoryPanel";
 import { useToast } from "./Toast";
+import { useConfirm } from "./ConfirmDialog";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { groupByCombination } from "../utils/pairs";
@@ -29,6 +31,7 @@ const SAMPLE_ROW = [
 function CombinationStatRow({ combinationId, onChanged }) {
   const currentUser = useCurrentUser();
   const showToast = useToast();
+  const confirm = useConfirm();
   const [readiness, setReadiness] = useState(null);
   const canRunDelta = !AUTH_CONFIGURED || currentUser?.role === "MIGRATION_ENGINEER" || currentUser?.role === "ADMIN";
 
@@ -49,10 +52,28 @@ function CombinationStatRow({ combinationId, onChanged }) {
     }
   };
 
+  // Finishing is the branch point of the whole multi-cycle flow, and the two outcomes are very
+  // different -- one reopens the checklist, the other permanently closes the combination. Confirm
+  // explicitly so nobody discovers which one happened after the fact.
   const handleFinishDelta = async () => {
+    const isFinal = readiness?.currentDeltaType === "FINAL_DELTA";
+    const ok = await confirm({
+      title: isFinal ? "Finish the Final Delta?" : `Finish ${readiness?.currentDeltaLabel || "this pre-delta"}?`,
+      message: isFinal
+        ? "This closes the combination for good: no further pre-checks or deltas, and its server becomes ready to decommission once every combination is done."
+        : "The pre-check will be cleared and reopened so the next pre-delta can be filled out. This cycle's checklist, evidence and sign-offs are kept in the Delta History.",
+      confirmLabel: isFinal ? "Finish Final Delta" : "Finish & start next cycle",
+      danger: isFinal,
+    });
+    if (!ok) return;
     try {
       await finishCombinationDelta(combinationId);
-      showToast("Delta migration marked finished.", "success");
+      showToast(
+        isFinal
+          ? "Final Delta complete — this combination is done."
+          : "Delta finished. The pre-check is reset for the next cycle.",
+        "success"
+      );
       load();
       onChanged();
     } catch (err) {
@@ -63,23 +84,42 @@ function CombinationStatRow({ combinationId, onChanged }) {
   if (!readiness) return null;
 
   const fmt = (d) => new Date(d).toLocaleDateString();
+  // Every stage carries a colour directly now (no pill/no-pill split) so the Status card renders one
+  // consistent shape whatever the state. Purple for the irreversible Final Delta milestone, matching the
+  // token's documented reservation in index.css.
   const stage =
-    readiness.readinessStage === "READY"
-      ? { label: "Delta Ready", pill: "green" }
+    readiness.readinessStage === "COMPLETE"
+      ? { label: "Final Delta complete", color: "var(--color-purple)" }
+      : readiness.readinessStage === "READY"
+      ? { label: "Delta Ready", color: "var(--color-green)" }
       : readiness.readinessStage === "IN_PROGRESS"
-      ? { label: readiness.readinessDetail || "In review", pill: null, color: "var(--color-yellow)" }
-      : { label: "Pre-check not submitted", pill: null, color: "var(--color-red)" };
+      ? {
+          label: readiness.readinessDetail || "In review",
+          color: readiness.blockedByDecline ? "var(--color-red)" : "var(--color-yellow)",
+        }
+      : { label: "Pre-check not submitted", color: "var(--color-red)" };
 
   return (
-    <div className="subpanel" style={{ marginBottom: 20 }}>
-      <div className="card-row" style={{ marginBottom: 0 }}>
+    // Fragment, not a wrapper: the history below is a sibling of the stat strip rather than nested
+    // inside it. Nesting it made a card-inside-a-panel-inside-a-card, and the resulting padding left
+    // the history barely any width to render in.
+    <>
+      <div className="subpanel" style={{ marginBottom: 16 }}>
+      {/* Single row (card-row--nowrap): the five cards shrink to fit rather than wrapping a lone card
+          onto a second line. The former "Current Delta" card was removed as redundant -- the Status
+          card already shows "Final Delta complete", the Start Pre-Check button carries the cycle
+          number, and the Delta history below lists every completed cycle in full. */}
+      <div className="card-row card-row--nowrap" style={{ marginBottom: 0 }}>
+        {/* Plain coloured text, not a badge. Every other card in this strip holds bare bold text (a
+            count or a date), so a pill here was the odd one out -- and since badges no longer wrap, a
+            long status like "Final Delta complete" stretched into a slab that unbalanced the row. The
+            colour still carries the same meaning the pill did. */}
         <div className="stat-card">
-          <div className="value" style={{ fontSize: 14 }}>
-            {stage.pill ? (
-              <span className={`badge ${stage.pill}`}>{stage.label}</span>
-            ) : (
-              <span style={{ fontSize: 12, fontWeight: 600, color: stage.color }}>{stage.label}</span>
-            )}
+          <div
+            className="value"
+            style={{ fontSize: 14, lineHeight: 1.3, color: stage.color }}
+          >
+            {stage.label}
           </div>
           <div className="label">Status</div>
         </div>
@@ -122,7 +162,17 @@ function CombinationStatRow({ combinationId, onChanged }) {
           <div className="label">Delta Finished</div>
         </div>
       </div>
-    </div>
+      </div>
+
+      {/* Per-cycle history, directly under the stat strip. This is what replaces the removed "Current
+          Delta · N done" card: instead of a single count, it lists every cycle with its own dates and
+          sign-offs. reloadKey changes whenever a Delta is started or finished above, so the history
+          refreshes in the same interaction. */}
+      <DeltaHistoryPanel
+        combinationId={combinationId}
+        reloadKey={readiness.deltaFinishedAt || readiness.deltaStartedAt}
+      />
+    </>
   );
 }
 
@@ -137,7 +187,9 @@ export default function WorkspacePairsPanel({
   const currentUser = useCurrentUser();
   const canImport =
     !AUTH_CONFIGURED || ["ADMIN", "MIGRATION_ENGINEER", "MIGRATION_MANAGER"].includes(currentUser?.role);
-  const canFillPreCheck = !AUTH_CONFIGURED || ["MIGRATION_ENGINEER", "MIGRATION_MANAGER"].includes(currentUser?.role);
+  // Mirrors PreCheckPanel.PRECHECK_EDIT_ROLES / SecurityConfig. A manager or lead still gets the link,
+  // it just reads "View Pre-Check Form" -- they review, they don't fill it in.
+  const canFillPreCheck = !AUTH_CONFIGURED || ["ADMIN", "MIGRATION_ENGINEER"].includes(currentUser?.role);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   // Seeded from initialCombination (e.g. arriving via a "?combination=" link) -- the effect below
@@ -194,15 +246,24 @@ export default function WorkspacePairsPanel({
         <div className="server-precheck-row">
           <strong style={{ fontSize: 13.5 }}>Pre-Check</strong>
           <button
-            className={`btn ${activeCombinationSummary.submissionStatus === "SUBMITTED" ? "success" : "warning"}`}
+            className={`btn ${
+              activeCombinationSummary.finalDeltaComplete || activeCombinationSummary.submissionStatus === "SUBMITTED"
+                ? "success"
+                : "warning"
+            }`}
             onClick={() => navigate(`/combinations/${activeCombinationSummary.id}/precheck`)}
           >
-            {activeCombinationSummary.submissionStatus === "SUBMITTED"
-              ? "View Pre-Check Form"
-              : !canFillPreCheck
+            {/* A finished Final Delta leaves the submission SUBMITTED forever, so it needs its own label
+                -- "View Pre-Check Form" would imply there's still a live cycle to look at. Cycle 2+
+                says so explicitly, since an empty checklist otherwise looks like a first-time one. */}
+            {activeCombinationSummary.finalDeltaComplete
+              ? "View Completed Pre-Check"
+              : activeCombinationSummary.submissionStatus === "SUBMITTED" || !canFillPreCheck
               ? "View Pre-Check Form"
               : activeCombinationSummary.submissionStatus === "DRAFT"
               ? "Continue Pre-Check Form"
+              : activeCombinationSummary.currentCycleNumber > 1
+              ? `Start Pre-Check · Delta ${activeCombinationSummary.currentCycleNumber}`
               : "Start Pre-Check Form"}
           </button>
         </div>

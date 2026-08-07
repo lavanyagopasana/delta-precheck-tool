@@ -48,11 +48,19 @@ wider token audience) does **not** need to touch authorization, and vice versa.
 - `/api/servers/*/signoffs/**` (non-GET) — `ADMIN`, `MIGRATION_MANAGER`, `DEV_LEAD`, `QA_LEAD` only.
 - `/api/pairs/import`, `/api/servers/*/pairs/import` (CSV import) — `ADMIN`, `MIGRATION_ENGINEER`,
   `MIGRATION_MANAGER` only.
-- `/api/servers/*/precheck-items/**`, `/api/servers/*/precheck-submission/**` (non-GET) —
-  `MIGRATION_ENGINEER`, `MIGRATION_MANAGER` only. Notably **`ADMIN` is deliberately excluded** from
-  this one, unlike the two rules above — don't "fix" this by adding `ADMIN` back in without
-  checking with a human first; it may be intentional (admins manage access, not fill out
-  pre-checks).
+- `/api/combinations/*/precheck-items/**`, `/api/combinations/*/precheck-submission/**` (non-GET) —
+  **`MIGRATION_ENGINEER` and `ADMIN` only**, as of 2026-08-06. Two deliberate exclusions here, both
+  confirmed with a human — don't "fix" either without asking again:
+  - `MIGRATION_MANAGER` was **removed** on 2026-08-06. The manager is the first approver in the
+    sign-off chain, so letting them also fill in the form they then approve collapses two steps of
+    the chain into one person. (They keep GET access and review via the Approvals page.)
+  - `ADMIN` is **kept**, as the unblock path for a pre-check locked to an engineer who has become
+    unavailable — without it that situation needs a direct database edit. `handleWithdraw` /
+    `canWithdraw` in `PreCheckPanel` is admin-only for the same reason.
+
+  The frontend mirror is `PRECHECK_EDIT_ROLES` in `PreCheckPanel.js` plus `canFillPreCheck` in
+  `WorkspacePairsPanel.js`. Those only hide controls; `SecurityConfig` is what enforces the rule, so
+  changing one without the others leaves buttons that 403 (or worse, a rule that isn't applied).
 - Managing the allowlist itself (`/api/admin/users/**`) requires `ADMIN`, enforced in
   `AppUserService.requireAdmin` (not in `SecurityConfig` — it's a defense-in-depth check called
   from `AdminController` directly).

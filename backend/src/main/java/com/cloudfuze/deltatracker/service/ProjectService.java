@@ -7,7 +7,6 @@ import com.cloudfuze.deltatracker.dto.ProjectSummaryDto;
 import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
 import com.cloudfuze.deltatracker.entity.AppUserRole;
 import com.cloudfuze.deltatracker.entity.PairStatus;
-import com.cloudfuze.deltatracker.entity.PreCheckItem;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
 import com.cloudfuze.deltatracker.entity.WorkspacePair;
 import com.cloudfuze.deltatracker.entity.Project;
@@ -21,7 +20,6 @@ import com.cloudfuze.deltatracker.entity.TicketStatus;
 import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
-import com.cloudfuze.deltatracker.repository.PreCheckItemRepository;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
 import com.cloudfuze.deltatracker.repository.ProjectRepository;
 import com.cloudfuze.deltatracker.repository.ServerRepository;
@@ -30,7 +28,6 @@ import com.cloudfuze.deltatracker.repository.TicketRepository;
 import com.cloudfuze.deltatracker.repository.WorkspaceCombinationRepository;
 import com.cloudfuze.deltatracker.repository.WorkspacePairRepository;
 import org.springframework.http.HttpStatus;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -58,13 +55,12 @@ public class ProjectService {
     private final WorkspaceCombinationRepository workspaceCombinationRepository;
     private final SignOffRepository signOffRepository;
     private final PreCheckSubmissionRepository preCheckSubmissionRepository;
-    private final PreCheckItemRepository preCheckItemRepository;
     private final TicketRepository ticketRepository;
-    private final FileStorageService fileStorageService;
     private final ServerService serverService;
     private final WorkspaceCombinationService workspaceCombinationService;
     private final AppUserService appUserService;
-    private final JdbcTemplate jdbcTemplate;
+    // Owns the per-server cascade delete that delete() used to inline itself.
+    private final ServerPurgeService serverPurgeService;
 
     public ProjectService(ProjectRepository projectRepository,
                            ServerRepository serverRepository,
@@ -72,26 +68,22 @@ public class ProjectService {
                            WorkspaceCombinationRepository workspaceCombinationRepository,
                            SignOffRepository signOffRepository,
                            PreCheckSubmissionRepository preCheckSubmissionRepository,
-                           PreCheckItemRepository preCheckItemRepository,
                            TicketRepository ticketRepository,
-                           FileStorageService fileStorageService,
                            ServerService serverService,
                            WorkspaceCombinationService workspaceCombinationService,
                            AppUserService appUserService,
-                           JdbcTemplate jdbcTemplate) {
+                           ServerPurgeService serverPurgeService) {
         this.projectRepository = projectRepository;
         this.serverRepository = serverRepository;
         this.workspacePairRepository = workspacePairRepository;
         this.workspaceCombinationRepository = workspaceCombinationRepository;
         this.signOffRepository = signOffRepository;
         this.preCheckSubmissionRepository = preCheckSubmissionRepository;
-        this.preCheckItemRepository = preCheckItemRepository;
         this.ticketRepository = ticketRepository;
-        this.fileStorageService = fileStorageService;
         this.serverService = serverService;
         this.workspaceCombinationService = workspaceCombinationService;
         this.appUserService = appUserService;
-        this.jdbcTemplate = jdbcTemplate;
+        this.serverPurgeService = serverPurgeService;
     }
 
     // email == null means auth isn't configured (or caller identity is unknown) -- in that case
@@ -174,6 +166,22 @@ public class ProjectService {
 
     private static String roleLabel(SignOffRole role) {
         return role.label();
+    }
+
+    /**
+     * True when every role in the approval sequence has cleared for a combination.
+     *
+     * <p>SKIPPED counts as cleared: it only ever appears on a QA Lead row, set when the Dev Lead
+     * decided QA approval wasn't needed, and that finalises the chain exactly as an approval would.
+     * Same rule as applyReadinessStage's nextRole lookup above -- kept consistent deliberately, since a
+     * chain counted "awaiting approval" here while the same combination reads "Delta Ready" there would
+     * be a contradiction on one dashboard.
+     */
+    private static boolean chainFullyResolved(EnumMap<SignOffRole, SignOffStatus> roles) {
+        return APPROVAL_SEQUENCE.stream().allMatch(role -> {
+            SignOffStatus status = roles.get(role);
+            return status == SignOffStatus.APPROVED || status == SignOffStatus.SKIPPED;
+        });
     }
 
     // A Migration Manager creating a project is automatically that project's manager -- no
@@ -309,34 +317,12 @@ public class ProjectService {
                             + "record and can't be deleted.");
         }
 
-        for (Server server : servers) {
-            List<WorkspaceCombination> combinations = workspaceCombinationRepository.findByServerId(server.getId());
-            for (WorkspaceCombination combination : combinations) {
-                List<PreCheckItem> items = preCheckItemRepository.findByCombinationId(combination.getId());
-                items.forEach(item -> fileStorageService.delete(item.getEvidenceFilePath()));
-                preCheckItemRepository.deleteAll(items);
-                preCheckSubmissionRepository.findByCombinationId(combination.getId())
-                        .ifPresent(preCheckSubmissionRepository::delete);
-                signOffRepository.deleteAll(signOffRepository.findByCombinationId(combination.getId()));
-                // Tickets belong to a combination now (not directly to the server) -- delete them
-                // before the combination row itself goes, or the FK would block it.
-                ticketRepository.deleteAll(ticketRepository.findByCombinationId(combination.getId()));
-            }
-            workspaceCombinationRepository.deleteAll(combinations);
-            deleteOrphanedEscalationRows(server.getId());
-            // Workspace pairs cascade via Server's @OneToMany(orphanRemoval=true) on delete.
-            serverRepository.delete(server);
-        }
+        // One shared definition of "everything hanging off a server", also used by
+        // ServerService.decommission -- see ServerPurgeService for why this isn't inlined here anymore
+        // (the previous inline version predated Delta cycles and never deleted them, so deleting a
+        // project with any Delta cycle failed on a foreign-key constraint).
+        servers.forEach(serverPurgeService::purge);
         projectRepository.delete(project);
-    }
-
-    // "escalations" is a leftover table from before this app's Escalation concept was renamed to
-    // Ticket (table "tickets") -- no entity maps to it anymore, but Hibernate's ddl-auto=update
-    // never drops old tables or their foreign keys, so a row left over from that era still blocks
-    // deleting the server it points at with a raw FK-constraint error. Plain JDBC since there's no
-    // JPA repository (and shouldn't be one) for a table nothing in the codebase otherwise touches.
-    private void deleteOrphanedEscalationRows(Long serverId) {
-        jdbcTemplate.update("DELETE FROM escalations WHERE server_id = ?", serverId);
     }
 
     // Mirrors the visibility model in isVisible(), plus the creator-until-submit rule. callerEmail
@@ -424,6 +410,9 @@ public class ProjectService {
         to.setDevApprovalsPending(from.getDevApprovalsPending());
         to.setMigrationManagerApprovalsDone(from.getMigrationManagerApprovalsDone());
         to.setMigrationManagerApprovalsPending(from.getMigrationManagerApprovalsPending());
+        to.setCombinationsFullyApproved(from.getCombinationsFullyApproved());
+        to.setCombinationsAwaitingApproval(from.getCombinationsAwaitingApproval());
+        to.setCombinationsDeclined(from.getCombinationsDeclined());
         to.setLastPreCheckSubmittedAt(from.getLastPreCheckSubmittedAt());
         to.setCreatedBy(from.getCreatedBy());
         to.setCreatedAt(from.getCreatedAt());
@@ -483,6 +472,13 @@ public class ProjectService {
         long migrationManagerPending = 0;
         long devDone = 0;
         long devPending = 0;
+        // Chain-level rollup, counted per combination rather than per role-step. Each combination lands
+        // in exactly one bucket, so these three sum to "combinations with a chain at all" and can be
+        // reconciled against the Approvals page -- unlike the role-step counters above, which double
+        // count a combination across roles and ignore QA_LEAD entirely.
+        long fullyApproved = 0;
+        long awaitingApproval = 0;
+        long declined = 0;
         for (WorkspaceCombination c : combinations) {
             EnumMap<SignOffRole, SignOffStatus> roles = signOffByCombination.get(c.getId());
             SignOffStatus mmStatus = roles == null ? null : roles.get(SignOffRole.MIGRATION_LEAD);
@@ -498,6 +494,21 @@ public class ProjectService {
                 devDone++;
             } else if (devStatus == SignOffStatus.PENDING && mmStatus == SignOffStatus.APPROVED) {
                 devPending++;
+            }
+
+            // No chain yet (pre-check never submitted) is not an approval state -- it belongs to the
+            // pre-check funnel, not this one, so such combinations are counted in no bucket at all.
+            if (roles == null || roles.isEmpty()) {
+                continue;
+            }
+            if (roles.containsValue(SignOffStatus.DECLINED)) {
+                // A decline bounces the chain back a step, so it outranks the other states: the
+                // combination is neither done nor quietly waiting, someone has to rework it.
+                declined++;
+            } else if (chainFullyResolved(roles)) {
+                fullyApproved++;
+            } else {
+                awaitingApproval++;
             }
         }
         LocalDateTime lastPreCheckSubmittedAt = combinations.stream()
@@ -524,16 +535,34 @@ public class ProjectService {
         dto.setDevApprovalsPending(devPending);
         dto.setMigrationManagerApprovalsDone(migrationManagerDone);
         dto.setMigrationManagerApprovalsPending(migrationManagerPending);
+        dto.setCombinationsFullyApproved(fullyApproved);
+        dto.setCombinationsAwaitingApproval(awaitingApproval);
+        dto.setCombinationsDeclined(declined);
         dto.setLastPreCheckSubmittedAt(lastPreCheckSubmittedAt);
         dto.setCreatedBy(project.getCreatedBy());
         dto.setCreatedAt(project.getCreatedAt());
         // Ready to decommission once the project has servers, every one of them has at least one
-        // combination, and every combination has Delta finished.
+        // combination, and every combination has completed its FINAL Delta.
+        //
+        // Keyed off finalDeltaCompletedAt, NOT deltaFinishedAt as it was before multi-cycle deltas
+        // existed: deltaFinishedAt is now stamped by every intermediate pre-delta and cleared on each
+        // rollover, so the old check would have called a whole project decommission-ready as soon as
+        // its first pre-delta finished -- long before the migration was actually done.
         dto.setDecommissionReady(!servers.isEmpty() && servers.stream().allMatch(s -> {
             List<WorkspaceCombination> serverCombinations = combinationsByServer.getOrDefault(s.getId(), List.of());
             return !serverCombinations.isEmpty()
-                    && serverCombinations.stream().allMatch(c -> c.getDeltaFinishedAt() != null);
+                    && serverCombinations.stream().allMatch(WorkspaceCombination::isFinalDeltaComplete);
         }));
+        // Per-server decommission counters -- the project-level flag above stays for the Projects list,
+        // but decommissioning is actioned per server now, so the detail page needs the breakdown.
+        dto.setServersReadyToDecommission(servers.stream()
+                .filter(s -> !s.isDecommissioned())
+                .filter(s -> {
+                    List<WorkspaceCombination> c = combinationsByServer.getOrDefault(s.getId(), List.of());
+                    return !c.isEmpty() && c.stream().allMatch(WorkspaceCombination::isFinalDeltaComplete);
+                })
+                .count());
+        dto.setServersDecommissioned(servers.stream().filter(Server::isDecommissioned).count());
         return dto;
     }
 }

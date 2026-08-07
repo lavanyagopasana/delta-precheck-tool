@@ -433,7 +433,9 @@ export default function TicketsPage() {
         columns={[
           {
             key: "projectName",
-            label: "Project / Server / Combination",
+            // Slashes read as a URL path in a column whose values include server URLs -- see the
+            // matching header on ApprovalsPage.
+            label: "Project · Server · Combination",
             render: (t) => (
               <div>
                 <div style={{ fontWeight: 700, whiteSpace: "nowrap" }}>{t.projectName || "—"}</div>
