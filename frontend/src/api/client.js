@@ -161,8 +161,12 @@ export const removeTicket = (id) => client.delete(`/tickets/${id}`).then((r) => 
 
 export const approveSignOff = (combinationId, role, approverEmail, qaRequired) =>
   client.post(`/combinations/${combinationId}/signoffs/${role}/approve`, { approverEmail, qaRequired }).then((r) => r.data);
-export const declineSignOff = (combinationId, role, approverEmail) =>
-  client.post(`/combinations/${combinationId}/signoffs/${role}/decline`, { approverEmail }).then((r) => r.data);
+// reason is required by the backend -- a decline bounces the chain back a step, and without one the
+// person it lands on has no idea what to fix.
+export const declineSignOff = (combinationId, role, reason, approverEmail) =>
+  client
+    .post(`/combinations/${combinationId}/signoffs/${role}/decline`, { approverEmail, reason })
+    .then((r) => r.data);
 export const getSignOffApprovals = () => client.get("/signoff-approvals").then((r) => r.data);
 
 export default client;

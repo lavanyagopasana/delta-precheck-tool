@@ -13,6 +13,8 @@ import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
 import com.cloudfuze.deltatracker.repository.SignOffRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,12 +24,15 @@ import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Optional;
 import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
 @Transactional
 public class SignOffService {
+
+    private static final Logger log = LoggerFactory.getLogger(SignOffService.class);
 
     // Approvals happen in this fixed order: Migration Manager, then Dev, then QA. Each role can
     // only act once everyone ahead of it in the sequence has approved.
@@ -169,10 +174,17 @@ public class SignOffService {
     // the Migration Manager -> Dev -> QA sequence) gets reset to pending so they have to reconsider.
     // Declining as Migration Manager (the first step) has nothing earlier to bounce to -- it just
     // sits blocked until the pre-check is resubmitted.
-    public SignOffApprovalDto decline(Long combinationId, SignOffRole role, String actorEmail) {
+    public SignOffApprovalDto decline(Long combinationId, SignOffRole role, String actorEmail, String reason) {
         WorkspaceCombination combination = combinationService.findOrThrow(combinationId);
         SignOff signOff = signOffRepository.findByCombinationIdAndRole(combinationId, role)
                 .orElseThrow(() -> new ResourceNotFoundException("No approval request found for this role."));
+
+        // A decline bounces the chain back a step and reopens work for someone else. Without a reason
+        // they are told to redo it with no idea what was wrong, so this is required rather than optional.
+        String trimmedReason = reason == null ? "" : reason.trim();
+        if (!StringUtils.hasText(trimmedReason)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "A reason is required when declining an approval.");
+        }
 
         List<SignOff> chain = signOffRepository.findByCombinationId(combinationId);
         requireTurn(role, chain);
@@ -181,7 +193,10 @@ public class SignOffService {
         signOff.setStatus(SignOffStatus.DECLINED);
         signOff.setApprovedBy(actorEmail);
         signOff.setApprovedAt(LocalDateTime.now());
+        signOff.setDeclineReason(trimmedReason);
         signOffRepository.save(signOff);
+
+        notifyManagerOfDecline(combination, role, actorEmail, trimmedReason);
 
         int index = APPROVAL_SEQUENCE.indexOf(role);
         if (index > 0) {
@@ -322,13 +337,19 @@ public class SignOffService {
         return turn == null ? "Approved" : "Pending with " + roleLabel(turn);
     }
 
-    private String currentStatusLabel(List<SignOff> chain) {
-        // A stale decline can still be sitting on an earlier role from a prior bounce-back cycle
-        // (bounce-back only resets the PRECEDING role, never clears the role that itself declined),
-        // so pick whichever decline happened most recently rather than the first one found.
-        var declined = chain.stream()
+    // A stale decline can still be sitting on an earlier role from a prior bounce-back cycle
+    // (bounce-back only resets the PRECEDING role, never clears the role that itself declined), so
+    // pick whichever decline happened most recently rather than the first one found. Shared with the
+    // DTO mapping so the status label and the reason shown beneath it always describe the SAME
+    // decline -- two independent lookups could name one role and quote another's reason.
+    private Optional<SignOff> latestDecline(List<SignOff> chain) {
+        return chain.stream()
                 .filter(s -> s.getStatus() == SignOffStatus.DECLINED)
                 .max(Comparator.comparing(SignOff::getApprovedAt));
+    }
+
+    private String currentStatusLabel(List<SignOff> chain) {
+        var declined = latestDecline(chain);
         if (declined.isPresent()) {
             return "Declined by " + roleLabel(declined.get().getRole());
         }
@@ -429,6 +450,38 @@ public class SignOffService {
                 workspacePairCount, submittedBy, migrationManagerEmail);
     }
 
+    /**
+     * Emails the Migration Manager when a Dev Lead or QA Lead declines.
+     *
+     * <p>Only those two roles. A Migration Manager decline bounces back to the engineer who filled the
+     * pre-check, and the manager already knows -- they just did it. A Dev/QA decline, by contrast,
+     * lands on the manager's desk (the chain resets their approval to PENDING) and nothing else would
+     * tell them, so without this the combination silently stalls.
+     */
+    private void notifyManagerOfDecline(WorkspaceCombination combination, SignOffRole role, String declinedBy,
+                                         String reason) {
+        if (role == SignOffRole.MIGRATION_LEAD) {
+            return;
+        }
+        Server server = combination.getServer();
+        Project project = server.getProject();
+        String managerEmail = project != null ? project.getMigrationManagerName() : null;
+        if (!StringUtils.hasText(managerEmail)) {
+            log.warn("{} declined \"{}\" but the project has no Migration Manager assigned -- no email sent.",
+                    role.label(), combination.getName());
+            return;
+        }
+        emailService.notifyMigrationManagerApprovalDeclined(
+                project != null ? project.getName() : "-",
+                server.getName(),
+                combination.getName(),
+                combinationService.pairCount(combination),
+                role.label(),
+                declinedBy,
+                reason,
+                managerEmail);
+    }
+
     // Combination-level stats used to build a SignOffApprovalDto. Computed once per combination
     // (see computeCombinationStats) so its pairs/escalations/submission aren't re-queried for each
     // of its three sign-off rows.
@@ -482,6 +535,12 @@ public class SignOffService {
         dto.setApprovedAt(signOff.getApprovedAt());
         dto.setOverallStatus(overallStatusLabel(chain));
         dto.setCurrentStatus(currentStatusLabel(chain));
+        // Same decline the status label above describes, so the two can never disagree about who.
+        latestDecline(chain).ifPresent(declined -> {
+            dto.setDeclineReason(declined.getDeclineReason());
+            dto.setDeclinedByRoleLabel(roleLabel(declined.getRole()));
+            dto.setDeclinedBy(declined.getApprovedBy());
+        });
 
         SignOffRole turn = currentTurn(chain);
         dto.setTurnReady(signOff.getRole() == turn);

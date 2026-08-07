@@ -94,6 +94,8 @@ const XIcon = () => (
 function ActionsCell({ approval, onActed }) {
   const [acting, setActing] = useState(false);
   const [askingQa, setAskingQa] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState("");
   const showToast = useToast();
   const confirm = useConfirm();
 
@@ -139,18 +141,17 @@ function ActionsCell({ approval, onActed }) {
     runApprove(undefined);
   };
 
-  const handleReject = async () => {
-    const ok = await confirm({
-      title: `Reject as ${roleLabel}?`,
-      message: `This sends ${label} back a step for rework.`,
-      confirmLabel: "Reject",
-      danger: true,
-    });
-    if (!ok) return;
+  // A modal rather than the shared confirm dialog, because rejecting needs an input: the reason is
+  // required, and it's what the person the chain bounces back to actually acts on.
+  const runReject = async () => {
+    const trimmed = reason.trim();
+    if (!trimmed) return;
     setActing(true);
     try {
-      await declineSignOff(approval.combinationId, approval.role);
+      await declineSignOff(approval.combinationId, approval.role, trimmed);
       showToast(`Rejected for ${label}.`);
+      setRejecting(false);
+      setReason("");
       onActed();
     } catch (err) {
       showToast(err.response?.data?.message || "Failed to reject.");
@@ -174,11 +175,48 @@ function ActionsCell({ approval, onActed }) {
         className="btn icon-btn danger"
         title={`Reject as ${roleLabel}`}
         aria-label={`Reject as ${roleLabel}`}
-        onClick={handleReject}
+        onClick={() => setRejecting(true)}
         disabled={acting}
       >
         <XIcon />
       </button>
+
+      {rejecting && (
+        <Modal title={`Reject as ${roleLabel}?`} onClose={() => setRejecting(false)} width={480}>
+          <p style={{ fontSize: 13.5, color: "var(--color-text-muted)", marginTop: 0 }}>
+            This sends <strong>{label}</strong> back a step for rework.
+          </p>
+          <label
+            htmlFor="reject-reason"
+            style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 6 }}
+          >
+            Reason for rejecting
+          </label>
+          <textarea
+            id="reject-reason"
+            rows={3}
+            maxLength={500}
+            autoFocus
+            placeholder="A line or two on what needs fixing..."
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            style={{ width: "100%", resize: "vertical" }}
+          />
+          {/* Explains WHY it's mandatory rather than just blocking the button -- the reason is the only
+              thing telling the next person what to change. */}
+          <div style={{ fontSize: 12, color: "var(--color-text-faint)", marginTop: 6 }}>
+            Shown next to the status, and emailed to the Migration Manager.
+          </div>
+          <div className="form-actions" style={{ justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn secondary" onClick={() => setRejecting(false)} disabled={acting}>
+              Cancel
+            </button>
+            <button className="btn danger" onClick={runReject} disabled={acting || !reason.trim()}>
+              {acting ? "Rejecting…" : "Reject"}
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {askingQa && (
         <Modal title="QA Lead approval needed?" onClose={() => setAskingQa(false)} width={420}>
@@ -352,6 +390,30 @@ export default function ApprovalsPage() {
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7 }}>
                 <OverallStepper approval={a} siblings={byCombination.get(a.combinationId) || []} />
                 <CurrentStatusText label={a.currentStatus} />
+                {/* The status says WHO declined; this says why. Shown inline rather than behind a
+                    tooltip or a click, because it's the one thing the person it bounced back to needs
+                    in order to act, and they'd otherwise have to ask. */}
+                {a.declineReason && (
+                  <div
+                    style={{
+                      fontSize: 11.5,
+                      color: "var(--color-red)",
+                      background: "var(--color-red-soft)",
+                      border: "1px solid var(--color-red)",
+                      borderRadius: "var(--radius-sm)",
+                      padding: "6px 9px",
+                      textAlign: "left",
+                      maxWidth: 260,
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, marginBottom: 2 }}>
+                      {a.declinedByRoleLabel}
+                      {a.declinedBy ? ` · ${emailLocalPart(a.declinedBy)}` : ""}
+                    </div>
+                    {a.declineReason}
+                  </div>
+                )}
               </div>
             ),
           },

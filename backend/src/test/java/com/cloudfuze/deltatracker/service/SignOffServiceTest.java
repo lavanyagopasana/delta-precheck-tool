@@ -222,7 +222,7 @@ class SignOffServiceTest {
         stubChain(mm, dev, row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
         when(appUserService.roleOf(DEV_EMAIL)).thenReturn(Optional.of(AppUserRole.DEV_LEAD));
 
-        service.decline(CID, SignOffRole.DEV_LEAD, DEV_EMAIL);
+        service.decline(CID, SignOffRole.DEV_LEAD, DEV_EMAIL, "Permissions look wrong");
 
         assertThat(dev.getStatus()).isEqualTo(SignOffStatus.DECLINED);
         assertThat(mm.getStatus()).isEqualTo(SignOffStatus.PENDING);
@@ -234,9 +234,69 @@ class SignOffServiceTest {
         SignOff mm = row(SignOffRole.MIGRATION_LEAD, SignOffStatus.PENDING);
         stubChain(mm, row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING), row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
 
-        service.decline(CID, SignOffRole.MIGRATION_LEAD, MM_EMAIL);
+        service.decline(CID, SignOffRole.MIGRATION_LEAD, MM_EMAIL, "Evidence missing");
 
         assertThat(mm.getStatus()).isEqualTo(SignOffStatus.DECLINED);
+    }
+
+    // ---- decline reason ----
+
+    @Test
+    void declineStoresTheReason() {
+        SignOff mm = row(SignOffRole.MIGRATION_LEAD, SignOffStatus.PENDING);
+        stubChain(mm, row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING), row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
+
+        service.decline(CID, SignOffRole.MIGRATION_LEAD, MM_EMAIL, "  Evidence is missing for two items  ");
+
+        // Trimmed on the way in, so the UI never renders leading/trailing whitespace it can't see.
+        assertThat(mm.getDeclineReason()).isEqualTo("Evidence is missing for two items");
+    }
+
+    @Test
+    void declineRejectsAnEmptyReason() {
+        // Without a reason the person the chain bounces back to is told to redo the work with no
+        // indication of what was wrong, which is the whole problem this guards against.
+        stubChain(row(SignOffRole.MIGRATION_LEAD, SignOffStatus.PENDING),
+                row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING), row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
+
+        assertThatThrownBy(() -> service.decline(CID, SignOffRole.MIGRATION_LEAD, MM_EMAIL, "   "))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("reason is required");
+    }
+
+    @Test
+    void declineRejectsANullReason() {
+        stubChain(row(SignOffRole.MIGRATION_LEAD, SignOffStatus.PENDING),
+                row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING), row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
+
+        assertThatThrownBy(() -> service.decline(CID, SignOffRole.MIGRATION_LEAD, MM_EMAIL, null))
+                .isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    void devLeadDeclineEmailsTheMigrationManager() {
+        SignOff mm = row(SignOffRole.MIGRATION_LEAD, SignOffStatus.APPROVED);
+        mm.setApprovedBy(MM_EMAIL);
+        stubChain(mm, row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING), row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
+        when(appUserService.roleOf(DEV_EMAIL)).thenReturn(Optional.of(AppUserRole.DEV_LEAD));
+
+        service.decline(CID, SignOffRole.DEV_LEAD, DEV_EMAIL, "Hyperlinks not verified");
+
+        verify(emailService).notifyMigrationManagerApprovalDeclined(any(), any(), any(), anyInt(),
+                eq("Dev Lead"), eq(DEV_EMAIL), eq("Hyperlinks not verified"), eq(MM_EMAIL));
+    }
+
+    @Test
+    void migrationManagerDeclineSendsNoEmail() {
+        // It bounces back to the engineer, and the manager just did it -- mailing them their own action
+        // would be noise.
+        stubChain(row(SignOffRole.MIGRATION_LEAD, SignOffStatus.PENDING),
+                row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING), row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
+
+        service.decline(CID, SignOffRole.MIGRATION_LEAD, MM_EMAIL, "Needs rework");
+
+        verify(emailService, never()).notifyMigrationManagerApprovalDeclined(any(), any(), any(), anyInt(),
+                any(), any(), any(), any());
     }
 
     // ---- createChainIfAbsent ----

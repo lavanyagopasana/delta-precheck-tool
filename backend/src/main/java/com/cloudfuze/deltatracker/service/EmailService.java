@@ -250,6 +250,44 @@ public class EmailService {
         send(new String[] { managerEmail }, subject, html, text);
     }
 
+    /**
+     * Tells the Migration Manager a Dev Lead or QA Lead declined, and why.
+     *
+     * <p>Deliberately short. The manager needs four things: which combination, who declined, why, and a
+     * way in. Workspace-pair count and submitter are dropped -- they don't help decide what to do about
+     * a rejection, and every extra row pushes the reason further down. The reason is the point of the
+     * email, so it sits in its own row rather than buried in the lede.
+     */
+    @Async(AsyncConfig.EMAIL_EXECUTOR)
+    public void notifyMigrationManagerApprovalDeclined(String projectName, String serverName, String combinationName,
+                                                        int workspacePairCount, String roleLabel, String declinedBy,
+                                                        String reason, String managerEmail) {
+        String subject = "Approval declined by " + roleLabel + ": " + serverLabel(serverName, combinationName)
+                + " (" + projectName + ")";
+
+        List<String[]> fields = new ArrayList<>();
+        fields.add(new String[] { "Project", projectName });
+        fields.add(new String[] { "Server URL", serverName });
+        fields.add(new String[] { "Combination", combinationName });
+        fields.add(new String[] { "Declined by", roleLabel + " (" + orDash(declinedBy) + ")" });
+        fields.add(new String[] { "Reason", reason });
+
+        String lede = roleLabel + " declined this approval, so it has come back to you.";
+        // badgeSuccess = false -> the pending/attention treatment, which is the right register here.
+        String html = renderEmail("Approval Declined", "ACTION NEEDED", false,
+                lede, fields, "Review", approvalsUrl());
+        String text = "Hi,\n\n"
+                + lede + "\n\n"
+                + "Project: " + projectName + "\n"
+                + "Server URL: " + serverName + "\n"
+                + "Combination: " + combinationName + "\n"
+                + "Declined by: " + roleLabel + " (" + orDash(declinedBy) + ")\n"
+                + "Reason: " + reason + "\n"
+                + "\nReview: " + approvalsUrl();
+
+        send(new String[] { managerEmail }, subject, html, text);
+    }
+
     private List<String[]> fieldRows(String projectName, String serverName, String combinationName,
                                       int workspacePairCount, String submittedBy) {
         List<String[]> fields = new ArrayList<>();

@@ -31,7 +31,7 @@ public class SignOffController {
     public SignOffApprovalDto decline(@PathVariable Long combinationId, @PathVariable SignOffRole role,
                                        @AuthenticationPrincipal Jwt jwt,
                                        @Valid @RequestBody ApproveSignOffRequest request) {
-        return signOffService.decline(combinationId, role, actorEmail(jwt, request));
+        return signOffService.decline(combinationId, role, actorEmail(jwt, request), request.getReason());
     }
 
     // The JWT is the authoritative identity whenever auth is configured; the request body's email

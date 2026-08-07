@@ -55,6 +55,12 @@ public class SignOff {
 
     // Only ever set on the Dev Lead row, at the moment the Dev Lead approves -- records whether they
     // said QA Lead approval is required for this combination. Null means the Dev Lead hasn't acted yet.
+    // Why this role declined, captured at decline time and shown next to the status so the engineer
+    // reading the bounce-back knows what to fix. Kept when the chain moves on rather than cleared: a
+    // later approval doesn't make the earlier objection untrue, and the history is the point.
+    @Column(name = "decline_reason", length = 500)
+    private String declineReason;
+
     @Column(name = "qa_required")
     private Boolean qaRequired;
 

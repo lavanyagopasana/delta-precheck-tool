@@ -46,4 +46,10 @@ public class SignOffApprovalDto {
     // "Pre-Delta 2" / "Final Delta" -- resolved server-side via DeltaType.label so the numbering
     // rule isn't reimplemented per consumer.
     private String deltaLabel;
+
+    // Why the most recent decline happened, and which role gave it. Surfaced next to the status so the
+    // person the chain bounced back to sees the objection without opening anything.
+    private String declineReason;
+    private String declinedByRoleLabel;
+    private String declinedBy;
 }
