@@ -296,12 +296,23 @@ export default function WorkspacePairsPanel({
               rowKey={(p) => p.id}
               searchPlaceholder="Filter migration pairs..."
               emptyMessage="No migration pairs yet."
-              columns={[
-                { key: "sourceEmail", label: "Source Email" },
-                { key: "sourcePath", label: "Source Path", render: (p) => p.sourcePath || "-" },
-                { key: "destinationEmail", label: "Destination Email" },
-                { key: "destinationPath", label: "Destination Path", render: (p) => p.destinationPath || "-" },
-              ]}
+              // Email moves mailboxes, not folder trees, so its CSV has no path columns and every
+              // pair's paths are null. Rendering them anyway gave two columns of em dashes that read
+              // as missing data rather than "not applicable" -- and contradicted the two-column format
+              // shown under CSV format. Same rule as csvRowForPair in ServerUrlsPanel.
+              columns={
+                data.productType === "EMAIL"
+                  ? [
+                      { key: "sourceEmail", label: "Source Email" },
+                      { key: "destinationEmail", label: "Destination Email" },
+                    ]
+                  : [
+                      { key: "sourceEmail", label: "Source Email" },
+                      { key: "sourcePath", label: "Source Path", render: (p) => p.sourcePath || "-" },
+                      { key: "destinationEmail", label: "Destination Email" },
+                      { key: "destinationPath", label: "Destination Path", render: (p) => p.destinationPath || "-" },
+                    ]
+              }
             />
           )
         )}
