@@ -155,29 +155,33 @@ function CsvFormatModal({ servers, onClose }) {
   // so repeating the identical table four times (and putting a button on every card to reach it) was
   // noise. Servers with no product type fall back to the Content shape, so they collapse into that same
   // entry rather than producing a duplicate.
+  // Deduped by the COLUMNS, not the product-type label. Email and Message have identical shapes, so
+  // keying on the label rendered the same two-column table twice under two headings -- the same
+  // repetition that moved this out of the per-server cards in the first place. Types that share a
+  // shape share one section, named for all of them ("Email / Message").
   const shapes = [];
   servers.forEach((s) => {
     const shape = csvSampleFor(s.productType);
-    if (!shapes.some((existing) => existing.label === shape.label)) {
-      shapes.push(shape);
+    const signature = shape.columns.join("|");
+    const existing = shapes.find((sh) => sh.signature === signature);
+    if (existing) {
+      if (!existing.labels.includes(shape.label)) {
+        existing.labels.push(shape.label);
+      }
+    } else {
+      shapes.push({ ...shape, signature, labels: [shape.label] });
     }
   });
 
   return (
     <Modal
-      title={shapes.length > 1 ? "CSV formats" : `CSV format — ${shapes[0]?.label}`}
+      title={shapes.length > 1 ? "CSV formats" : `CSV format — ${shapes[0]?.labels.join(" / ")}`}
       onClose={onClose}
       width={720}
       closeIcon
     >
-      <p style={{ marginTop: 0, fontSize: 13, color: "var(--color-text-muted)" }}>
-        Header names are matched case-insensitively and common aliases are accepted, so column order
-        doesn&apos;t matter.
-        {shapes.length > 1 && " This project has servers of more than one product type, so both formats apply."}
-      </p>
-
       {shapes.map((shape) => (
-        <div key={shape.label} style={{ marginBottom: 18 }}>
+        <div key={shape.signature} style={{ marginBottom: 18 }}>
           <div
             style={{
               display: "flex",
@@ -188,13 +192,17 @@ function CsvFormatModal({ servers, onClose }) {
               flexWrap: "wrap",
             }}
           >
-            <strong style={{ fontSize: 13.5 }}>{shape.label}</strong>
+            <strong style={{ fontSize: 13.5 }}>{shape.labels.join(" / ")}</strong>
             <button
               type="button"
               className="btn secondary"
               style={{ padding: "5px 12px", fontSize: 12 }}
               onClick={() =>
-                downloadSampleCsv(shape.columns, shape.row, `${shape.label.toLowerCase()}-migration-pairs-sample.csv`)
+                downloadSampleCsv(
+                  shape.columns,
+                  shape.row,
+                  `${shape.labels.join("-").toLowerCase()}-migration-pairs-sample.csv`
+                )
               }
             >
               <DownloadIcon size={13} /> Download sample
@@ -218,9 +226,9 @@ function CsvFormatModal({ servers, onClose }) {
               </tbody>
             </table>
           </div>
-          {shape.label !== "Content" && (
+          {!shape.labels.includes("Content") && (
             <div style={{ fontSize: 12, color: "var(--color-text-faint)", marginTop: 6 }}>
-              {shape.label} takes only the two accounts — there are no source or destination paths.
+              Only the two accounts — there are no source or destination paths.
             </div>
           )}
         </div>
