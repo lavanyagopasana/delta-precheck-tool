@@ -80,16 +80,23 @@ class DeltaPhaseTest {
 
     @Test
     void preDeltaLabelsCarryTheCycleNumberAndPhase() {
-        assertThat(DeltaType.PRE_DELTA.labelWithPhase(1, DeltaPhase.IN_APPROVAL)).isEqualTo("Pre-Delta 1 in progress");
-        assertThat(DeltaType.PRE_DELTA.labelWithPhase(1, DeltaPhase.READY)).isEqualTo("Pre-Delta 1 approved");
-        assertThat(DeltaType.PRE_DELTA.labelWithPhase(1, DeltaPhase.STARTED)).isEqualTo("Pre-Delta 1 started");
-        assertThat(DeltaType.PRE_DELTA.labelWithPhase(2, DeltaPhase.FINISHED)).isEqualTo("Pre-Delta 2 finished");
+        assertThat(DeltaType.PRE_DELTA.labelWithPhase(1, DeltaPhase.IN_APPROVAL)).isEqualTo("Pre-Delta 1 - in progress");
+        assertThat(DeltaType.PRE_DELTA.labelWithPhase(1, DeltaPhase.READY)).isEqualTo("Pre-Delta 1 - approved");
+        assertThat(DeltaType.PRE_DELTA.labelWithPhase(1, DeltaPhase.STARTED)).isEqualTo("Pre-Delta 1 - started");
+        assertThat(DeltaType.PRE_DELTA.labelWithPhase(2, DeltaPhase.FINISHED)).isEqualTo("Pre-Delta 2 - finished");
+    }
+
+    @Test
+    void finalDeltaCarriesEveryPhaseJustLikeAPreDelta() {
+        // Its lifecycle is the same shape -- it is approved, started and finished before it completes.
+        assertThat(DeltaType.FINAL_DELTA.labelWithPhase(3, DeltaPhase.IN_APPROVAL)).isEqualTo("Final Delta - in progress");
+        assertThat(DeltaType.FINAL_DELTA.labelWithPhase(3, DeltaPhase.FINISHED)).isEqualTo("Final Delta - finished");
     }
 
     @Test
     void finalDeltaIsNeverNumbered() {
         // There is only one Final Delta per combination, so a number would be noise.
-        assertThat(DeltaType.FINAL_DELTA.labelWithPhase(3, DeltaPhase.COMPLETE)).isEqualTo("Final Delta completed");
-        assertThat(DeltaType.FINAL_DELTA.labelWithPhase(3, DeltaPhase.STARTED)).isEqualTo("Final Delta started");
+        assertThat(DeltaType.FINAL_DELTA.labelWithPhase(3, DeltaPhase.COMPLETE)).isEqualTo("Final Delta - completed");
+        assertThat(DeltaType.FINAL_DELTA.labelWithPhase(3, DeltaPhase.STARTED)).isEqualTo("Final Delta - started");
     }
 }
