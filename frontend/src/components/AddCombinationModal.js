@@ -3,14 +3,32 @@ import { importWorkspacePairsCsvForCombination } from "../api/client";
 import Modal from "./Modal";
 import { SwapIcon, UploadIcon, CheckIcon } from "./Icons";
 
-// One catalog per product type, feeding both the Source and Destination dropdowns (the same platform
-// can be either side, e.g. Outlook to Outlook across tenants).
+// One catalog per product type, feeding both the Source and Destination dropdowns -- the same list on
+// each side, since most platforms can be either (Box to Box and SharePoint to SharePoint are real
+// migrations, across tenants).
 //
-// EMAIL is confirmed as Gmail and Outlook only (2026-08-06) -- Yahoo Mail and Exchange were removed
-// because they aren't supported. CONTENT and MESSAGE are still placeholder lists awaiting the real
-// supported-platform sets.
+// CONTENT is the 13 distinct platforms from the supported-combination list confirmed on 2026-08-07.
+// EMAIL is Gmail and Outlook only (2026-08-06). MESSAGE is still a placeholder awaiting its real set.
+//
+// Note this offers every source/destination pairing, not only the 51 supported ones -- the two
+// dropdowns are independent by design. If a pairing needs to be blocked, that belongs here as a
+// source -> allowed-destinations map, not as a longer flat list.
 const OPTIONS_BY_PRODUCT_TYPE = {
-  CONTENT: ["Google Drive", "OneDrive", "Box", "Dropbox", "SharePoint"],
+  CONTENT: [
+    "Amazon S3",
+    "Amazon workdocs",
+    "Azure",
+    "Box",
+    "Citrix",
+    "Dropbox",
+    "Egnyte",
+    "MyDrive",
+    "NFS",
+    "OneDrive",
+    "Shared Drive",
+    "Sharefile",
+    "SharePoint",
+  ],
   EMAIL: ["Gmail", "Outlook"],
   MESSAGE: ["Slack", "Microsoft Teams", "Google Chat"],
 };
