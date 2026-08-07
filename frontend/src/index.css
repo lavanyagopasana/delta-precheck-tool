@@ -554,6 +554,19 @@ tr.selected-row.clickable-row:hover td {
   border-color: var(--color-primary);
 }
 
+/* Without this a disabled secondary button looks exactly like an enabled one.
+   `.btn:disabled` is declared ABOVE `.btn.secondary` and both have the same
+   specificity (0,2,0), so the later `.btn.secondary` wins and puts the primary
+   blue text straight back. The result: a button that reads as clickable, does
+   nothing when clicked, and gives no clue why -- worst on Decommission, where
+   "disabled" is the only thing saying the server still has work outstanding. */
+.btn.secondary:disabled {
+  background: var(--color-surface);
+  color: #9aa0b1;
+  border-color: #e2e6ee;
+  cursor: not-allowed;
+}
+
 .btn.danger {
   background: var(--color-red);
   box-shadow: 0 2px 8px rgba(220, 38, 38, 0.28);
