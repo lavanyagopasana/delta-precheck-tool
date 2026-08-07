@@ -246,11 +246,18 @@ export default function WorkspacePairsPanel({
       {showPreCheckLink && activeCombinationSummary && (
         <div className="server-precheck-row">
           <strong style={{ fontSize: 13.5 }}>Pre-Check</strong>
+          {/* Solid primary when there's work to do, outlined when there isn't.
+              This was `warning` (dark amber) for the actionable state and `success` (green) for the
+              read-only one -- both wrong: starting a pre-check is the routine primary action on this
+              page, not a warning, and a solid green button for "go and look at this" pulled more
+              attention than the thing you were meant to click. */}
           <button
-            className={`btn ${
-              activeCombinationSummary.finalDeltaComplete || activeCombinationSummary.submissionStatus === "SUBMITTED"
-                ? "success"
-                : "warning"
+            className={`btn${
+              activeCombinationSummary.finalDeltaComplete
+                || activeCombinationSummary.submissionStatus === "SUBMITTED"
+                || !canFillPreCheck
+                ? " secondary"
+                : ""
             }`}
             onClick={() => navigate(`/combinations/${activeCombinationSummary.id}/precheck`)}
           >

@@ -1872,3 +1872,41 @@ input[type="checkbox"]:disabled {
     min-height: 0;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Decline note in the Approvals table's status cell.
+
+   Deliberately quiet. The first version was a red-bordered, red-filled box that
+   doubled the row height and outweighed everything else on the page -- including
+   the row that actually needed action. It also repeated the role, which the
+   status line directly above already states ("Declined by Migration Manager").
+
+   So: no border, no fill, just small red text carrying the two things that line
+   doesn't -- who declined and what they said. Clamped to three lines with the
+   full text on hover, since the status column is ~200px and a 500-character
+   reason would otherwise push the table apart.
+   --------------------------------------------------------------------------- */
+.decline-note {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--color-red);
+  text-align: left;
+  max-width: 210px;
+  /* Clamp rather than truncate on one line: a reason is written as a sentence, so
+     the first few words alone rarely carry it. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.decline-note__who {
+  font-weight: 600;
+}
+
+/* A decline recorded before reasons were required. Muted and italic so it reads
+   as "nothing was captured" rather than as the reason itself. */
+.decline-note__missing {
+  font-style: italic;
+  color: var(--color-text-muted);
+}

@@ -36,6 +36,23 @@ export const DELTA_TYPE_BADGE = {
   FINAL_DELTA: { color: "purple", label: "Final Delta" },
 };
 
+// Colour by PHASE, not just delta type. Keying on type alone painted every pre-delta the same blue
+// whether it was awaiting approval, running or finished -- so a row of combinations at completely
+// different stages all read as one state, next to a product-type badge that was also blue.
+//
+// Four stops, coarse on purpose, since the badge text already names the exact phase:
+//   yellow  waiting on a person
+//   blue    cleared and in motion
+//   green   this cycle is done
+//   purple  the Final Delta completed -- the irreversible milestone the token is reserved for
+export const DELTA_PHASE_BADGE_COLOR = {
+  IN_APPROVAL: "yellow",
+  READY: "blue",
+  STARTED: "blue",
+  FINISHED: "green",
+  COMPLETE: "purple",
+};
+
 // Where a recorded cycle sits in its own post-approval life. Mirrors DeltaCycleStatus.
 export const DELTA_CYCLE_STATUS_BADGE = {
   APPROVED: { color: "yellow", label: "Approved — not started" },

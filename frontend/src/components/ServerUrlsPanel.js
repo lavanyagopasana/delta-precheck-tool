@@ -443,7 +443,11 @@ function CombinationRow({ server, row, isAdmin, canManage, onSaved }) {
               Null label means the pre-check hasn't been submitted, so nothing has settled the cycle's
               type yet and no badge is right. */}
           {row.summary?.currentDeltaLabel && (
-            <DeltaBadge deltaType={row.summary.currentDeltaType} label={row.summary.currentDeltaLabel} />
+            <DeltaBadge
+              deltaType={row.summary.currentDeltaType}
+              deltaPhase={row.summary.deltaPhase}
+              label={row.summary.currentDeltaLabel}
+            />
           )}
           {/* "1 delta done" rather than "1 done" -- next to a pair count and a stage badge, a bare
               "done" read as though the combination itself was finished. Green because it's completed
@@ -541,15 +545,20 @@ function ServerProductTypeBadge({ server, isAdmin, onSaved }) {
     );
   }
 
+  // Neutral, not blue: the product type never changes and isn't a status, so it shouldn't compete with
+  // the Delta phase badge sitting beside it. Colour is reserved for things that move.
   if (!isAdmin) {
     return server.productType ? (
-      <span className="badge blue">{PRODUCT_TYPE_LABELS[server.productType] || server.productType}</span>
+      <span className="badge gray">{PRODUCT_TYPE_LABELS[server.productType] || server.productType}</span>
     ) : null;
   }
 
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-      <span className={`badge ${server.productType ? "blue" : "gray"}`}>
+      {/* Gray whether set or not -- the admin view showed the same label in blue, so the two views
+          disagreed on how loud the product type should be. Yellow when unset, because an untyped server
+          silently gets the Content checklist and CSV shape, which is worth flagging rather than muting. */}
+      <span className={`badge ${server.productType ? "gray" : "yellow"}`}>
         {server.productType ? PRODUCT_TYPE_LABELS[server.productType] || server.productType : "No product type"}
       </span>
       <button
