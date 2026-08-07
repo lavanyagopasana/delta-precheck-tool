@@ -86,14 +86,36 @@ public class ServerService {
             "Workspace Status Updated in DB"
     );
 
-    // Message is still a placeholder reusing the Content list -- awaiting the real item set. Keeping it
-    // non-empty (rather than List.of()) matters: an empty checklist can never be submitted
+    // Message-only. A yes/no capability question (ENABLED / NOT_ENABLED), not a progress state -- see
+    // ItemStatus. Named as a constant because the frontend has to match it exactly to scope the
+    // dropdown, the same contract DELTA_TYPE_ITEM has.
+    public static final String DELTA_MESSAGE_SYNC_ITEM = "Delta Message Sync";
+
+    /**
+     * The Message checklist, confirmed with the team on 2026-08-07. Shares Data Verified and Workspace
+     * Status Updated in DB with Content unchanged, drops the file-oriented items (Permissions,
+     * Hyperlinks, Drive changes, Previous Delta Migration), and adds Delta Message Sync.
+     *
+     * <p>Two of its items carry non-default status options: OneTime Migration can be partially
+     * completed (a chat migration can move some history and not the rest), and Delta Message Sync is
+     * enabled/not enabled. Those option sets live on the frontend in statusOptionsFor -- this list only
+     * decides which items exist and in what order.
+     */
+    public static final List<String> MESSAGE_PRE_CHECK_ITEMS = List.of(
+            DELTA_TYPE_ITEM,
+            "OneTime Migration",
+            DELTA_MESSAGE_SYNC_ITEM,
+            "Data Verified",
+            "Workspace Status Updated in DB"
+    );
+
+    // Keeping every list non-empty matters: an empty checklist can never be submitted
     // (PreCheckSubmissionService.submit requires at least one item), so a genuinely empty list would
-    // silently lock every Message combination out of ever completing its pre-check.
+    // silently lock every combination of that product type out of ever completing its pre-check.
     private static final Map<ProductType, List<String>> PRE_CHECK_ITEMS_BY_PRODUCT_TYPE = Map.of(
             ProductType.CONTENT, PRE_CHECK_ITEMS,
             ProductType.EMAIL, EMAIL_PRE_CHECK_ITEMS,
-            ProductType.MESSAGE, PRE_CHECK_ITEMS
+            ProductType.MESSAGE, MESSAGE_PRE_CHECK_ITEMS
     );
 
     // The checklist to seed/sort for a combination, based on its server's product type. Falls back

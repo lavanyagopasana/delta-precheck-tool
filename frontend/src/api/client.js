@@ -92,9 +92,14 @@ export const SAMPLE_CSV_COLUMNS_COMBINATION = ["source_email", "source_path", "d
 // advertising two columns an email engineer has nothing to put in.
 export const SAMPLE_CSV_COLUMNS_COMBINATION_EMAIL = ["source_email", "destination_email"];
 
-// The CSV shape for a server's product type. Content and Message keep the four-column form.
+// Email and Message migrate accounts, not folder trees, so both take only the two columns; Content is
+// the only type with paths. One predicate rather than an inline `=== "EMAIL"` in each place, because
+// that check had already been written in four spots and adding Message meant finding all of them.
+export const usesTwoColumnCsv = (productType) => productType === "EMAIL" || productType === "MESSAGE";
+
+// The CSV shape for a server's product type.
 export const sampleCsvColumnsForProductType = (productType) =>
-  productType === "EMAIL" ? SAMPLE_CSV_COLUMNS_COMBINATION_EMAIL : SAMPLE_CSV_COLUMNS_COMBINATION;
+  usesTwoColumnCsv(productType) ? SAMPLE_CSV_COLUMNS_COMBINATION_EMAIL : SAMPLE_CSV_COLUMNS_COMBINATION;
 
 export const importWorkspacePairsCsvForCombination = (serverId, combination, file) => {
   const formData = new FormData();

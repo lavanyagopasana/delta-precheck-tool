@@ -6,6 +6,7 @@ import {
   startCombinationDelta,
   finishCombinationDelta,
   importWorkspacePairsCsv,
+  usesTwoColumnCsv,
   SAMPLE_CSV_COLUMNS,
 } from "../api/client";
 import CsvImportPanel from "./CsvImportPanel";
@@ -296,12 +297,12 @@ export default function WorkspacePairsPanel({
               rowKey={(p) => p.id}
               searchPlaceholder="Filter migration pairs..."
               emptyMessage="No migration pairs yet."
-              // Email moves mailboxes, not folder trees, so its CSV has no path columns and every
-              // pair's paths are null. Rendering them anyway gave two columns of em dashes that read
-              // as missing data rather than "not applicable" -- and contradicted the two-column format
-              // shown under CSV format. Same rule as csvRowForPair in ServerUrlsPanel.
+              // Email and Message migrate accounts, not folder trees, so their CSVs have no path
+              // columns and every pair's paths are null. Rendering them anyway gave two columns of em
+              // dashes that read as missing data rather than "not applicable", and contradicted the
+              // two-column format shown under CSV format. Same predicate as the CSV shapes use.
               columns={
-                data.productType === "EMAIL"
+                usesTwoColumnCsv(data.productType)
                   ? [
                       { key: "sourceEmail", label: "Source Email" },
                       { key: "destinationEmail", label: "Destination Email" },

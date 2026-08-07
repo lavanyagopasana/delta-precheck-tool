@@ -2,6 +2,7 @@ package com.cloudfuze.deltatracker.dto;
 
 import com.cloudfuze.deltatracker.entity.DeltaType;
 import com.cloudfuze.deltatracker.entity.PairStatus;
+import com.cloudfuze.deltatracker.entity.ProductType;
 import com.cloudfuze.deltatracker.entity.SignOffRole;
 import com.cloudfuze.deltatracker.entity.SubmissionStatus;
 import lombok.Getter;
@@ -21,6 +22,11 @@ public class CombinationReadinessDto {
     private String combinationName;
     private Long serverId;
     private String serverName;
+    // The server's product type. Drives which status options each checklist item offers -- Message's
+    // "Delta Message Sync" is enabled/not enabled, its OneTime Migration adds "partially completed".
+    // Sent with the readiness payload so PreCheckPanel doesn't need a second request to render a
+    // dropdown correctly.
+    private ProductType productType;
     private Long projectId;
     private String projectName;
     private String migrationManagerName;

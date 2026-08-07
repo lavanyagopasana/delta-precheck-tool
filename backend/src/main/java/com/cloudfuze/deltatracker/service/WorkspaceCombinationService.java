@@ -329,6 +329,7 @@ public class WorkspaceCombinationService {
         dto.setCombinationName(combination.getName());
         dto.setServerId(server.getId());
         dto.setServerName(server.getName());
+        dto.setProductType(server.getProductType());
         dto.setStatus(combination.getStatus());
         dto.setTotalPairs(pairs.size());
         dto.setOpenEscalationCount(openEscalations);

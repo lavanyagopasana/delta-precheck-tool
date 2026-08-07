@@ -13,6 +13,10 @@ export const TICKET_POLL_MS = 30000;
 // Mirror ServerService.DELTA_TYPE_ITEM / PRE_DELTA_MIGRATION_ITEM on the backend -- these strings are
 // the contract between the two, so they must match exactly.
 export const DELTA_TYPE_ITEM = "Delta Type";
+
+// Message-only checklist item, a yes/no capability question. Mirrors
+// ServerService.DELTA_MESSAGE_SYNC_ITEM -- the name is the matching key, so the two must stay exact.
+export const DELTA_MESSAGE_SYNC_ITEM = "Delta Message Sync";
 export const PRE_DELTA_MIGRATION_ITEM = "Previous Delta Migration";
 
 // Renamed from "Pre Delta Migration" on 2026-08-06. The name IS the matching key and it's persisted

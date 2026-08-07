@@ -45,6 +45,46 @@ class ProductTypeChecklistTest {
     }
 
     @Test
+    void messageChecklistIsTheFiveConfirmedItemsInOrder() {
+        assertThat(ServerService.preCheckItemsFor(ProductType.MESSAGE)).containsExactly(
+                "Delta Type",
+                "OneTime Migration",
+                "Delta Message Sync",
+                "Data Verified",
+                "Workspace Status Updated in DB");
+    }
+
+    @Test
+    void messageDropsTheFileOrientedItems() {
+        // A chat migration has no folder permissions, hyperlinks or local drive, and no Previous Delta
+        // Migration item -- requiring evidence for any of them would be unfillable.
+        assertThat(ServerService.preCheckItemsFor(ProductType.MESSAGE))
+                .doesNotContain("Permissions Verified", "Hyperlinks Verified", "Drive changes",
+                        ServerService.PRE_DELTA_MIGRATION_ITEM);
+    }
+
+    @Test
+    void deltaMessageSyncIsMessageOnly() {
+        // It is the one item unique to Message; Content and Email must not pick it up.
+        assertThat(ServerService.preCheckItemsFor(ProductType.MESSAGE))
+                .contains(ServerService.DELTA_MESSAGE_SYNC_ITEM);
+        assertThat(ServerService.preCheckItemsFor(ProductType.CONTENT))
+                .doesNotContain(ServerService.DELTA_MESSAGE_SYNC_ITEM);
+        assertThat(ServerService.preCheckItemsFor(ProductType.EMAIL))
+                .doesNotContain(ServerService.DELTA_MESSAGE_SYNC_ITEM);
+    }
+
+    @Test
+    void everyChecklistSharesDataVerifiedAndWorkspaceStatus() {
+        // Confirmed as identical across all three product types, so a drift here is a real regression.
+        for (ProductType type : ProductType.values()) {
+            assertThat(ServerService.preCheckItemsFor(type))
+                    .as("checklist for %s", type)
+                    .contains("Data Verified", "Workspace Status Updated in DB");
+        }
+    }
+
+    @Test
     void contentChecklistIsUnchanged() {
         assertThat(ServerService.preCheckItemsFor(ProductType.CONTENT)).containsExactly(
                 "Delta Type",

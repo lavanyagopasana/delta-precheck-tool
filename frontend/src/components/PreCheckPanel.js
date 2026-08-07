@@ -17,6 +17,7 @@ import { useConfirm } from "./ConfirmDialog";
 import {
   MAX_EVIDENCE_FILE_SIZE_MB,
   DELTA_TYPE_ITEM,
+  DELTA_MESSAGE_SYNC_ITEM,
   isPreDeltaMigrationItem,
 } from "../constants";
 import DeltaBadge from "./DeltaBadge";
@@ -53,9 +54,34 @@ const DELTA_TYPE_STATUS_OPTIONS = [
   { value: "FINAL_DELTA", label: "Final delta" },
 ];
 
-function statusOptionsFor(itemName) {
+// Message-only option sets. A chat migration can move part of the history and not the rest, so
+// OneTime Migration gets "Partially completed" and drops Conflicts; Delta Message Sync is a yes/no
+// capability rather than a progress state. Both keep "Not Started", which is the unanswered state
+// every item needs -- it's the only status that blocks submission.
+const MESSAGE_ONETIME_MIGRATION_OPTIONS = [
+  { value: "NOT_STARTED", label: "Not Started" },
+  { value: "IN_PROGRESS", label: "In Progress" },
+  { value: "PARTIALLY_COMPLETED", label: "Partially completed" },
+  { value: "COMPLETED", label: "Completed" },
+];
+
+const DELTA_MESSAGE_SYNC_OPTIONS = [
+  { value: "NOT_STARTED", label: "Not Started" },
+  { value: "ENABLED", label: "Enabled" },
+  { value: "NOT_ENABLED", label: "Not enabled" },
+];
+
+// Scoped by product type as well as item name: "OneTime Migration" exists on all three checklists but
+// only Message offers "Partially completed". productType comes from the readiness payload.
+function statusOptionsFor(itemName, productType) {
   if (itemName === DELTA_TYPE_ITEM) {
     return DELTA_TYPE_STATUS_OPTIONS;
+  }
+  if (productType === "MESSAGE" && itemName === DELTA_MESSAGE_SYNC_ITEM) {
+    return DELTA_MESSAGE_SYNC_OPTIONS;
+  }
+  if (productType === "MESSAGE" && itemName === "OneTime Migration") {
+    return MESSAGE_ONETIME_MIGRATION_OPTIONS;
   }
   if (itemName === "Drive changes") {
     return BASE_STATUS_OPTIONS.map((o) => (o.value === "COMPLETED" ? { ...o, label: "Not up to date" } : o));
@@ -79,6 +105,11 @@ const STATUS_VISUAL = {
   NOT_STARTED: { border: "var(--color-border)", badge: "gray", bg: "var(--color-gray-soft)", fg: "var(--color-text-muted)" },
   IN_PROGRESS: { border: "var(--color-yellow)", badge: "yellow", bg: "var(--color-yellow-soft)", fg: "var(--color-yellow)" },
   CONFLICTS: { border: "var(--color-red)", badge: "red", bg: "var(--color-red-soft)", fg: "var(--color-red)" },
+  // Message-only. Partially completed is real progress but not done, so it reads like In Progress
+  // rather than resolved-green. Not enabled is a legitimate answer, not a failure, so it stays neutral
+  // -- green would imply the sync is on, red would imply something went wrong.
+  PARTIALLY_COMPLETED: { border: "var(--color-yellow)", badge: "yellow", bg: "var(--color-yellow-soft)", fg: "var(--color-yellow)" },
+  NOT_ENABLED: { border: "var(--color-border)", badge: "gray", bg: "var(--color-gray-soft)", fg: "var(--color-text-muted)" },
 };
 const STATUS_VISUAL_DEFAULT = { border: "var(--color-green)", badge: "green", bg: "var(--color-green-soft)", fg: "var(--color-green)" };
 
@@ -93,7 +124,7 @@ function evidenceDisplayName(item) {
   return segments[segments.length - 1];
 }
 
-function ItemRow({ item, locked, combinationId, editingAs, onSaved }) {
+function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
   const [dragOver, setDragOver] = useState(false);
@@ -202,7 +233,7 @@ function ItemRow({ item, locked, combinationId, editingAs, onSaved }) {
           className="precheck-status-pill"
           style={{ backgroundColor: visual.bg, color: visual.fg }}
         >
-          {statusOptionsFor(item.itemName).map((opt) => (
+          {statusOptionsFor(item.itemName, productType).map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
             </option>
@@ -653,6 +684,7 @@ export default function PreCheckPanel({ combinationId, showBackNav = true, showH
               locked={locked}
               combinationId={combinationId}
               editingAs={submittedByName}
+              productType={combination.productType}
               onSaved={updateItemInPlace}
             />
           ))}

@@ -8,6 +8,7 @@ import {
   decommissionServer,
   SAMPLE_CSV_COLUMNS_COMBINATION,
   sampleCsvColumnsForProductType,
+  usesTwoColumnCsv,
 } from "../api/client";
 import { useToast } from "./Toast";
 import { useConfirm } from "./ConfirmDialog";
@@ -27,20 +28,21 @@ const PRODUCT_TYPE_OPTIONS = [
 // The CSV shape per product type: header columns plus one example row, kept together so the two can
 // never disagree about column count (a 4-column header over a 2-value row writes a broken sample file).
 //
-// Email takes just the two mailboxes -- an email migration moves mailboxes, not folder trees, so there
-// is no path to give. Message still uses the Content shape pending its real format; when that arrives it
-// is one entry here and nothing else changes, because every consumer goes through csvSampleFor.
+// Email and Message both take just the two accounts -- neither moves a folder tree, so there is no
+// path to give. Only Content carries source/destination paths.
+const TWO_COLUMN_SHAPE = {
+  columns: sampleCsvColumnsForProductType("EMAIL"),
+  row: ["jane.doe@source-tenant.com", "jane.doe@company.com"],
+};
+
 const CSV_SHAPES = {
   CONTENT: {
     label: "Content",
     columns: SAMPLE_CSV_COLUMNS_COMBINATION,
     row: ["jane.doe@source-tenant.com", "/jane.doe/My Drive", "jane.doe@company.com", "/sites/migrated/jane.doe"],
   },
-  EMAIL: {
-    label: "Email",
-    columns: sampleCsvColumnsForProductType("EMAIL"),
-    row: ["jane.doe@source-tenant.com", "jane.doe@company.com"],
-  },
+  EMAIL: { label: "Email", ...TWO_COLUMN_SHAPE },
+  MESSAGE: { label: "Message", ...TWO_COLUMN_SHAPE },
 };
 
 function csvSampleFor(productType) {
@@ -50,7 +52,7 @@ function csvSampleFor(productType) {
 // Values for a single pair row, matched to the shape above so an export's rows always line up with its
 // header. Email omits the path fields rather than exporting two permanently empty columns.
 function csvRowForPair(productType, pair) {
-  return productType === "EMAIL"
+  return usesTwoColumnCsv(productType)
     ? [pair.sourceEmail, pair.destinationEmail]
     : [pair.sourceEmail, pair.sourcePath, pair.destinationEmail, pair.destinationPath];
 }
@@ -216,9 +218,9 @@ function CsvFormatModal({ servers, onClose }) {
               </tbody>
             </table>
           </div>
-          {shape.label === "Email" && (
+          {shape.label !== "Content" && (
             <div style={{ fontSize: 12, color: "var(--color-text-faint)", marginTop: 6 }}>
-              Email takes only the two mailboxes — there are no source or destination paths.
+              {shape.label} takes only the two accounts — there are no source or destination paths.
             </div>
           )}
         </div>
