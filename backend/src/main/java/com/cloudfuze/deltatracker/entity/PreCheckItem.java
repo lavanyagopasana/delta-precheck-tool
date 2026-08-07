@@ -1,6 +1,8 @@
 package com.cloudfuze.deltatracker.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -30,6 +32,11 @@ public class PreCheckItem {
     @Column(name = "item_name", nullable = false, length = 500)
     private String itemName;
 
+    // VARCHAR, not MySQL's native ENUM. Hibernate 6 maps @Enumerated(STRING) to a native enum column
+    // by default, and ddl-auto=update never widens one -- so adding an ItemStatus value made every
+    // save of that value fail with "Data truncated for column 'status'" until the column was altered
+    // by hand. As VARCHAR, a new enum constant needs no schema change at all.
+    @JdbcTypeCode(SqlTypes.VARCHAR)
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private ItemStatus status = ItemStatus.NOT_STARTED;

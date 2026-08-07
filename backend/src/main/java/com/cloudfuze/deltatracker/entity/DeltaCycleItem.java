@@ -1,6 +1,8 @@
 package com.cloudfuze.deltatracker.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -34,6 +36,9 @@ public class DeltaCycleItem {
     @Column(name = "item_name", nullable = false, length = 500)
     private String itemName;
 
+    // VARCHAR for the same reason as PreCheckItem.status -- a snapshot copies whatever the live item
+    // held, so it hits the identical truncation on any newly added ItemStatus value.
+    @JdbcTypeCode(SqlTypes.VARCHAR)
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private ItemStatus status;
