@@ -301,6 +301,7 @@ public class WorkspaceCombinationService {
                     dto.setDeclinedByRoleLabel(declined.getRole().label());
                     dto.setDeclinedBy(declined.getApprovedBy());
                     dto.setDeclinedAt(declined.getApprovedAt());
+                    dto.setDeclineReason(declined.getDeclineReason());
                 });
 
         for (SignOffRole role : APPROVAL_SEQUENCE) {

@@ -609,6 +609,16 @@ export default function PreCheckPanel({ combinationId, showBackNav = true, showH
               ? "Withdraw it below to unlock the form so it can be corrected and resubmitted."
               : "Ask an admin to withdraw it — that unlocks the form so you can correct and resubmit it."}
           </p>
+          {/* The reason, not just the fact. This banner tells the engineer to correct and resubmit, so
+              omitting what was objected to left them guessing -- the reason was displayed only in the
+              Approvals table, which is not where the correcting happens. Full text, not the table's
+              3-line clamp: there is room here and this is the copy they work from. Declines recorded
+              before reasons were required have none, so say that rather than rendering an empty box. */}
+          <div className="decline-reason-quote">
+            {combination.declineReason || (
+              <span className="decline-note__missing">No reason was recorded for this decline.</span>
+            )}
+          </div>
         </div>
       )}
 

@@ -71,19 +71,28 @@ export default function Dashboard() {
   const decommissionReady = summary?.serversReadyToDecommission || 0;
   const decommissioned = summary?.serversDecommissioned || 0;
 
-  // Anything with an open ticket or an approval sitting in someone's queue -- the two things
-  // that actually need a human to act, as opposed to routine in-progress work.
+  // Anything with an open ticket, an approval sitting in someone's queue, or a decline -- the three
+  // things that actually need a human to act, as opposed to routine in-progress work.
+  //
+  // Declines were missing, which made this panel state the opposite of the truth: a project whose only
+  // problem was a declined pre-check reported "everything's caught up" while the donut on the same
+  // screen said "Declined (1)". A decline is the strongest call to action here -- the chain has
+  // bounced back and stopped, and it stays stopped until an engineer corrects and resubmits it.
+  // Sorted ahead of pending approvals for that reason: pending work is moving, declined work is not.
   const attentionItems = useMemo(
     () =>
       projects
         .map((p) => ({
           ...p,
           pendingApprovals: (p.migrationManagerApprovalsPending || 0) + (p.devApprovalsPending || 0),
+          declined: p.combinationsDeclined || 0,
         }))
-        .filter((p) => p.pendingApprovals > 0 || p.openEscalationCount > 0)
+        .filter((p) => p.pendingApprovals > 0 || p.openEscalationCount > 0 || p.declined > 0)
         .sort(
           (a, b) =>
-            b.openEscalationCount - a.openEscalationCount || b.pendingApprovals - a.pendingApprovals
+            b.openEscalationCount - a.openEscalationCount ||
+            b.declined - a.declined ||
+            b.pendingApprovals - a.pendingApprovals
         ),
     [projects]
   );
@@ -157,6 +166,22 @@ export default function Dashboard() {
                       }}
                     >
                       {p.openEscalationCount} ticket{p.openEscalationCount === 1 ? "" : "s"}
+                    </button>
+                  )}
+                  {/* Red like tickets, not yellow like pending approvals: a decline is stopped work,
+                      not queued work. Links straight to the declined rows so the next click is the
+                      one that fixes it. */}
+                  {p.declined > 0 && (
+                    <button
+                      type="button"
+                      className="badge red attention-action"
+                      title="View this project's declined approvals"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/approvals?project=${p.id}&status=DECLINED`);
+                      }}
+                    >
+                      {p.declined} declined
                     </button>
                   )}
                   {p.pendingApprovals > 0 && (

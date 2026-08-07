@@ -17,6 +17,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { groupByCombination } from "../utils/pairs";
+import { emailLocalPart } from "../utils/format";
 
 const SAMPLE_ROW = [
   "jane.doe@source-tenant.com",
@@ -237,6 +238,17 @@ export default function WorkspacePairsPanel({
       )
     : null;
 
+  // Held by SOMEONE ELSE -- your own claim isn't a lock, it's just where you left off, and that
+  // already reads as "Continue Pre-Check Form". Compared case-insensitively: email is the identity
+  // key everywhere in this app and a case difference here would silently mislabel your own form as
+  // someone else's. A submitted form isn't a lock either; it has its own "View" label above.
+  const lockedByEmail =
+    activeCombinationSummary?.preCheckStartedByEmail &&
+    activeCombinationSummary.submissionStatus !== "SUBMITTED" &&
+    activeCombinationSummary.preCheckStartedByEmail.toLowerCase() !== (currentUser?.email || "").toLowerCase()
+      ? activeCombinationSummary.preCheckStartedByEmail
+      : null;
+
   return (
     <div>
       {showStats && activeCombinationSummary && (
@@ -246,6 +258,16 @@ export default function WorkspacePairsPanel({
       {showPreCheckLink && activeCombinationSummary && (
         <div className="server-precheck-row">
           <strong style={{ fontSize: 13.5 }}>Pre-Check</strong>
+          {/* Someone else has the form open. A submission is claimed (startedByEmail stamped) the
+              moment it is opened, before any item is filled in, so it can sit at NOT_STARTED and
+              still be locked -- which is exactly the state that used to render a live "Start
+              Pre-Check Form" button leading to a read-only notice with nothing to do on it.
+              Label it for what it is and say who holds it. */}
+          {lockedByEmail && (
+            <span className="precheck-lock-note">
+              {emailLocalPart(lockedByEmail)} is filling this out
+            </span>
+          )}
           {/* Solid primary when there's work to do, outlined when there isn't.
               This was `warning` (dark amber) for the actionable state and `success` (green) for the
               read-only one -- both wrong: starting a pre-check is the routine primary action on this
@@ -256,6 +278,7 @@ export default function WorkspacePairsPanel({
               activeCombinationSummary.finalDeltaComplete
                 || activeCombinationSummary.submissionStatus === "SUBMITTED"
                 || !canFillPreCheck
+                || lockedByEmail
                 ? " secondary"
                 : ""
             }`}
@@ -267,6 +290,8 @@ export default function WorkspacePairsPanel({
             {activeCombinationSummary.finalDeltaComplete
               ? "View Completed Pre-Check"
               : activeCombinationSummary.submissionStatus === "SUBMITTED" || !canFillPreCheck
+              ? "View Pre-Check Form"
+              : lockedByEmail
               ? "View Pre-Check Form"
               : activeCombinationSummary.submissionStatus === "DRAFT"
               ? "Continue Pre-Check Form"

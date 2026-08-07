@@ -33,4 +33,11 @@ public class CombinationSummaryDto {
     // Where the current cycle has got to (see DeltaPhase). currentDeltaLabel above is the bare
     // "Pre-Delta 1"; this is what the project page's chip actually shows.
     private DeltaPhase deltaPhase;
+
+    // Who has claimed the pre-check form, if anyone. A submission can sit at NOT_STARTED and still be
+    // claimed -- opening the form stamps startedByEmail before any item is filled in -- so
+    // submissionStatus alone can't tell "nobody has touched this" from "someone else holds it".
+    // Without this the server page offered a live "Start Pre-Check Form" button for a form that was
+    // already locked, and clicking it landed on a read-only notice with nothing to do.
+    private String preCheckStartedByEmail;
 }

@@ -16,7 +16,9 @@ import { SwapIcon, UploadIcon, CheckIcon } from "./Icons";
 const OPTIONS_BY_PRODUCT_TYPE = {
   CONTENT: [
     "Amazon S3",
-    "Amazon workdocs",
+    // Cased as Amazon writes it. Existing rows stored as "Amazon workdocs" still match: the backend
+    // compares combination names with equalsIgnoreCase (ServerService.sameCombination).
+    "Amazon WorkDocs",
     "Azure",
     "Box",
     "Citrix",

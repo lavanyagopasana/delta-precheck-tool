@@ -1161,6 +1161,14 @@ input[type="checkbox"]:disabled {
   animation: toast-in 0.15s ease;
 }
 
+/* The card takes programmatic focus on open (tabIndex=-1) so Escape and tabbing
+   start inside the dialog. That focus is ours, not the user's, so it must not
+   paint a ring around the whole card -- the controls inside still show their own
+   focus styles normally. */
+.modal-card:focus {
+  outline: none;
+}
+
 .modal-header {
   display: flex;
   align-items: center;
@@ -1366,6 +1374,16 @@ input[type="checkbox"]:disabled {
   padding: 16px 0 0;
   margin-top: 20px;
   border-top: 1px solid var(--color-border);
+}
+
+/* Who currently holds the pre-check form. margin-right:auto keeps it beside the
+   "Pre-Check" label rather than letting space-between strand it mid-row, so the
+   button stays where it always is on the right. Muted: this is context for the
+   button next to it, not an alert. */
+.precheck-lock-note {
+  margin-right: auto;
+  font-size: 12.5px;
+  color: var(--color-text-muted);
 }
 
 .engineer-select-option:hover {
@@ -1874,6 +1892,162 @@ input[type="checkbox"]:disabled {
 }
 
 /* ---------------------------------------------------------------------------
+   Narrow screens.
+
+   The 236px sidebar is position:fixed with a matching margin-left on
+   .main-content, which is fine on a desktop and unusable below ~700px: at 375px
+   it kept its full width and left 139px for the page, so KPI labels wrapped one
+   character per line and every page scrolled sideways.
+
+   Below 860px the sidebar stops being a column and becomes a horizontal strip
+   that scrolls along its own axis, so it costs one row instead of 63% of the
+   screen. Deliberately NOT a hamburger drawer: there are four destinations and
+   they all fit on one scrollable line, so a toggle would add state and a tap for
+   nothing.
+   --------------------------------------------------------------------------- */
+@media (max-width: 860px) {
+  .sidebar {
+    position: static;
+    width: auto;
+    bottom: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    /* The strip itself must NOT scroll -- only the nav inside it does. With both
+       scrollable, activating a link scrolled the whole strip and carried the logo
+       off-screen. */
+    overflow: hidden;
+    padding: 8px 12px;
+  }
+
+  /* Logo only. The wordmark sits in a white panel that doesn't shrink, so in a
+     row it collided with the nav links instead of giving way to them. The mark
+     alone carries the branding and leaves the width for the four destinations,
+     which are what people are actually here to tap. */
+  .brand {
+    padding: 0;
+    background: transparent;
+    flex-shrink: 0;
+  }
+
+  .brand-text {
+    display: none;
+  }
+
+  .sidebar-body {
+    display: flex;
+    /* row is load-bearing, not cosmetic: the base rule is column, and in a column
+       container the nav's flex:1 sizes its HEIGHT while align-items:center sizes
+       its width from content -- an over-wide centred child then overflows both
+       edges, which is what put the nav at x=-38 on top of the logo. */
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+  }
+
+  .sidebar nav {
+    display: flex;
+    flex-direction: row;
+    gap: 4px;
+    /* The row scrolls rather than wrapping: a wrapped nav changes the header's
+       height between pages, which shifts the content under it.
+       flex:1 + min-width:0 are both load-bearing. Without them the nav keeps its
+       full content width inside a centred flex parent, and an over-wide centred
+       child overflows BOTH edges -- it rendered at x=-38 and painted itself over
+       the logo to its left. */
+    flex: 1;
+    min-width: 0;
+    justify-content: flex-start;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sidebar nav a {
+    white-space: nowrap;
+  }
+
+  .main-content {
+    margin-left: 0;
+    padding: 20px 16px 48px;
+  }
+}
+
+/* DataTable already wraps every table in an overflow-x container, so tables are
+   not what forces the page sideways -- the fixed sidebar was. This only trims the
+   heading. */
+@media (max-width: 620px) {
+  h2 {
+    font-size: 19px;
+  }
+
+  /* Title, filter and any right-hand controls stack instead of competing for one
+     row. The title is what needs its own line: .table-filter-input carries
+     flex:1;min-width:0, so at 375px the title was squeezed to 71px and its text
+     spilled out under the input rather than the input moving down. */
+  .table-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .table-toolbar-title {
+    flex-basis: 100%;
+  }
+
+  /* The right-hand cluster (filters + primary action) is a nowrap row by default.
+     On Ticket Tracker that is two selects plus "Log Ticket" = 435px, which was the
+     last thing forcing the page itself to scroll sideways. */
+  /* The right-hand cluster (filters + primary action) is display:block, so
+     flex-wrap on it does nothing -- its inner row already wraps, it just never
+     got told how much room it had, and sat at its 435px content width. Giving it
+     the full toolbar row constrains it to 343px, and the inner row then wraps
+     "Log Ticket" down on its own. This was the last thing making the page itself
+     scroll sideways on Ticket Tracker. */
+  .table-toolbar-right {
+    flex-basis: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Combination name + pair count + Delta phase chip share one nowrap row set by
+     an inline style. "Pre-Delta 1 - in progress" is 166px, so at 375px the row ran
+     past the viewport. These rows are inline-styled display:flex without a
+     flex-wrap, and inline styles only win for the properties they actually
+     declare -- so setting flex-wrap here takes effect without touching the JSX. */
+  .combo-row > div,
+  .combo-row > div > div {
+    flex-wrap: wrap;
+  }
+
+  /* Long addresses in the Assignments panel are one unbreakable token
+     ("manmadha.jayamangala@cloudfuze.com" is 292px), so they pushed the page a few
+     pixels wide with no wrap opportunity. Break them instead. */
+  .subpanel {
+    overflow-wrap: anywhere;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   CSV formats popup sample table.
+
+   The four-column Content shape overflowed the modal, so its DESTINATION_PATH
+   example was clipped until you scrolled -- in the one popup whose whole job is
+   to show the columns. Fixed width + wrapping cells rather than a wider modal:
+   these are file paths, so there is no width that is reliably enough.
+   --------------------------------------------------------------------------- */
+.csv-format-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.csv-format-table th,
+.csv-format-table td {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+/* ---------------------------------------------------------------------------
    Decline note in the Approvals table's status cell.
 
    Deliberately quiet. The first version was a red-bordered, red-filled box that
@@ -1909,4 +2083,20 @@ input[type="checkbox"]:disabled {
 .decline-note__missing {
   font-style: italic;
   color: var(--color-text-muted);
+}
+
+/* The same reason on the pre-check page, where the engineer actually does the
+   correcting. Unlike .decline-note this is NOT clamped and NOT squeezed into a
+   200px table cell -- it is the instruction they work from, so it gets the full
+   text and room to wrap. Quoted with a rule down the left so it reads as the
+   approver's words rather than as app copy. */
+.decline-reason-quote {
+  margin-top: 10px;
+  padding: 8px 0 8px 12px;
+  border-left: 2px solid var(--color-border);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

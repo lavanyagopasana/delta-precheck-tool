@@ -208,8 +208,13 @@ function CsvFormatModal({ servers, onClose }) {
               <DownloadIcon size={13} /> Download sample
             </button>
           </div>
+          {/* csv-format-table lets the sample values wrap. The Content shape is four columns and its
+              DESTINATION_PATH sample ran past the modal's width, so the last example was cut off by
+              default -- in the one popup whose entire job is to show people the columns. Wrapping is
+              the fix rather than a wider modal: a wider modal only moves the threshold, and these are
+              paths, which can be arbitrarily long. */}
           <div style={{ overflowX: "auto" }}>
-            <table>
+            <table className="csv-format-table">
               <thead>
                 <tr>
                   {shape.columns.map((col) => (
@@ -620,6 +625,16 @@ function DecommissionButton({ server, onSaved }) {
     }
   };
 
+  // A server with no combinations is never ready either: ServerService.allFinalDeltasComplete requires
+  // a non-empty list, so a freshly created server can't report itself decommissionable. That rule is
+  // deliberate and unchanged -- but it used to share the "Final Deltas still outstanding" message,
+  // which is plainly untrue when there is nothing on the server at all. It named a blocker that didn't
+  // exist and gave no hint what to do about it. Only the two cases are told apart here.
+  const disabledReason =
+    (server.combinations || []).length === 0
+      ? "Nothing to decommission — this server has no combinations yet"
+      : "Final Deltas still outstanding";
+
   // Solid red, same treatment as the delete-combination button, because it does the same kind of
   // thing -- it erases the server and everything under it. An outlined secondary button understated
   // the most destructive action in the app.
@@ -634,7 +649,7 @@ function DecommissionButton({ server, onSaved }) {
       className={ready ? "btn danger" : "btn secondary"}
       style={{ padding: "6px 14px", fontSize: 12.5, whiteSpace: "nowrap" }}
       disabled={!ready || busy}
-      title={ready ? "Erase this server permanently" : "Final Deltas still outstanding"}
+      title={ready ? "Erase this server permanently" : disabledReason}
       onClick={handleClick}
     >
       {busy ? (

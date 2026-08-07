@@ -69,6 +69,11 @@ public class CombinationReadinessDto {
     private String declinedByRoleLabel;
     private String declinedBy;
     private LocalDateTime declinedAt;
+    // What the approver objected to. The pre-check view is where the engineer is told to correct and
+    // resubmit, so it is the one place that has to carry the reason -- telling someone to fix it
+    // without saying what was wrong is the whole problem the reason was added to solve. Already sent
+    // on SignOffApprovalDto for the Approvals table; this is the same value for the detail view.
+    private String declineReason;
 
     private LocalDateTime deltaInitiatedAt;
     private String deltaInitiatedBy;

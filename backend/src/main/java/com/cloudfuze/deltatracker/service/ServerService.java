@@ -364,6 +364,10 @@ public class ServerService {
                     summary.setSubmissionStatus(java.util.Optional.ofNullable(submissionByCombination.get(c.getId()))
                             .map(PreCheckSubmission::getStatus)
                             .orElse(SubmissionStatus.NOT_STARTED));
+                    summary.setPreCheckStartedByEmail(
+                            java.util.Optional.ofNullable(submissionByCombination.get(c.getId()))
+                                    .map(PreCheckSubmission::getStartedByEmail)
+                                    .orElse(null));
                     summary.setCurrentCycleNumber(c.getCurrentCycleNumber());
                     summary.setCurrentDeltaType(c.getCurrentDeltaType());
                     // Phase-aware label: "Pre-Delta 1 started" rather than a bare "Pre-Delta 1", which
