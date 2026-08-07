@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   createServerForProject,
@@ -12,10 +12,9 @@ import {
 import { useToast } from "./Toast";
 import { useConfirm } from "./ConfirmDialog";
 import Modal from "./Modal";
-import CsvImportPanel from "./CsvImportPanel";
 import AddCombinationModal from "./AddCombinationModal";
 import DeltaBadge from "./DeltaBadge";
-import { DownloadIcon, UploadIcon, TrashIcon, PlusIcon, SwapIcon, ServerIcon, EditIcon, TableIcon } from "./Icons";
+import { DownloadIcon, UploadIcon, TrashIcon, PlusIcon, SwapIcon, ServerIcon, EditIcon, TableIcon, CheckIcon } from "./Icons";
 import { downloadSampleCsv, downloadCsv } from "../utils/csv";
 import { groupByCombination } from "../utils/pairs";
 
@@ -58,10 +57,6 @@ function csvRowForPair(productType, pair) {
 
 function slugFor(combination) {
   return combination.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-}
-
-function sampleFileNameFor(combination) {
-  return `${slugFor(combination)}-sample.csv`;
 }
 
 function exportFileNameFor(combination) {
@@ -232,6 +227,142 @@ function CsvFormatModal({ servers, onClose }) {
   );
 }
 
+/**
+ * Re-upload a combination's CSV, in a popup.
+ *
+ * Replaces an inline CsvImportPanel that expanded underneath the combination row. That panel carried
+ * its own "View CSV format" and "Download sample CSV" buttons, which now duplicate the single CSV
+ * format button in the Server URLs header -- the same reference table, reachable two ways, one of them
+ * pushing the whole server list down the page. This is upload only: drag a file or browse, see what
+ * happened, done.
+ */
+function ReuploadCsvModal({ server, combination, onUpload, onImported, onClose }) {
+  const [file, setFile] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const fileInputRef = useRef(null);
+
+  const handleUpload = async () => {
+    if (!file || importing) return;
+    setImporting(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await onUpload(file);
+      setResult(res);
+      onImported();
+    } catch (err) {
+      setError(err.response?.data?.message || "Import failed.");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (importing) return;
+    const dropped = e.dataTransfer.files[0];
+    if (dropped) setFile(dropped);
+  };
+
+  return (
+    <Modal title={`Re-upload CSV — ${combination}`} onClose={onClose} width={560} closeIcon>
+      <p style={{ marginTop: 0, fontSize: 13, color: "var(--color-text-muted)" }}>
+        Replaces the migration pairs for this combination on <strong>{server.serverName}</strong>. Rows
+        that already exist exactly as-is are skipped rather than duplicated.
+      </p>
+
+      <div
+        className={`precheck-dropzone-lg${dragOver ? " drag-over" : ""}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+      >
+        {file ? (
+          <>
+            <CheckIcon size={18} style={{ marginRight: 0, color: "var(--color-green)" }} />
+            <div style={{ textAlign: "left" }}>
+              <div style={{ fontWeight: 600, fontSize: 13.5 }}>{file.name}</div>
+              <div style={{ fontSize: 11.5, color: "var(--color-text-faint)" }}>
+                {(file.size / 1024).toFixed(1)} KB
+              </div>
+            </div>
+            <button
+              type="button"
+              className="modal-close-icon"
+              style={{
+                width: 26,
+                height: 26,
+                marginLeft: "auto",
+                color: "var(--color-red)",
+                borderColor: "var(--color-red)",
+                background: "var(--color-red-soft)",
+              }}
+              title="Remove file"
+              aria-label="Remove file"
+              onClick={() => {
+                setFile(null);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+              }}
+            >
+              &times;
+            </button>
+          </>
+        ) : (
+          <>
+            <UploadIcon size={20} style={{ marginRight: 0, color: "var(--color-text-faint)" }} />
+            <label style={{ cursor: "pointer" }}>
+              <span style={{ color: "var(--color-primary)", fontWeight: 600 }}>Choose a CSV</span> or drag
+              and drop it here
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv"
+                onChange={(e) => setFile(e.target.files[0] || null)}
+                style={{ display: "none" }}
+              />
+            </label>
+          </>
+        )}
+      </div>
+
+      {result && (
+        <div className="inline-success" style={{ marginTop: 14, display: "block" }}>
+          Imported {result.totalRows} row(s): {result.createdCount} created, {result.updatedCount} updated
+          {result.duplicateCount > 0 && `, ${result.duplicateCount} duplicate(s) skipped`}.
+          {result.duplicates?.length > 0 && (
+            <ul style={{ margin: "8px 0 0", paddingLeft: 18, maxHeight: 160, overflowY: "auto" }}>
+              {result.duplicates.map((d, i) => (
+                <li key={i} style={{ fontSize: 12.5, marginBottom: 3 }}>{d}</li>
+              ))}
+            </ul>
+          )}
+          {result.errors?.length > 0 && (
+            <ul style={{ color: "var(--color-red)", marginTop: 6, paddingLeft: 18 }}>
+              {result.errors.map((e, i) => (
+                <li key={i}>{e}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      {error && <div className="inline-hint" style={{ marginTop: 14 }}>{error}</div>}
+
+      <div className="form-actions">
+        <button className="btn" disabled={!file || importing} onClick={handleUpload}>
+          <UploadIcon /> {importing ? "Importing…" : "Upload CSV"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 // A combination row only exists once its CSV is actually uploaded -- ServerCard derives it fresh
 // from the server's real data on every render (see groupByCombination below), so it keeps showing
 // up correctly after a reload.
@@ -344,16 +475,13 @@ function CombinationRow({ server, row, isAdmin, canManage, onSaved }) {
       </div>
 
       {reuploading && (
-        <div style={{ marginTop: 10 }}>
-          <CsvImportPanel
-            title={`Re-upload CSV for "${row.combination}" on ${server.serverName}`}
-            columns={csvSampleFor(server.productType).columns}
-            sampleRow={csvSampleFor(server.productType).row}
-            sampleFileName={sampleFileNameFor(row.combination)}
-            onUpload={handleUpload}
-            onImported={onSaved}
-          />
-        </div>
+        <ReuploadCsvModal
+          server={server}
+          combination={row.combination}
+          onUpload={handleUpload}
+          onImported={onSaved}
+          onClose={() => setReuploading(false)}
+        />
       )}
     </div>
   );
