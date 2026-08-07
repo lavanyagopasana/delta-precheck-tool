@@ -1780,31 +1780,23 @@ input[type="checkbox"]:disabled {
    minimal padding, grid layout, space-efficient.
    --------------------------------------------------------------------------- */
 /* Fixed column counts, not auto-fit. auto-fit packs as many as will fit and leaves whatever is left
-   over on a short final row -- with 7 metrics that produced a 5 + 2 split with two orphans, which
-   reads as broken rather than responsive. An explicit count keeps every row equal.
+   over on a short final row, which reads as broken rather than responsive. An explicit count keeps
+   every row equal.
 
-   7 across is comfortable at the shell's 1180px max-width now that labels are single-line: 7 cards
-   plus six 10px gaps leaves ~150px each, and the widest label ("Pending Approvals") needs ~147px.
-   The breakpoints below step down to counts that divide 7 as evenly as possible. */
+   Six metrics divides cleanly at every breakpoint below -- 6, then 3 + 3, then 2 + 2 + 2 -- so there
+   is never an orphan row. This was 7, which is prime: no column count except 7 or 1 could avoid a
+   partial row. Removing the Final Deltas Done card is what made the layout work out. */
 .kpi-grid {
   display: grid;
   /* minmax(0, 1fr) not 1fr: 1fr floors at min-content, which would overflow the row rather than
      letting the cards shrink. */
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 24px;
 }
 
-/* 4 + 3 -- still uneven, but two nearly-full rows read far better than 5 + 2, and below this width
-   seven across genuinely cannot fit. */
-@media (max-width: 1150px) {
-  .kpi-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
-/* 3 + 3 + 1. */
-@media (max-width: 860px) {
+/* 3 + 3. */
+@media (max-width: 1080px) {
   .kpi-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }

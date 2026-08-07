@@ -119,18 +119,11 @@ export default function Dashboard() {
         <Kpi label="Delta Ready" value={readyServers} tone="green" />
         <Kpi label="Pending Approvals" value={summary.totalApprovalRequests} tone="yellow" />
         <Kpi label="Open Tickets" value={openEscalations} tone="red" />
-        {/* Final Deltas are the migrations that actually finished, as distinct from "Delta Ready"
-            above (approved, but possibly only for an intermediate pre-delta). */}
+        {/* "Servers" is in the label deliberately. Shortened to just "To Decommission" it read as a
+            project count -- the number has always been servers (DashboardService iterates servers and
+            counts those whose every combination has completed its Final Delta). */}
         <Kpi
-          label="Final Deltas Done"
-          value={summary.finalDeltasComplete}
-          tone="purple"
-          meta={summary.preDeltasInFlight > 0
-            ? `${summary.preDeltasInFlight} pre-delta${summary.preDeltasInFlight === 1 ? "" : "s"} in flight`
-            : null}
-        />
-        <Kpi
-          label="To Decommission"
+          label="Servers To Decommission"
           value={decommissionReady}
           tone="green"
           meta={decommissioned > 0 ? `${decommissioned} already done` : null}
