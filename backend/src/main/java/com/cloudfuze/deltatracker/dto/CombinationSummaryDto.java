@@ -1,5 +1,6 @@
 package com.cloudfuze.deltatracker.dto;
 
+import com.cloudfuze.deltatracker.entity.DeltaPhase;
 import com.cloudfuze.deltatracker.entity.DeltaType;
 import com.cloudfuze.deltatracker.entity.PairStatus;
 import com.cloudfuze.deltatracker.entity.SubmissionStatus;
@@ -29,4 +30,7 @@ public class CombinationSummaryDto {
     private String currentDeltaLabel;
     private long completedCycleCount;
     private boolean finalDeltaComplete;
+    // Where the current cycle has got to (see DeltaPhase). currentDeltaLabel above is the bare
+    // "Pre-Delta 1"; this is what the project page's chip actually shows.
+    private DeltaPhase deltaPhase;
 }

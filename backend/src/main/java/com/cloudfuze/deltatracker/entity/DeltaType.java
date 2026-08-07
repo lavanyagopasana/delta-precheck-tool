@@ -19,4 +19,27 @@ public enum DeltaType {
     public String label(int cycleNumber) {
         return this == PRE_DELTA ? "Pre-Delta " + cycleNumber : "Final Delta";
     }
+
+    /**
+     * The cycle label with its phase appended — "Pre-Delta 1 started", "Final Delta completed".
+     *
+     * <p>The bare label was ambiguous: "Pre-Delta 1" read the same whether its pre-check was still
+     * being approved, its migration was running, or it had already finished. Someone scanning a
+     * project's combinations couldn't tell which ones were actually moving.
+     *
+     * <p>READY is "approved" rather than "ready to start" because the chip sits next to a pair count
+     * and a done-count, where the shorter word is enough. AWAITING_PRECHECK returns the bare label for
+     * completeness, though callers render no chip at all in that state (there is no settled type yet).
+     */
+    public String labelWithPhase(int cycleNumber, DeltaPhase phase) {
+        String base = label(cycleNumber);
+        return switch (phase) {
+            case IN_APPROVAL -> base + " in progress";
+            case READY -> base + " approved";
+            case STARTED -> base + " started";
+            case FINISHED -> base + " finished";
+            case COMPLETE -> base + " completed";
+            case AWAITING_PRECHECK -> base;
+        };
+    }
 }

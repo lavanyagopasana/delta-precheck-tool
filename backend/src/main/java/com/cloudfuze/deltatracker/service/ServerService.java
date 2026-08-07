@@ -366,9 +366,14 @@ public class ServerService {
                             .orElse(SubmissionStatus.NOT_STARTED));
                     summary.setCurrentCycleNumber(c.getCurrentCycleNumber());
                     summary.setCurrentDeltaType(c.getCurrentDeltaType());
+                    // Phase-aware label: "Pre-Delta 1 started" rather than a bare "Pre-Delta 1", which
+                    // read identically whether the cycle was awaiting approval, running, or done.
+                    com.cloudfuze.deltatracker.entity.DeltaPhase phase =
+                            com.cloudfuze.deltatracker.entity.DeltaPhase.of(c);
+                    summary.setDeltaPhase(phase);
                     summary.setCurrentDeltaLabel(c.getCurrentDeltaType() == null
                             ? null
-                            : c.getCurrentDeltaType().label(c.getCurrentCycleNumber()));
+                            : c.getCurrentDeltaType().labelWithPhase(c.getCurrentCycleNumber(), phase));
                     summary.setCompletedCycleCount(cycleCountByCombination.getOrDefault(c.getId(), 0L));
                     summary.setFinalDeltaComplete(c.isFinalDeltaComplete());
                     return summary;

@@ -429,12 +429,13 @@ function CombinationRow({ server, row, isAdmin, canManage, onSaved }) {
           )}
           {/* Where this combination's Delta stands, inline -- the pair count alone said nothing about
               whether the migration had started, finished, or is on its third pre-delta. */}
-          {row.summary?.finalDeltaComplete ? (
-            <span className="badge purple">Complete</span>
-          ) : (
-            row.summary?.currentDeltaLabel && (
-              <DeltaBadge deltaType={row.summary.currentDeltaType} label={row.summary.currentDeltaLabel} />
-            )
+          {/* One badge for every state. currentDeltaLabel now carries the phase ("Pre-Delta 1 started",
+              "Final Delta completed" -- see DeltaType.labelWithPhase), so the separate "Complete" pill
+              this used to special-case is redundant: DeltaBadge already renders FINAL_DELTA purple.
+              Null label means the pre-check hasn't been submitted, so nothing has settled the cycle's
+              type yet and no badge is right. */}
+          {row.summary?.currentDeltaLabel && (
+            <DeltaBadge deltaType={row.summary.currentDeltaType} label={row.summary.currentDeltaLabel} />
           )}
           {/* "1 delta done" rather than "1 done" -- next to a pair count and a stage badge, a bare
               "done" read as though the combination itself was finished. Green because it's completed
