@@ -20,3 +20,4 @@ db_backups/
 # Personal Claude Code notes -- not shared config
 CLAUDE.local.md
 .gstack/
+PR_DESCRIPTION.md
