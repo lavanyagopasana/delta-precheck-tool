@@ -392,8 +392,12 @@ export default function ApprovalsPage() {
                 <CurrentStatusText label={a.currentStatus} />
                 {/* The status says WHO declined; this says why. Shown inline rather than behind a
                     tooltip or a click, because it's the one thing the person it bounced back to needs
-                    in order to act, and they'd otherwise have to ask. */}
-                {a.declineReason && (
+                    in order to act, and they'd otherwise have to ask.
+
+                    Keyed on declinedByRoleLabel, not on the reason: declines recorded before reasons
+                    were required have none, and rendering nothing for those looked like the feature was
+                    broken rather than like there was nothing to show. It now says so explicitly. */}
+                {a.declinedByRoleLabel && (
                   <div
                     style={{
                       fontSize: 11.5,
@@ -411,7 +415,11 @@ export default function ApprovalsPage() {
                       {a.declinedByRoleLabel}
                       {a.declinedBy ? ` · ${emailLocalPart(a.declinedBy)}` : ""}
                     </div>
-                    {a.declineReason}
+                    {a.declineReason || (
+                      <span style={{ fontStyle: "italic", color: "var(--color-text-muted)" }}>
+                        No reason recorded
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
