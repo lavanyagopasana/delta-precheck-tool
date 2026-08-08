@@ -297,6 +297,19 @@ class DeltaCycleServiceTest {
         verify(cycleRepository, never()).save(any());
     }
 
+    // ---- completedCycleCount ----
+
+    @Test
+    void completedCycleCountIncludesOnlyFinishedCycles() {
+        DeltaCycle done = new DeltaCycle(combination, 1, DeltaType.PRE_DELTA);
+        done.setStatus(DeltaCycleStatus.COMPLETED);
+        DeltaCycle approved = new DeltaCycle(combination, 2, DeltaType.PRE_DELTA);
+        approved.setStatus(DeltaCycleStatus.APPROVED);
+        when(cycleRepository.findByCombinationIdOrderByCycleNumberAsc(CID)).thenReturn(List.of(done, approved));
+
+        assertThat(service.completedCycleCount(CID)).isEqualTo(1);
+    }
+
     // ---- history ----
 
     @Test
@@ -308,12 +321,18 @@ class DeltaCycleServiceTest {
     }
 
     @Test
-    void historyLabelsEachCycleAndOrdersItsSignOffsByTheApprovalSequence() {
+    void historyLabelsEachCompletedCycleAndOrdersItsSignOffsByTheApprovalSequence() {
         DeltaCycle first = new DeltaCycle(combination, 1, DeltaType.PRE_DELTA);
         first.setId(101L);
+        first.setStatus(DeltaCycleStatus.COMPLETED);
         DeltaCycle second = new DeltaCycle(combination, 2, DeltaType.FINAL_DELTA);
         second.setId(102L);
-        when(cycleRepository.findByCombinationIdOrderByCycleNumberAsc(CID)).thenReturn(List.of(first, second));
+        second.setStatus(DeltaCycleStatus.COMPLETED);
+        DeltaCycle inFlight = new DeltaCycle(combination, 3, DeltaType.PRE_DELTA);
+        inFlight.setId(103L);
+        inFlight.setStatus(DeltaCycleStatus.APPROVED);
+        when(cycleRepository.findByCombinationIdOrderByCycleNumberAsc(CID))
+                .thenReturn(List.of(first, second, inFlight));
         // Deliberately out of order coming back from the repository.
         when(cycleSignOffRepository.findByCycleIdIn(any())).thenReturn(List.of(
                 cycleSignOff(first, SignOffRole.QA_LEAD),

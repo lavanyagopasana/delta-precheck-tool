@@ -280,7 +280,9 @@ public class DeltaCycleService {
      */
     @Transactional(readOnly = true)
     public List<DeltaCycleDto> history(Long combinationId) {
-        List<DeltaCycle> cycles = cycleRepository.findByCombinationIdOrderByCycleNumberAsc(combinationId);
+        List<DeltaCycle> cycles = cycleRepository.findByCombinationIdOrderByCycleNumberAsc(combinationId).stream()
+                .filter(cycle -> cycle.getStatus() == DeltaCycleStatus.COMPLETED)
+                .toList();
         if (cycles.isEmpty()) {
             return List.of();
         }
@@ -311,10 +313,12 @@ public class DeltaCycleService {
                 .toList();
     }
 
-    // How many cycles this combination has completed -- i.e. currentCycleNumber - 1 expressed as real
-    // recorded rows, used for the "Pre-Deltas Done" figures in the server/project rollups.
+    // How many cycles this combination has fully finished (Finish clicked, status COMPLETED). A cycle
+    // row is written at approval time with status APPROVED — that in-flight cycle is not "done" yet.
     @Transactional(readOnly = true)
     public long completedCycleCount(Long combinationId) {
-        return cycleRepository.countByCombinationId(combinationId);
+        return cycleRepository.findByCombinationIdOrderByCycleNumberAsc(combinationId).stream()
+                .filter(cycle -> cycle.getStatus() == DeltaCycleStatus.COMPLETED)
+                .count();
     }
 }

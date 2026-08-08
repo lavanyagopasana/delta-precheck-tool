@@ -3,6 +3,8 @@ package com.cloudfuze.deltatracker.service;
 import com.cloudfuze.deltatracker.dto.CombinationSummaryDto;
 import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
 import com.cloudfuze.deltatracker.dto.WorkspacePairDto;
+import com.cloudfuze.deltatracker.entity.DeltaCycle;
+import com.cloudfuze.deltatracker.entity.DeltaCycleStatus;
 import com.cloudfuze.deltatracker.entity.PairStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
 import com.cloudfuze.deltatracker.entity.ProductType;
@@ -20,6 +22,7 @@ import com.cloudfuze.deltatracker.repository.ProjectRepository;
 import com.cloudfuze.deltatracker.repository.ServerRepository;
 import com.cloudfuze.deltatracker.repository.WorkspaceCombinationRepository;
 import com.cloudfuze.deltatracker.repository.WorkspacePairRepository;
+import com.cloudfuze.deltatracker.util.ServerUrlValidator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -188,6 +191,12 @@ public class ServerService {
         }
 
         String trimmed = name.trim();
+        // Format check only -- see ServerUrlValidator for why this deliberately doesn't call the URL.
+        // Without it @NotBlank was the only gate, so "https://" (no host at all) was stored happily.
+        String urlError = ServerUrlValidator.validationError(trimmed);
+        if (urlError != null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, urlError);
+        }
         if (serverRepository.findByProjectIdAndNameIgnoreCase(projectId, trimmed).isPresent()) {
             throw new ApiException(HttpStatus.CONFLICT, "A server with this URL already exists in this project.");
         }
@@ -275,12 +284,24 @@ public class ServerService {
         serverPurgeService.purge(server);
     }
 
+    /**
+     * Permanently deletes a server and everything under it (combinations, pairs, pre-check, sign-offs,
+     * Delta cycles, tickets, evidence files). Same cascade as {@link #decommission}, but available to
+     * admins at any time — no Final-Delta readiness guard. Use when removing a server that was added
+     * by mistake or clearing in-progress work; use decommission when closing out finished migration work.
+     */
+    public void deleteServer(Long serverId, String callerEmail) {
+        requireAdmin(callerEmail);
+        Server server = findOrThrow(serverId);
+        serverPurgeService.purge(server);
+    }
+
     // Not AppUserService.requireAdmin: that one's message is specific to managing app access, and this
     // isn't that. A null email means auth isn't configured, which the whole app deliberately treats as
     // open (see SecurityConfig.authConfigured).
     private void requireAdmin(String callerEmail) {
         if (callerEmail != null && !appUserService.isAdmin(callerEmail)) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "Only an admin can decommission a server.");
+            throw new ApiException(HttpStatus.FORBIDDEN, "Only an admin can delete or decommission a server.");
         }
     }
 
@@ -350,8 +371,9 @@ public class ServerService {
         // One query for every combination's cycle count rather than one per combination -- this method
         // runs once per server in listReadiness/listReadinessForProject, so a per-combination query here
         // would be an N*M round trip on the projects page.
-        Map<Long, Long> cycleCountByCombination = deltaCycleRepository.findByCombinationIdIn(combinationIds).stream()
-                .collect(Collectors.groupingBy(cycle -> cycle.getCombinationId(), Collectors.counting()));
+        Map<Long, Long> completedCycleCountByCombination = deltaCycleRepository.findByCombinationIdIn(combinationIds).stream()
+                .filter(cycle -> cycle.getStatus() == DeltaCycleStatus.COMPLETED)
+                .collect(Collectors.groupingBy(DeltaCycle::getCombinationId, Collectors.counting()));
 
         dto.setCombinations(combinations.stream()
                 .map(c -> {
@@ -378,7 +400,15 @@ public class ServerService {
                     summary.setCurrentDeltaLabel(c.getCurrentDeltaType() == null
                             ? null
                             : c.getCurrentDeltaType().labelWithPhase(c.getCurrentCycleNumber(), phase));
-                    summary.setCompletedCycleCount(cycleCountByCombination.getOrDefault(c.getId(), 0L));
+                    // Prior fully finished cycles only — Pre-Delta 1 after approval is never "1 done".
+                    long priorCompleted = 0L;
+                    if (c.getCurrentCycleNumber() > 1) {
+                        priorCompleted = deltaCycleRepository.findByCombinationIdOrderByCycleNumberAsc(c.getId()).stream()
+                                .filter(cycle -> cycle.getStatus() == DeltaCycleStatus.COMPLETED)
+                                .filter(cycle -> cycle.getCycleNumber() < c.getCurrentCycleNumber())
+                                .count();
+                    }
+                    summary.setCompletedCycleCount(priorCompleted);
                     summary.setFinalDeltaComplete(c.isFinalDeltaComplete());
                     return summary;
                 })
@@ -386,7 +416,7 @@ public class ServerService {
 
         int finalDeltaComplete = (int) combinations.stream().filter(WorkspaceCombination::isFinalDeltaComplete).count();
         dto.setFinalDeltaCompleteCount(finalDeltaComplete);
-        dto.setTotalDeltaCycleCount(cycleCountByCombination.values().stream().mapToLong(Long::longValue).sum());
+        dto.setTotalDeltaCycleCount(completedCycleCountByCombination.values().stream().mapToLong(Long::longValue).sum());
         dto.setDecommissionedAt(server.getDecommissionedAt());
         dto.setDecommissionedBy(server.getDecommissionedBy());
         dto.setDecommissioned(server.isDecommissioned());

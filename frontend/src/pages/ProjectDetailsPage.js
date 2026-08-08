@@ -6,7 +6,7 @@ import { useCurrentUser } from "../auth/CurrentUserContext";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
 import EngineerChecklist from "../components/EngineerChecklist";
 import ServerUrlsPanel from "../components/ServerUrlsPanel";
-import { PlusIcon } from "../components/Icons";
+import { PlusIcon, FolderIcon } from "../components/Icons";
 
 const EMPTY_ROSTER = { migrationManagers: [], engineers: [] };
 
@@ -20,7 +20,9 @@ function isDirty(current, saved) {
   return JSON.stringify(a) !== JSON.stringify(b);
 }
 
-function AssignmentsCard({ project, roster, canManage, onSaved }) {
+// The whole project header: name + engineers on the top row, manager below. Owns the engineer
+// selection state, which is why the header lives here rather than being assembled in the page.
+function ProjectHeader({ project, roster, canManage, onSaved, onAddServer }) {
   const showToast = useToast();
   const [engineerEmails, setEngineerEmails] = useState(project.engineerEmails || []);
   const [savedEmails, setSavedEmails] = useState(project.engineerEmails || []);
@@ -44,55 +46,70 @@ function AssignmentsCard({ project, roster, canManage, onSaved }) {
     }
   };
 
+  // The people on this project, shown as the header's second row rather than a separate
+  // "Assignments" card. The heading was a label for two fields that already label themselves, and
+  // it pushed the project's own team below the fold of its own header.
   return (
-    <div className="card">
-      <h3 className="section-title">Assignments</h3>
-
-      <div className="subpanel" style={{ marginTop: 16 }}>
-        <span style={{ display: "block", fontSize: 12, fontWeight: 500, color: "var(--color-text-muted)", marginBottom: 8 }}>
-          Migration Manager
+    <div className="detail-header">
+      {/* Top row: the project's name on the left, its engineers on the right, primary action last. */}
+      <div className="detail-header-top detail-header-top--split">
+        <span className="detail-header-icon">
+          <FolderIcon size={20} style={{ marginRight: 0 }} />
         </span>
-        {project.migrationManagerName ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span className="person-avatar">{initials(project.migrationManagerName)}</span>
-            <span style={{ fontSize: 13.5, fontWeight: 500 }}>{project.migrationManagerName}</span>
-          </div>
-        ) : (
-          <span style={{ fontSize: 13, color: "var(--color-text-faint)" }}>Not assigned yet</span>
+        <h2 className="detail-header-title">{project.name}</h2>
+
+        {/* The manager is a single value, so it fits the top row beside the name. */}
+        <div className="project-manager">
+          <span className="detail-fact-label">Migration Manager</span>
+          {project.migrationManagerName ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+              <span className="person-avatar">{initials(project.migrationManagerName)}</span>
+              <span style={{ fontSize: 13.5, fontWeight: 600 }}>{project.migrationManagerName}</span>
+            </div>
+          ) : (
+            <span style={{ fontSize: 13, color: "var(--color-text-faint)" }}>Not assigned yet</span>
+          )}
+        </div>
+
+        {canManage && (
+          <button className="btn" style={{ flexShrink: 0, alignSelf: "center" }} onClick={onAddServer}>
+            <PlusIcon /> Add Server
+          </button>
         )}
       </div>
 
-      <div className="subpanel" style={{ marginTop: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-          <span style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-muted)" }}>
-            Migration Engineers
-          </span>
-          {canManage && (
-            <button
-              className="btn"
-              style={{ padding: "5px 14px", fontSize: 12.5 }}
-              onClick={handleSave}
-              disabled={saving || !dirty}
-            >
-              {saving ? "Saving..." : dirty ? "Save" : "Saved"}
-            </button>
-          )}
-        </div>
-        {canManage ? (
-          <EngineerChecklist options={roster.engineers} selected={engineerEmails} onChange={setEngineerEmails} />
-        ) : project.engineerEmails?.length ? (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {project.engineerEmails.map((email) => (
-              <span key={email} className="engineer-chip" style={{ cursor: "default" }}>
-                <span className="person-avatar">{initials(email)}</span>
-                {email}
-              </span>
-            ))}
+      {/* Second row: the engineers -- a chip list that grows, so it gets the full width. */}
+      <div className="project-people">
+        <div className="project-people-block project-people-block--grow">
+          <div className="assign-section-head">
+            <span className="detail-fact-label">Migration Engineers</span>
+            {canManage && (
+              <button
+                className="btn"
+                style={{ padding: "4px 12px", fontSize: 12 }}
+                onClick={handleSave}
+                disabled={saving || !dirty}
+              >
+                {saving ? "Saving..." : dirty ? "Save" : "Saved"}
+              </button>
+            )}
           </div>
-        ) : (
-          <span style={{ fontSize: 13, color: "var(--color-text-faint)" }}>None yet</span>
-        )}
-        {error && <div className="inline-hint" style={{ marginTop: 10 }}>{error}</div>}
+          {canManage ? (
+            <EngineerChecklist options={roster.engineers} selected={engineerEmails} onChange={setEngineerEmails} />
+          ) : project.engineerEmails?.length ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {project.engineerEmails.map((email) => (
+                <span key={email} className="engineer-chip" style={{ cursor: "default" }}>
+                  <span className="person-avatar">{initials(email)}</span>
+                  {email}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <span style={{ fontSize: 13, color: "var(--color-text-faint)" }}>None yet</span>
+          )}
+          {error && <div className="inline-hint" style={{ marginTop: 10 }}>{error}</div>}
+        </div>
       </div>
     </div>
   );
@@ -142,18 +159,15 @@ export default function ProjectDetailsPage() {
     <div>
       <Link to="/projects" className="breadcrumb" style={{ display: "inline-block" }}>&larr; Back to Projects</Link>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 24 }}>
-        <h2 style={{ margin: 0 }}>{project.name}</h2>
-        {canManage && (
-          <button className="btn" onClick={() => setShowAddServer(true)}>
-            <PlusIcon /> Add Server
-          </button>
-        )}
-      </div>
+      <ProjectHeader
+        project={project}
+        roster={roster}
+        canManage={canManage}
+        onSaved={load}
+        onAddServer={() => setShowAddServer(true)}
+      />
 
       {error && <div className="inline-hint" style={{ marginTop: 12 }}>{error}</div>}
-
-      <AssignmentsCard project={project} roster={roster} canManage={canManage} onSaved={load} />
 
       <ServerUrlsPanel
         project={project}

@@ -205,9 +205,12 @@ public class SecurityConfig {
                         // admins do this. It permanently erases the server and everything under it, so
                         // this is the most destructive route in the app; also re-checked in ServerService
                         // so the rule survives a routing change. Listed before the PATCH/DELETE
-                        // /api/servers/* rules below so it can't be widened by them. No DELETE
-                        // counterpart: the undo endpoint was removed when decommission became an erase.
+                        // /api/servers/* rules below so it can't be widened by them.
                         .requestMatchers(HttpMethod.POST, "/api/servers/*/decommission").access(roleRequired(
+                                AppUserRole.ADMIN))
+                        // Deleting a server (admin-only, anytime) -- same cascade as decommission but
+                        // without the all-Final-Deltas-complete guard. Also re-checked in ServerService.
+                        .requestMatchers(HttpMethod.DELETE, "/api/servers/*").access(roleRequired(
                                 AppUserRole.ADMIN))
                         // Deleting a project is gated here to the roles that could ever be allowed; the
                         // per-project ownership check (creator / managing MM / admin) and the

@@ -4,6 +4,7 @@ import { getServerReadiness } from "../api/client";
 import WorkspacePairsPanel from "../components/WorkspacePairsPanel";
 import { ServerIcon, SwapIcon } from "../components/Icons";
 import { groupByCombination } from "../utils/pairs";
+import { emailLocalPart } from "../utils/format";
 
 const PRODUCT_TYPE_LABELS = { MESSAGE: "Message", EMAIL: "Email", CONTENT: "Content" };
 
@@ -14,6 +15,8 @@ export default function ServerDetailsPage() {
   const [server, setServer] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Facts for the combination the panel below is showing -- see the header's fact row.
+  const [comboReadiness, setComboReadiness] = useState(null);
 
   const load = () => {
     setLoading(true);
@@ -46,28 +49,70 @@ export default function ServerDetailsPage() {
         &larr; Back to {server.projectName || "Project"}
       </Link>
 
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
-          <div>
-            {server.projectName && (
-              <div style={{ fontSize: 12.5, color: "var(--color-text-muted)", marginBottom: 4 }}>
-                Project: <strong style={{ color: "var(--color-text)" }}>{server.projectName}</strong>
-              </div>
-            )}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <ServerIcon size={20} style={{ marginRight: 0, color: "var(--color-primary)" }} />
-              <h2 style={{ margin: 0 }}>{server.serverName}</h2>
-              {server.productType && (
-                <span className="badge blue">{PRODUCT_TYPE_LABELS[server.productType] || server.productType}</span>
-              )}
-            </div>
-            {activeCombination && (
-              <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 6, color: "var(--color-text-muted)" }}>
-                <SwapIcon size={15} style={{ marginRight: 0 }} />
-                <span style={{ fontSize: 13.5, fontWeight: 600 }}>{activeCombination.combination}</span>
-              </div>
-            )}
+      {/* Top row: the server URL alone -- it's the page's identity, so nothing shares the line with
+          it. Everything else drops to the fact row below. */}
+      <div className="detail-header">
+        <div className="detail-header-top">
+          <span className="detail-header-icon">
+            <ServerIcon size={20} style={{ marginRight: 0 }} />
+          </span>
+          <h2 className="detail-header-title">{server.serverName}</h2>
+        </div>
+
+        <div className="detail-header-facts">
+          <div className="detail-fact">
+            <span className="detail-fact-label">Project</span>
+            <span className="detail-fact-value">{server.projectName || "—"}</span>
           </div>
+          <div className="detail-fact">
+            <span className="detail-fact-label">Product type</span>
+            <span className="detail-fact-value">
+              {server.productType
+                ? PRODUCT_TYPE_LABELS[server.productType] || server.productType
+                : "—"}
+            </span>
+          </div>
+          <div className="detail-fact">
+            <span className="detail-fact-label">Combination</span>
+            <span className="detail-fact-value">
+              {activeCombination ? (
+                <>
+                  <SwapIcon size={14} style={{ marginRight: 0, color: "var(--color-text-faint)" }} />
+                  {activeCombination.combination}
+                </>
+              ) : (
+                "—"
+              )}
+            </span>
+          </div>
+          {/* Pairs / open tickets / manager live up here with the rest of the identity facts rather
+              than in the lifecycle panel below -- that panel is about progress, these are properties
+              of the combination. Reported up by WorkspacePairsPanel so there's no second fetch. */}
+          {comboReadiness && (
+            <>
+              <div className="detail-fact">
+                <span className="detail-fact-label">Pairs</span>
+                <span className="detail-fact-value">{comboReadiness.totalPairs}</span>
+              </div>
+              <div className="detail-fact">
+                <span className="detail-fact-label">Open tickets</span>
+                <span
+                  className="detail-fact-value"
+                  style={{ color: comboReadiness.openEscalationCount > 0 ? "var(--color-red)" : undefined }}
+                >
+                  {comboReadiness.openEscalationCount}
+                </span>
+              </div>
+              {comboReadiness.migrationManagerName && (
+                <div className="detail-fact">
+                  <span className="detail-fact-label">Manager</span>
+                  <span className="detail-fact-value">
+                    {emailLocalPart(comboReadiness.migrationManagerName)}
+                  </span>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
 
@@ -79,6 +124,7 @@ export default function ServerDetailsPage() {
           serverId={serverId}
           showCsvImport={false}
           initialCombination={initialCombination}
+          onCombinationReadiness={setComboReadiness}
         />
       </div>
     </div>

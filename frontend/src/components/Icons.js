@@ -126,6 +126,15 @@ export function SwapIcon(props) {
   );
 }
 
+// Folder -- leading glyph on the project header, matching the sidebar's Projects icon.
+export function FolderIcon(props) {
+  return (
+    <Svg {...props}>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+    </Svg>
+  );
+}
+
 // Server/database rack -- leading glyph on a server card header.
 export function ServerIcon(props) {
   return (

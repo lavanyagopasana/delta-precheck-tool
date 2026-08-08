@@ -23,6 +23,18 @@
   --color-purple: #7c3aed;
   --color-purple-soft: #f1eafe;
 
+  /* Muted delta-phase badge palette — distinct per lifecycle step, softer than primary blue. */
+  --color-delta-approval: #a16207;
+  --color-delta-approval-soft: #fef6e0;
+  --color-delta-ready: #0369a1;
+  --color-delta-ready-soft: #e0f2fe;
+  --color-delta-started: #4338ca;
+  --color-delta-started-soft: #e0e7ff;
+  --color-delta-done: #047857;
+  --color-delta-done-soft: #ecfdf5;
+  --color-delta-complete: #6d28d9;
+  --color-delta-complete-soft: #f3e8ff;
+
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -368,6 +380,13 @@ tr.selected-row.clickable-row:hover td {
 .badge.blue { background: var(--color-primary-soft); color: var(--color-primary-dark); }
 .badge.purple { background: var(--color-purple-soft); color: var(--color-purple); }
 
+/* Delta lifecycle phases — one muted hue each so combination rows scan by status at a glance. */
+.badge.delta-in-approval { background: var(--color-delta-approval-soft); color: var(--color-delta-approval); }
+.badge.delta-ready { background: var(--color-delta-ready-soft); color: var(--color-delta-ready); }
+.badge.delta-started { background: var(--color-delta-started-soft); color: var(--color-delta-started); }
+.badge.delta-done { background: var(--color-delta-done-soft); color: var(--color-delta-done); }
+.badge.delta-complete { background: var(--color-delta-complete-soft); color: var(--color-delta-complete); }
+
 .dot {
   display: inline-block;
   width: 9px;
@@ -486,27 +505,9 @@ tr.selected-row.clickable-row:hover td {
   flex-shrink: 0;
 }
 
-/* A visually distinct sub-panel inside a card -- e.g. the stat-card strip inside the Servers card --
-   so multiple zones inside one card read as separate groups instead of one unbroken stack. */
-.subpanel {
-  background: var(--color-bg);
-  border-radius: var(--radius-md);
-  padding: 16px;
-}
-
-/* A single row (combination, draft-in-progress row) inside a .subpanel -- white surface + border so
-   it "pops" against the subpanel's tinted background instead of relying on a bare top divider. */
-.combo-row {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  padding: 12px 14px;
-  margin-top: 10px;
-}
-
-.combo-row:first-of-type {
-  margin-top: 12px;
-}
+/* .subpanel (tinted plane inside a card) is gone -- the project/server pages now use one white
+   surface with hairline separators instead of nesting tints. .combo-row is defined with the rest
+   of that treatment further down. */
 
 /* ---------- Buttons ---------- */
 
@@ -1365,17 +1366,6 @@ input[type="checkbox"]:disabled {
   color: var(--color-text-muted);
 }
 
-.server-precheck-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding: 16px 0 0;
-  margin-top: 20px;
-  border-top: 1px solid var(--color-border);
-}
-
 /* Who currently holds the pre-check form. margin-right:auto keeps it beside the
    "Pre-Check" label rather than letting space-between strand it mid-row, so the
    button stays where it always is on the right. Muted: this is context for the
@@ -2023,7 +2013,8 @@ input[type="checkbox"]:disabled {
   /* Long addresses in the Assignments panel are one unbreakable token
      ("manmadha.jayamangala@cloudfuze.com" is 292px), so they pushed the page a few
      pixels wide with no wrap opportunity. Break them instead. */
-  .subpanel {
+  .assign-section,
+  .server-block {
     overflow-wrap: anywhere;
   }
 }
@@ -2099,4 +2090,494 @@ input[type="checkbox"]:disabled {
   color: var(--color-text);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* ---------- Combination overview (migration journey) ---------- */
+
+/* The header strip: identity of the combination + its headline state, on one tinted plane. */
+/* No tinted plane of its own -- it sits directly on the white card that wraps it. A grey block
+   inside a white card read as a panel-in-a-panel for content that is simply this card's own
+   header. */
+.combo-overview {
+  padding: 0;
+  margin-bottom: 20px;
+}
+
+.combo-overview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+/* Big, plain-language state. Colour is set inline from the stage (green/yellow/red/purple). */
+.combo-state {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.combo-state-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 16%, transparent);
+}
+
+.combo-state-sub {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+}
+
+/* Pre-check action, aligned with the state on the head row. */
+.combo-head-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+/* The journey rail: four connected stages across the lifecycle. */
+.combo-journey {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+}
+
+.combo-stage {
+  position: relative;
+  padding: 0 14px 0 0;
+}
+
+/* Connector line to the NEXT stage, drawn from the node's centre line. */
+.combo-stage:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 9px;
+  left: 22px;
+  right: 6px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-border);
+}
+.combo-stage.done:not(:last-child)::after {
+  background: var(--color-green);
+}
+
+.combo-stage-node {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  border: 2px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-faint);
+  position: relative;
+  z-index: 1;
+}
+
+.combo-stage.done .combo-stage-node {
+  background: var(--color-green);
+  border-color: var(--color-green);
+  color: #fff;
+}
+
+/* The one stage the combination is actually sitting on -- ringed so the eye lands here first. */
+.combo-stage.current .combo-stage-node {
+  background: var(--color-surface);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  box-shadow: 0 0 0 4px var(--color-primary-soft);
+}
+
+.combo-stage.blocked .combo-stage-node {
+  background: var(--color-surface);
+  border-color: var(--color-red);
+  color: var(--color-red);
+  box-shadow: 0 0 0 4px var(--color-red-soft);
+}
+
+.combo-stage.final .combo-stage-node {
+  background: var(--color-purple);
+  border-color: var(--color-purple);
+  color: #fff;
+}
+
+.combo-stage-title {
+  margin-top: 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.combo-stage.pending .combo-stage-title {
+  color: var(--color-text-faint);
+}
+
+.combo-stage-meta {
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--color-text-muted);
+  min-height: 16px;
+}
+
+.combo-stage-actor {
+  color: var(--color-text-faint);
+}
+
+/* Inline action sitting in a stage (Start / Finished). */
+.combo-stage-action {
+  margin-top: 8px;
+}
+
+/* Decline callout -- the reason an approver sent this back. Previously invisible on this page. */
+.combo-decline {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  background: var(--color-red-soft);
+  border: 1px solid color-mix(in srgb, var(--color-red) 22%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+
+.combo-decline-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-red);
+}
+
+.combo-decline-reason {
+  margin-top: 5px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.combo-decline-meta {
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 900px) {
+  .combo-journey {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 18px 0;
+  }
+  .combo-stage:nth-child(2)::after {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .combo-journey {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .combo-stage::after {
+    display: none !important;
+  }
+}
+
+/* ---------- Detail page header (server / combination identity) ---------- */
+
+/* Was four stacked lines -- "Project: x", then icon+URL+badge, then a second icon+combination --
+   three competing type sizes and two icons for what is really one identity plus three facts.
+   Now: the URL alone on the top row, then Project / Product type / Combination on one row below. */
+.detail-header {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 20px 22px;
+  margin-bottom: 20px;
+}
+
+/* Top row: the URL, and nothing else competing with it. */
+.detail-header-top {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+/* Soft tile so the icon reads as a mark rather than free-floating next to the text. */
+.detail-header-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.detail-header-title {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+  /* Override the global h2 flex/margin rules -- this one is a plain block of text. */
+  display: block;
+}
+
+/* Second row: the three remaining facts, divided by hairlines. Small-caps labels keep them clearly
+   subordinate to the URL above while staying scannable left-to-right. */
+.detail-header-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  margin-top: 16px;
+  padding-top: 15px;
+  border-top: 1px solid var(--color-border);
+}
+
+.detail-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 24px;
+  border-left: 1px solid var(--color-border);
+}
+
+.detail-fact:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+
+.detail-fact-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--color-text-faint);
+}
+
+.detail-fact-value {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---------- Project detail: one surface level ---------- */
+
+/* The page used to stack tinted planes: white .card > grey .subpanel > white .combo-row. Three
+   background changes to express two levels of nesting, which read as clutter rather than hierarchy.
+   Everything below sits on ONE white surface and separates with hairlines + type instead. */
+
+/* The project's people, as the header's second row: manager on the left, engineers taking the rest
+   of the width. Split by a hairline from the project name above -- no tinted panels, and no
+   "Assignments" heading, since each block already labels itself. */
+/* Top row carrying the name, the manager and the primary action. */
+.detail-header-top--split {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px 18px;
+}
+
+/* The manager, pushed to the right of the top row and separated from the name by a hairline. */
+.project-manager {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding-left: 18px;
+  border-left: 1px solid var(--color-border);
+}
+
+@media (max-width: 700px) {
+  .project-manager {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: none;
+  }
+}
+
+.project-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px 26px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.project-people-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Engineers get the remaining width -- the chip list is the part that actually grows. */
+.project-people-block--grow {
+  flex: 1 1 340px;
+  padding-left: 26px;
+  border-left: 1px solid var(--color-border);
+}
+
+@media (max-width: 700px) {
+  .project-people-block--grow {
+    padding-left: 0;
+    border-left: none;
+  }
+}
+
+.assign-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+/* One server, as its own bordered white block on the page background -- replaces the grey
+   .subpanel, so the combination rows inside it no longer need a surface of their own to be legible. */
+/* A server and the combinations that belong to it. The block itself carries no padding: its header
+   is a tinted band (the parent) and each combination is an indented row beneath it (the children),
+   so the hierarchy comes from ONE tint + indentation rather than from stacked panels. */
+.server-block {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.server-block:hover {
+  border-color: #d8dde8;
+  box-shadow: var(--shadow-sm);
+}
+
+/* The parent band: the server URL, its product type and the action that adds a child to it. Tinted
+   so a glance separates "the server" from "the combinations under it" -- previously both were plain
+   white rows of near-identical weight, so they read as siblings. */
+.server-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 13px 18px;
+  background: var(--color-gray-soft);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* The server URL itself -- the heaviest text in the block, so the parent reads as the parent. */
+.server-block-url {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+/* A combination inside a server block: a plain row split by a hairline. It was a white card sitting
+   on the grey subpanel; on a white block that treatment is a box inside a box for no added meaning. */
+.combo-row {
+  /* Indented under the server band -- the indent is what says "this belongs to the server above".
+     Lighter than the header on purpose: children shouldn't compete with their parent. */
+  padding: 11px 18px 11px 34px;
+  margin-top: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  position: relative;
+}
+
+/* Hairline between siblings only -- the header's own border already separates the first one. */
+.combo-row + .combo-row {
+  border-top: 1px solid var(--color-border);
+}
+
+.combo-row:hover {
+  background: rgba(1, 41, 172, 0.025);
+}
+
+/* The clickable part of the row: name on the left, status + actions on the right, the whole strip
+   a single target. */
+.combo-row-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  cursor: pointer;
+}
+
+/* The combination's name: clearly a level below the server URL above it. */
+.combo-row-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.combo-row-ident {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 160px;
+}
+
+.combo-row-trailing {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.combo-row-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.combo-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* The Server URLs section: a heading + toolbar over a list of white server blocks, sitting straight
+   on the page background rather than inside another card. */
+.server-section {
+  margin-bottom: 20px;
+}
+
+/* Icons inside a button take their spacing from .btn's own 6px flex gap. The icon set defaults to
+   marginRight:6px (for icons used inline in text), which stacked on top of that gap and pushed the
+   label off-centre within the button's padding -- every "＋ Add ..." button was ~6px lopsided. */
+.btn svg {
+  margin-right: 0 !important;
 }

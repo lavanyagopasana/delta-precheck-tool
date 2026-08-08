@@ -207,6 +207,45 @@ class ServerDecommissionTest {
         verify(serverPurgeService).purge(server);
     }
 
+    // ---- deleteServer (admin-only erase at any time -- see ServerService.deleteServer) ----
+
+    @Test
+    void adminCanDeleteServerWithNoCombinations() {
+        givenCombinations();
+
+        service.deleteServer(SID, ADMIN);
+
+        verify(serverPurgeService).purge(server);
+    }
+
+    @Test
+    void adminCanDeleteServerWhileFinalDeltasAreStillOutstanding() {
+        givenCombinations(combination(1L, true), combination(2L, false));
+
+        service.deleteServer(SID, ADMIN);
+
+        verify(serverPurgeService).purge(server);
+    }
+
+    @Test
+    void nonAdminCannotDeleteServer() {
+        givenCombinations(combination(1L, true));
+
+        assertThatThrownBy(() -> service.deleteServer(SID, ENGINEER))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+        verify(serverPurgeService, never()).purge(any());
+    }
+
+    @Test
+    void authNotConfiguredStillAllowsDelete() {
+        givenCombinations(combination(1L, false));
+
+        service.deleteServer(SID, null);
+
+        verify(serverPurgeService).purge(server);
+    }
+
     // ---- readiness rollup ----
 
     @Test

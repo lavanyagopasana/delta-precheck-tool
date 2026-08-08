@@ -1,5 +1,6 @@
 package com.cloudfuze.deltatracker.dto;
 
+import com.cloudfuze.deltatracker.entity.DeltaPhase;
 import com.cloudfuze.deltatracker.entity.DeltaType;
 import com.cloudfuze.deltatracker.entity.PairStatus;
 import com.cloudfuze.deltatracker.entity.ProductType;
@@ -49,10 +50,12 @@ public class CombinationReadinessDto {
     // The current cycle's declared type, settled at submit time. Null until the pre-check is
     // submitted -- nothing has decided this cycle's nature before then.
     private DeltaType currentDeltaType;
-    // "Pre-Delta 2" / "Final Delta" for the current cycle, or null when currentDeltaType is.
-    // Resolved server-side (DeltaType.label) so the numbering rule lives in one place.
+    // "Pre-Delta 2 - started" / "Final Delta - done" for the current cycle, or null when
+    // currentDeltaType is. Resolved server-side (DeltaType.labelWithPhase) so the rule lives in one place.
     private String currentDeltaLabel;
-    // How many cycles have been approved and recorded so far -- the "N deltas done" figure.
+    // Where the current cycle has got to — drives badge colour on the detail page.
+    private DeltaPhase deltaPhase;
+    // How many cycles have been marked finished (Finish clicked) — not cycles still awaiting start.
     private long completedCycleCount;
     // Non-null once the Final Delta has been marked finished: the combination is locked and now
     // counts toward its server becoming decommission-ready.

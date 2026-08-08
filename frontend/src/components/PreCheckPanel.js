@@ -22,6 +22,7 @@ import {
 } from "../constants";
 import DeltaBadge from "./DeltaBadge";
 import { emailLocalPart } from "../utils/format";
+import { previousDeltasDoneCount } from "../utils/delta";
 
 // Filling out and submitting a pre-check is a MIGRATION_ENGINEER action. MIGRATION_MANAGER was removed
 // on 2026-08-06: the manager is the first approver in the sign-off chain, so filling in the form they
@@ -363,7 +364,13 @@ function PreCheckHeader({ serverName, combinationName, children }) {
   );
 }
 
-export default function PreCheckPanel({ combinationId, showBackNav = true, showHeader = true, fromSignoff = false }) {
+export default function PreCheckPanel({
+  combinationId,
+  showBackNav = true,
+  showHeader = true,
+  fromSignoff = false,
+  onChanged,
+}) {
   const currentUser = useCurrentUser();
   const [combination, setCombination] = useState(null);
   const [submission, setSubmission] = useState(null);
@@ -506,6 +513,7 @@ export default function PreCheckPanel({ combinationId, showBackNav = true, showH
       await submitPreCheckForReview(combinationId, { submittedBy: submittedByName });
       showToast("Pre-check submitted for Migration Manager review.", "success");
       load();
+      onChanged?.();
     } catch (err) {
       const msg = err.response?.data?.message || "Something went wrong submitting for review. Please try again.";
       setError(msg);
@@ -531,6 +539,7 @@ export default function PreCheckPanel({ combinationId, showBackNav = true, showH
       await withdrawPreCheck(combinationId);
       showToast("Submission withdrawn — you can edit and resubmit.", "success");
       load();
+      onChanged?.();
     } catch (err) {
       const msg = err.response?.data?.message || "Couldn't withdraw the submission. Please try again.";
       setError(msg);
@@ -560,6 +569,7 @@ export default function PreCheckPanel({ combinationId, showBackNav = true, showH
               // alone rather than guessing Pre vs Final.
               <DeltaBadge
                 deltaType={combination.currentDeltaType}
+                deltaPhase={combination.deltaPhase}
                 label={combination.currentDeltaLabel}
                 fallback={`Delta ${combination.currentCycleNumber}`}
               />
@@ -569,10 +579,10 @@ export default function PreCheckPanel({ combinationId, showBackNav = true, showH
               itself for the case where no summary line follows it. */}
           <p style={{ color: "var(--color-text-muted)", marginTop: -12, marginBottom: 20 }}>
             {combination.totalPairs} migration pair(s) under this combination share this pre-check.
-            {combination.completedCycleCount > 0 &&
-              ` ${combination.completedCycleCount} delta${
-                combination.completedCycleCount === 1 ? "" : "s"
-              } already completed here.`}
+            {(() => {
+              const prior = previousDeltasDoneCount(combination);
+              return prior > 0 ? ` ${prior} delta${prior === 1 ? "" : "s"} already completed here.` : "";
+            })()}
           </p>
         </>
       )}

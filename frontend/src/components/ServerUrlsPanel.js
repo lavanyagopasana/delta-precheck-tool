@@ -5,7 +5,7 @@ import {
   updateServerProductType,
   importWorkspacePairsCsvForCombination,
   deletePairsByCombination,
-  decommissionServer,
+  deleteServer,
   SAMPLE_CSV_COLUMNS_COMBINATION,
   sampleCsvColumnsForProductType,
   usesTwoColumnCsv,
@@ -18,6 +18,8 @@ import DeltaBadge from "./DeltaBadge";
 import { DownloadIcon, UploadIcon, TrashIcon, PlusIcon, SwapIcon, ServerIcon, EditIcon, TableIcon, CheckIcon } from "./Icons";
 import { downloadSampleCsv, downloadCsv } from "../utils/csv";
 import { groupByCombination } from "../utils/pairs";
+import { previousDeltasDoneCount, previousDeltasDoneShortLabel } from "../utils/delta";
+import { serverUrlError } from "../utils/serverUrl";
 
 const PRODUCT_TYPE_OPTIONS = [
   { value: "MESSAGE", label: "Message" },
@@ -76,6 +78,11 @@ function AddServerModal({ project, canManage, onSaved, open, onClose }) {
   const [newServerUrl, setNewServerUrl] = useState("");
   const [addingServer, setAddingServer] = useState(false);
   const [serverError, setServerError] = useState(null);
+  const [touched, setTouched] = useState(false);
+
+  const urlError = serverUrlError(newServerUrl);
+  // Don't show the "required" message before they've typed anything.
+  const showUrlError = touched && !!newServerUrl.trim() && !!urlError;
 
   if (!canManage || !open) return null;
 
@@ -123,15 +130,21 @@ function AddServerModal({ project, canManage, onSaved, open, onClose }) {
         </label>
         <input
           type="text"
-          placeholder="https://..."
+          placeholder="https://server.example.com"
           value={newServerUrl}
           onChange={(e) => setNewServerUrl(e.target.value)}
-          style={{ width: "100%" }}
+          onBlur={() => setTouched(true)}
+          style={{ width: "100%", borderColor: showUrlError ? "var(--color-red)" : undefined }}
         />
+        {/* Shown once they've left the field, so it doesn't scold mid-typing. The backend runs the
+            same rules and is the real gate -- this is just immediate feedback. */}
+        {showUrlError && (
+          <div style={{ fontSize: 12, color: "var(--color-red)", marginTop: 6 }}>{urlError}</div>
+        )}
       </div>
       {serverError && <div className="inline-hint" style={{ marginTop: 10 }}>{serverError}</div>}
       <div className="form-actions">
-        <button className="btn" disabled={addingServer || !newServerUrl.trim()} onClick={handleAddServer}>
+        <button className="btn" disabled={addingServer || !!urlError} onClick={handleAddServer}>
           <PlusIcon /> {addingServer ? "Adding..." : "Add"}
         </button>
       </div>
@@ -425,46 +438,46 @@ function CombinationRow({ server, row, isAdmin, canManage, onSaved }) {
     }
   };
 
+  const priorDeltasDone = previousDeltasDoneCount(row.summary);
+  const priorDeltasLabel = previousDeltasDoneShortLabel(priorDeltasDone);
+
   return (
     <div className="combo-row">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
-        <div
-          style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, cursor: "pointer" }}
-          onClick={() => navigate(`/servers/${server.serverId}?combination=${encodeURIComponent(row.combination)}`)}
-          title={`View ${row.combination} migration pairs`}
-        >
-          <SwapIcon style={{ marginRight: 0, color: "var(--color-text-muted)" }} />
-          <span style={{ fontSize: 13.5, fontWeight: 600 }}>{row.combination}</span>
-          {row.pairCount != null && (
-            <span className="badge gray">
-              {row.pairCount} pair{row.pairCount === 1 ? "" : "s"}
-            </span>
-          )}
-          {/* Where this combination's Delta stands, inline -- the pair count alone said nothing about
-              whether the migration had started, finished, or is on its third pre-delta. */}
-          {/* One badge for every state. currentDeltaLabel now carries the phase ("Pre-Delta 1 started",
-              "Final Delta completed" -- see DeltaType.labelWithPhase), so the separate "Complete" pill
-              this used to special-case is redundant: DeltaBadge already renders FINAL_DELTA purple.
-              Null label means the pre-check hasn't been submitted, so nothing has settled the cycle's
-              type yet and no badge is right. */}
-          {row.summary?.currentDeltaLabel && (
-            <DeltaBadge
-              deltaType={row.summary.currentDeltaType}
-              deltaPhase={row.summary.deltaPhase}
-              label={row.summary.currentDeltaLabel}
-            />
-          )}
-          {/* "1 delta done" rather than "1 done" -- next to a pair count and a stage badge, a bare
-              "done" read as though the combination itself was finished. Green because it's completed
-              work: the previous faint grey made real progress look like incidental metadata. Kept as
-              text rather than a third badge so it doesn't compete with the pair count and stage pills. */}
-          {!row.summary?.finalDeltaComplete && row.summary?.completedCycleCount > 0 && (
-            <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--color-green)" }}>
-              {row.summary.completedCycleCount} delta{row.summary.completedCycleCount === 1 ? "" : "s"} done
-            </span>
-          )}
+      {/* The whole row opens the combination, not just its name -- the empty space between the name
+          and the actions was dead to the click even though the row is one target. The action
+          buttons stop propagation so they still do their own thing. The modals below sit outside
+          this div, so a click inside one never navigates. */}
+      <div
+        className="combo-row-main"
+        onClick={() => navigate(`/servers/${server.serverId}?combination=${encodeURIComponent(row.combination)}`)}
+        title={`View ${row.combination} migration pairs`}
+      >
+        <div className="combo-row-ident">
+          <SwapIcon size={15} style={{ marginRight: 0, color: "var(--color-text-faint)" }} />
+          <span className="combo-row-name">{row.combination}</span>
+          {/* No pair count here -- it's a property of the combination, shown on the combination's own
+              page header. On this list it competed with the name and the delta status for attention. */}
         </div>
-        <div style={{ display: "flex", gap: 6 }}>
+        {/* Status chips and actions are separate groups so badges never squeeze against the icon
+            buttons when the row wraps on a narrow screen. */}
+        <div className="combo-row-trailing">
+          {(row.summary?.currentDeltaLabel || priorDeltasLabel) && (
+            <div className="combo-row-status">
+              {row.summary?.currentDeltaLabel && (
+                <DeltaBadge
+                  deltaType={row.summary.currentDeltaType}
+                  deltaPhase={row.summary.deltaPhase}
+                  label={row.summary.currentDeltaLabel}
+                />
+              )}
+              {priorDeltasLabel && (
+                <span className="badge delta-done" title="Finished pre-delta cycles">
+                  {priorDeltasLabel}
+                </span>
+              )}
+            </div>
+          )}
+          <div className="combo-row-actions" onClick={(e) => e.stopPropagation()}>
           <button className="btn icon-btn secondary" title="Download CSV" aria-label="Download CSV" onClick={handleDownload}>
             <DownloadIcon style={{ marginRight: 0 }} />
           </button>
@@ -491,6 +504,7 @@ function CombinationRow({ server, row, isAdmin, canManage, onSaved }) {
               <TrashIcon style={{ marginRight: 0 }} />
             </button>
           )}
+          </div>
         </div>
       </div>
 
@@ -550,20 +564,23 @@ function ServerProductTypeBadge({ server, isAdmin, onSaved }) {
     );
   }
 
-  // Neutral, not blue: the product type never changes and isn't a status, so it shouldn't compete with
-  // the Delta phase badge sitting beside it. Colour is reserved for things that move.
+  // Blue, not grey. This was deliberately neutral before, when it sat on a white row -- but the
+  // server header is a grey band now, so a grey badge sank into its own background. The product type
+  // also decides the whole CSV shape for every combination under the server, so it earns the
+  // emphasis. It still can't be confused with the Delta phase badge: that one lives on the
+  // combination rows below, never on this band.
   if (!isAdmin) {
     return server.productType ? (
-      <span className="badge gray">{PRODUCT_TYPE_LABELS[server.productType] || server.productType}</span>
+      <span className="badge blue">{PRODUCT_TYPE_LABELS[server.productType] || server.productType}</span>
     ) : null;
   }
 
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-      {/* Gray whether set or not -- the admin view showed the same label in blue, so the two views
-          disagreed on how loud the product type should be. Yellow when unset, because an untyped server
-          silently gets the Content checklist and CSV shape, which is worth flagging rather than muting. */}
-      <span className={`badge ${server.productType ? "gray" : "yellow"}`}>
+      {/* Blue when set, matching the read-only view above so both agree on how loud this is. Yellow
+          when unset, because an untyped server silently gets the Content checklist and CSV shape,
+          which is worth flagging rather than muting. */}
+      <span className={`badge ${server.productType ? "blue" : "yellow"}`}>
         {server.productType ? PRODUCT_TYPE_LABELS[server.productType] || server.productType : "No product type"}
       </span>
       <button
@@ -583,84 +600,65 @@ function ServerProductTypeBadge({ server, isAdmin, onSaved }) {
   );
 }
 
-// Admin-only, and deliberately destructive: decommissioning ERASES the server and everything under it
-// (see ServerService.decommission). There is no undo, so the confirm spells out exactly what goes
-// rather than asking a generic "are you sure?". Rendered for every server rather than only ready ones,
-// disabled with the reason as its tooltip -- an admin looking for the action shouldn't have to guess
-// whether it's missing because of permissions or because work is outstanding.
-function DecommissionButton({ server, onSaved }) {
+// Admin-only, always available: deleting ERASES the server and everything under it
+// (see ServerService.deleteServer / ServerPurgeService). There is no undo, so the confirm spells
+// out exactly what goes rather than asking a generic "are you sure?".
+function DeleteServerButton({ server, onSaved }) {
   const [busy, setBusy] = useState(false);
   const showToast = useToast();
   const confirm = useConfirm();
 
-  const ready = Boolean(server.decommissionReady);
-
   const handleClick = async () => {
-    // Leads with the consequence, then lists exactly what goes, then the irreversibility. The previous
-    // version ran all three together in one block that read as boilerplate -- easy to click past on the
-    // one action in this app that cannot be undone.
+    const inProgress = !server.decommissionReady && (server.combinations || []).length > 0;
+    const progressNote = inProgress
+      ? "\n\nThis server still has migration work in progress — everything will be lost."
+      : "";
+
     const ok = await confirm({
-      title: `Permanently erase ${server.serverName}?`,
+      title: `Permanently delete ${server.serverName}?`,
       message:
         "This deletes the server and everything under it:\n\n" +
         "•  All combinations and migration pairs\n" +
         "•  Every pre-check item and uploaded evidence file\n" +
         "•  The full sign-off history and Delta cycles\n" +
-        "•  All tickets raised against it\n\n" +
-        "This cannot be undone. Export anything you need to keep before continuing.",
-      confirmLabel: "Erase server",
+        "•  All tickets raised against it" +
+        progressNote +
+        "\n\nThis cannot be undone. Export anything you need to keep before continuing.",
+      confirmLabel: "Delete server",
       danger: true,
     });
     if (!ok) return;
 
     setBusy(true);
     try {
-      await decommissionServer(server.serverId);
-      showToast(`${server.serverName} decommissioned and erased.`, "success");
+      await deleteServer(server.serverId);
+      showToast(`${server.serverName} deleted.`, "success");
       onSaved();
     } catch (err) {
-      showToast(err?.response?.data?.message || "Could not decommission this server.", "error");
+      showToast(err?.response?.data?.message || "Could not delete this server.", "error");
     } finally {
       setBusy(false);
     }
   };
 
-  // A server with no combinations is never ready either: ServerService.allFinalDeltasComplete requires
-  // a non-empty list, so a freshly created server can't report itself decommissionable. That rule is
-  // deliberate and unchanged -- but it used to share the "Final Deltas still outstanding" message,
-  // which is plainly untrue when there is nothing on the server at all. It named a blocker that didn't
-  // exist and gave no hint what to do about it. Only the two cases are told apart here.
-  const disabledReason =
-    (server.combinations || []).length === 0
-      ? "Nothing to decommission — this server has no combinations yet"
-      : "Final Deltas still outstanding";
-
-  // Solid red, same treatment as the delete-combination button, because it does the same kind of
-  // thing -- it erases the server and everything under it. An outlined secondary button understated
-  // the most destructive action in the app.
-  //
-  // Tooltips are kept short on purpose: a native title renders as one unwrapped strip, so the previous
-  // "Every combination on this server must complete its Final Delta first" stretched most of the way
-  // across the window. The disabled state carries the short version; the full explanation lives in the
-  // confirm dialog, where there is room for it.
   return (
     <button
       type="button"
-      className={ready ? "btn danger" : "btn secondary"}
+      className="btn danger"
       style={{ padding: "6px 14px", fontSize: 12.5, whiteSpace: "nowrap" }}
-      disabled={!ready || busy}
-      title={ready ? "Erase this server permanently" : disabledReason}
+      disabled={busy}
+      title="Delete this server permanently"
       onClick={handleClick}
     >
       {busy ? (
         <>
           <span className="spinner" style={{ marginRight: 6 }} />
-          Erasing…
+          Deleting…
         </>
       ) : (
         <>
           <TrashIcon size={13} />
-          Decommission
+          Delete server
         </>
       )}
     </button>
@@ -675,14 +673,15 @@ function ServerCard({ server, isAdmin, canManage, onSaved }) {
   const persistedGroups = groupByCombination(server.pairs || []);
 
   return (
-    <div className="subpanel">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+    // One white block per server (was a grey subpanel) so its combination rows can be plain
+    // hairline-separated rows instead of white cards needing to stand out from a tint.
+    <div className="server-block">
+      <div className="server-block-head">
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <ServerIcon style={{ marginRight: 0, color: "var(--color-primary)" }} />
           <span
+            className="server-block-url"
             style={{
-              fontSize: 14,
-              fontWeight: 600,
               textDecoration: server.decommissioned ? "line-through" : undefined,
               color: server.decommissioned ? "var(--color-text-muted)" : undefined,
             }}
@@ -704,23 +703,26 @@ function ServerCard({ server, isAdmin, canManage, onSaved }) {
             <button
               type="button"
               className="btn secondary"
-              style={{ padding: "6px 14px", fontSize: 12.5 }}
+              // marginRight:0 on the icon -- .btn already puts a 6px flex gap between its children,
+              // and the icon's own default 6px margin on top of that pushed the label off-centre
+              // inside the button's padding.
+              style={{ padding: "7px 16px", fontSize: 12.5 }}
               onClick={() => setShowAddCombination(true)}
             >
-              <PlusIcon /> Add combination
+              <PlusIcon size={14} style={{ marginRight: 0 }} /> Add combination
             </button>
           )}
           {/* Destructive action last, set slightly apart from the routine ones. Sitting flush between
               two things people click often made an irreversible erase easy to hit by accident. */}
           {isAdmin && (
             <span style={{ marginLeft: 6, display: "inline-flex" }}>
-              <DecommissionButton server={server} onSaved={onSaved} />
+              <DeleteServerButton server={server} onSaved={onSaved} />
             </span>
           )}
         </div>
       </div>
       {!persistedGroups.length && (
-        <div style={{ fontSize: 12.5, color: "var(--color-text-faint)", marginTop: 10 }}>No combinations added yet.</div>
+        <p className="empty-state" style={{ marginTop: 0, padding: "20px 16px" }}>No combinations added yet.</p>
       )}
       {persistedGroups.map((g) => (
         <CombinationRow
@@ -774,7 +776,9 @@ export default function ServerUrlsPanel({ project, canManage, isAdmin, onSaved, 
     <>
       <AddServerModal project={project} canManage={canManage} onSaved={onSaved} open={showAddServer} onClose={onCloseAddServer} />
 
-      <div className="card">
+      {/* Not a .card: each server below is its own white block, so wrapping them in another white
+          card made a card-inside-a-card. The section is just a heading + toolbar over a list. */}
+      <div className="server-section">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <h3 className="section-title">
             Server URLs

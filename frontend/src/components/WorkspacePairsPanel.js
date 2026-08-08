@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import {
   getServerReadiness,
   getCombinationReadiness,
@@ -9,9 +8,12 @@ import {
   usesTwoColumnCsv,
   SAMPLE_CSV_COLUMNS,
 } from "../api/client";
+import CombinationOverview from "./CombinationOverview";
 import CsvImportPanel from "./CsvImportPanel";
 import DataTable from "./DataTable";
 import DeltaHistoryPanel from "./DeltaHistoryPanel";
+import Modal from "./Modal";
+import PreCheckPanel from "./PreCheckPanel";
 import { useToast } from "./Toast";
 import { useConfirm } from "./ConfirmDialog";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
@@ -30,15 +32,21 @@ const SAMPLE_ROW = [
 // The stat-card row + Delta Start/Finish lifecycle for whichever combination is currently selected
 // -- each combination has its own independent pre-check/sign-off/Delta lifecycle now, so this is
 // re-fetched every time combinationId changes rather than being one server-wide row.
-function CombinationStatRow({ combinationId, onChanged }) {
+function CombinationStatRow({ combinationId, onChanged, onReadiness, preCheckAction }) {
   const currentUser = useCurrentUser();
   const showToast = useToast();
   const confirm = useConfirm();
   const [readiness, setReadiness] = useState(null);
   const canRunDelta = !AUTH_CONFIGURED || currentUser?.role === "MIGRATION_ENGINEER" || currentUser?.role === "ADMIN";
 
+  // onReadiness lets the page above render the combination's facts (pairs / open tickets / manager)
+  // in its own header, without a second fetch of the same endpoint. Called on load and after every
+  // Start/Finish so those figures stay in step with this panel.
   const load = () => {
-    getCombinationReadiness(combinationId).then(setReadiness);
+    getCombinationReadiness(combinationId).then((data) => {
+      setReadiness(data);
+      if (onReadiness) onReadiness(data);
+    });
   };
 
   useEffect(load, [combinationId]);
@@ -85,96 +93,25 @@ function CombinationStatRow({ combinationId, onChanged }) {
 
   if (!readiness) return null;
 
-  const fmt = (d) => new Date(d).toLocaleDateString();
-  // Every stage carries a colour directly now (no pill/no-pill split) so the Status card renders one
-  // consistent shape whatever the state. Purple for the irreversible Final Delta milestone, matching the
-  // token's documented reservation in index.css.
-  const stage =
-    readiness.readinessStage === "COMPLETE"
-      ? { label: "Final Delta complete", color: "var(--color-purple)" }
-      : readiness.readinessStage === "READY"
-      ? { label: "Delta Ready", color: "var(--color-green)" }
-      : readiness.readinessStage === "IN_PROGRESS"
-      ? {
-          label: readiness.readinessDetail || "In review",
-          color: readiness.blockedByDecline ? "var(--color-red)" : "var(--color-yellow)",
-        }
-      : { label: "Pre-check not submitted", color: "var(--color-red)" };
-
   return (
-    // Fragment, not a wrapper: the history below is a sibling of the stat strip rather than nested
-    // inside it. Nesting it made a card-inside-a-panel-inside-a-card, and the resulting padding left
-    // the history barely any width to render in.
-    <>
-      <div className="subpanel" style={{ marginBottom: 16 }}>
-      {/* Single row (card-row--nowrap): the five cards shrink to fit rather than wrapping a lone card
-          onto a second line. The former "Current Delta" card was removed as redundant -- the Status
-          card already shows "Final Delta complete", the Start Pre-Check button carries the cycle
-          number, and the Delta history below lists every completed cycle in full. */}
-      <div className="card-row card-row--nowrap" style={{ marginBottom: 0 }}>
-        {/* Plain coloured text, not a badge. Every other card in this strip holds bare bold text (a
-            count or a date), so a pill here was the odd one out -- and since badges no longer wrap, a
-            long status like "Final Delta complete" stretched into a slab that unbalanced the row. The
-            colour still carries the same meaning the pill did. */}
-        <div className="stat-card">
-          <div
-            className="value"
-            style={{ fontSize: 14, lineHeight: 1.3, color: stage.color }}
-          >
-            {stage.label}
-          </div>
-          <div className="label">Status</div>
-        </div>
-        <div className="stat-card">
-          <div className="value">{readiness.totalPairs}</div>
-          <div className="label">Pairs</div>
-        </div>
-        <div className="stat-card">
-          <div className="value" style={{ color: readiness.openEscalationCount > 0 ? "var(--color-red)" : undefined }}>
-            {readiness.openEscalationCount}
-          </div>
-          <div className="label">Tickets</div>
-        </div>
-        <div className="stat-card">
-          <div className="value" style={{ fontSize: 16 }}>
-            {readiness.deltaStartedAt ? (
-              fmt(readiness.deltaStartedAt)
-            ) : readiness.deltaInitiatedAt && canRunDelta ? (
-              <button className="btn success" style={{ padding: "5px 14px", fontSize: 12.5 }} onClick={handleStartDelta}>
-                Start
-              </button>
-            ) : (
-              "—"
-            )}
-          </div>
-          <div className="label">Delta Started</div>
-        </div>
-        <div className="stat-card">
-          <div className="value" style={{ fontSize: 16 }}>
-            {readiness.deltaFinishedAt ? (
-              fmt(readiness.deltaFinishedAt)
-            ) : readiness.deltaStartedAt && canRunDelta ? (
-              <button className="btn" style={{ padding: "5px 14px", fontSize: 12.5 }} onClick={handleFinishDelta}>
-                Finished
-              </button>
-            ) : (
-              "—"
-            )}
-          </div>
-          <div className="label">Delta Finished</div>
-        </div>
-      </div>
-      </div>
-
-      {/* Per-cycle history, directly under the stat strip. This is what replaces the removed "Current
-          Delta · N done" card: instead of a single count, it lists every cycle with its own dates and
-          sign-offs. reloadKey changes whenever a Delta is started or finished above, so the history
-          refreshes in the same interaction. */}
-      <DeltaHistoryPanel
-        combinationId={combinationId}
-        reloadKey={readiness.deltaFinishedAt || readiness.deltaStartedAt}
-      />
-    </>
+    <CombinationOverview
+      readiness={readiness}
+      preCheckAction={preCheckAction}
+      startAction={
+        readiness.deltaInitiatedAt && canRunDelta ? (
+          <button className="btn success" style={{ padding: "5px 14px", fontSize: 12.5 }} onClick={handleStartDelta}>
+            Start
+          </button>
+        ) : null
+      }
+      finishAction={
+        readiness.deltaStartedAt && canRunDelta ? (
+          <button className="btn" style={{ padding: "5px 14px", fontSize: 12.5 }} onClick={handleFinishDelta}>
+            Finished
+          </button>
+        ) : null
+      }
+    />
   );
 }
 
@@ -184,8 +121,8 @@ export default function WorkspacePairsPanel({
   showPreCheckLink = true,
   showCsvImport = true,
   initialCombination = "",
+  onCombinationReadiness,
 }) {
-  const navigate = useNavigate();
   const currentUser = useCurrentUser();
   const canImport =
     !AUTH_CONFIGURED || ["ADMIN", "MIGRATION_ENGINEER", "MIGRATION_MANAGER"].includes(currentUser?.role);
@@ -194,6 +131,8 @@ export default function WorkspacePairsPanel({
   const canFillPreCheck = !AUTH_CONFIGURED || ["ADMIN", "MIGRATION_ENGINEER"].includes(currentUser?.role);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [comboReadiness, setComboReadiness] = useState(null);
+  const [preCheckOpen, setPreCheckOpen] = useState(false);
   // Seeded from initialCombination (e.g. arriving via a "?combination=" link) -- the effect below
   // still falls back to the first group if this doesn't match any real combination.
   const [selectedCombination, setSelectedCombination] = useState(initialCombination);
@@ -226,6 +165,15 @@ export default function WorkspacePairsPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
+  useEffect(() => {
+    setPreCheckOpen(false);
+  }, [selectedCombination]);
+
+  const handleCombinationReadiness = (readiness) => {
+    setComboReadiness(readiness);
+    if (onCombinationReadiness) onCombinationReadiness(readiness);
+  };
+
   if (loading) return <p>Loading migration pairs...</p>;
 
   const activeGroup = groups.find((g) => g.combination === selectedCombination) || groups[0];
@@ -252,54 +200,59 @@ export default function WorkspacePairsPanel({
   return (
     <div>
       {showStats && activeCombinationSummary && (
-        <CombinationStatRow combinationId={activeCombinationSummary.id} onChanged={load} />
-      )}
-
-      {showPreCheckLink && activeCombinationSummary && (
-        <div className="server-precheck-row">
-          <strong style={{ fontSize: 13.5 }}>Pre-Check</strong>
-          {/* Someone else has the form open. A submission is claimed (startedByEmail stamped) the
-              moment it is opened, before any item is filled in, so it can sit at NOT_STARTED and
-              still be locked -- which is exactly the state that used to render a live "Start
-              Pre-Check Form" button leading to a read-only notice with nothing to do on it.
-              Label it for what it is and say who holds it. */}
-          {lockedByEmail && (
-            <span className="precheck-lock-note">
-              {emailLocalPart(lockedByEmail)} is filling this out
-            </span>
-          )}
-          {/* Solid primary when there's work to do, outlined when there isn't.
-              This was `warning` (dark amber) for the actionable state and `success` (green) for the
-              read-only one -- both wrong: starting a pre-check is the routine primary action on this
-              page, not a warning, and a solid green button for "go and look at this" pulled more
-              attention than the thing you were meant to click. */}
-          <button
-            className={`btn${
-              activeCombinationSummary.finalDeltaComplete
-                || activeCombinationSummary.submissionStatus === "SUBMITTED"
-                || !canFillPreCheck
-                || lockedByEmail
-                ? " secondary"
-                : ""
-            }`}
-            onClick={() => navigate(`/combinations/${activeCombinationSummary.id}/precheck`)}
-          >
-            {/* A finished Final Delta leaves the submission SUBMITTED forever, so it needs its own label
-                -- "View Pre-Check Form" would imply there's still a live cycle to look at. Cycle 2+
-                says so explicitly, since an empty checklist otherwise looks like a first-time one. */}
-            {activeCombinationSummary.finalDeltaComplete
-              ? "View Completed Pre-Check"
-              : activeCombinationSummary.submissionStatus === "SUBMITTED" || !canFillPreCheck
-              ? "View Pre-Check Form"
-              : lockedByEmail
-              ? "View Pre-Check Form"
-              : activeCombinationSummary.submissionStatus === "DRAFT"
-              ? "Continue Pre-Check Form"
-              : activeCombinationSummary.currentCycleNumber > 1
-              ? `Start Pre-Check · Delta ${activeCombinationSummary.currentCycleNumber}`
-              : "Start Pre-Check Form"}
-          </button>
-        </div>
+        <CombinationStatRow
+          combinationId={activeCombinationSummary.id}
+          onChanged={load}
+          onReadiness={handleCombinationReadiness}
+          // The pre-check action now sits in the overview's header rather than in a separate
+          // "Pre-Check" row below it -- the button already names the action, so the standalone
+          // label was a heading for a single button. Built here because all the state it depends
+          // on (submission status, cycle number, lock, role) lives in this component.
+          preCheckAction={
+            showPreCheckLink ? (
+              <>
+                {/* Someone else has the form open. A submission is claimed (startedByEmail stamped)
+                    the moment it is opened, before any item is filled in, so it can sit at
+                    NOT_STARTED and still be locked -- which is exactly the state that used to
+                    render a live "Start Pre-Check Form" button leading to a read-only notice with
+                    nothing to do on it. Label it for what it is and say who holds it. */}
+                {lockedByEmail && (
+                  <span className="precheck-lock-note">
+                    {emailLocalPart(lockedByEmail)} is filling this out
+                  </span>
+                )}
+                {/* Solid primary when there's work to do, outlined when there isn't. */}
+                <button
+                  className={`btn${
+                    activeCombinationSummary.finalDeltaComplete
+                      || activeCombinationSummary.submissionStatus === "SUBMITTED"
+                      || !canFillPreCheck
+                      || lockedByEmail
+                      ? " secondary"
+                      : ""
+                  }`}
+                  onClick={() => setPreCheckOpen(true)}
+                >
+                  {/* A finished Final Delta leaves the submission SUBMITTED forever, so it needs its
+                      own label -- "View Pre-Check Form" would imply there's still a live cycle to
+                      look at. Cycle 2+ says so explicitly, since an empty checklist otherwise looks
+                      like a first-time one. */}
+                  {activeCombinationSummary.finalDeltaComplete
+                    ? "View Completed Pre-Check"
+                    : activeCombinationSummary.submissionStatus === "SUBMITTED" || !canFillPreCheck
+                    ? "View Pre-Check Form"
+                    : lockedByEmail
+                    ? "View Pre-Check Form"
+                    : activeCombinationSummary.submissionStatus === "DRAFT"
+                    ? "Continue Pre-Check Form"
+                    : activeCombinationSummary.currentCycleNumber > 1
+                    ? `Start Pre-Check · Delta ${activeCombinationSummary.currentCycleNumber}`
+                    : "Start Pre-Check Form"}
+                </button>
+              </>
+            ) : null
+          }
+        />
       )}
 
       {showCsvImport && canImport && (
@@ -350,6 +303,36 @@ export default function WorkspacePairsPanel({
           )
         )}
       </div>
+
+      {showStats && activeCombinationSummary && comboReadiness && (
+        <div style={{ marginTop: 24 }}>
+          <DeltaHistoryPanel
+            combinationId={activeCombinationSummary.id}
+            reloadKey={comboReadiness.deltaFinishedAt || comboReadiness.deltaStartedAt}
+          />
+        </div>
+      )}
+
+      {preCheckOpen && activeCombinationSummary && (
+        <Modal
+          title={
+            activeCombinationSummary.currentDeltaLabel
+              || (activeCombinationSummary.currentCycleNumber > 1
+                ? `Pre-Check · Delta ${activeCombinationSummary.currentCycleNumber}`
+                : "Pre-Check")
+          }
+          onClose={() => setPreCheckOpen(false)}
+          width={880}
+          closeIcon
+        >
+          <PreCheckPanel
+            combinationId={activeCombinationSummary.id}
+            showBackNav={false}
+            showHeader={false}
+            onChanged={load}
+          />
+        </Modal>
+      )}
     </div>
   );
 }

@@ -86,4 +86,12 @@ public class ServerController {
         serverService.decommission(id, JwtEmailUtil.extractEmail(jwt));
     }
 
+    // Admin-only erase at any time — no Final-Delta readiness guard. Cascades through
+    // ServerPurgeService (combinations, pairs, pre-check, sign-offs, Delta cycles, tickets).
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable Long id, @AuthenticationPrincipal Jwt jwt) {
+        serverService.deleteServer(id, JwtEmailUtil.extractEmail(jwt));
+    }
+
 }

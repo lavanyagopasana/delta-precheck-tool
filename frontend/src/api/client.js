@@ -41,10 +41,13 @@ export const getDeltaCycles = (combinationId) =>
   client.get(`/combinations/${combinationId}/delta-cycles`).then((r) => r.data);
 
 // Decommissioning is per-server (admin-only), available once every combination under a server has
-// completed its Final Delta. It ERASES the server and everything under it and returns 204 -- there is
-// deliberately no undo counterpart, since there would be nothing left to restore.
+// completed its Final Delta. It ERASES the server and everything under it and returns 204.
 export const decommissionServer = (serverId) =>
   client.post(`/servers/${serverId}/decommission`).then((r) => r.data);
+
+// Admin-only delete at any time — same cascade as decommission but no Final-Delta readiness guard.
+export const deleteServer = (serverId) =>
+  client.delete(`/servers/${serverId}`).then((r) => r.data);
 
 export const getProjects = () => client.get("/projects").then((r) => r.data);
 export const getProjectDetail = (id) => client.get(`/projects/${id}`).then((r) => r.data);

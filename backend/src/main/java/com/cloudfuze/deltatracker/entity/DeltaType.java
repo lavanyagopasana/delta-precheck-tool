@@ -31,17 +31,17 @@ public enum DeltaType {
      * from its state, so "Pre-Delta 1 - in progress" doesn't read as one run-on phrase. Applies to
      * Final Delta identically.
      *
-     * <p>READY is "approved" rather than "ready to start" because the chip sits next to a pair count
-     * and a done-count, where the shorter word is enough. AWAITING_PRECHECK returns the bare label for
+     * <p>READY is "ready to start" — approvals are done and the engineer can click Start. FINISHED is
+     * "done" — this cycle's migration was marked finished via the Finish button.
      * completeness, though callers render no chip at all in that state (there is no settled type yet).
      */
     public String labelWithPhase(int cycleNumber, DeltaPhase phase) {
         String base = label(cycleNumber);
         return switch (phase) {
             case IN_APPROVAL -> base + " - in progress";
-            case READY -> base + " - approved";
+            case READY -> base + " - ready to start";
             case STARTED -> base + " - started";
-            case FINISHED -> base + " - finished";
+            case FINISHED -> base + " - done";
             case COMPLETE -> base + " - completed";
             case AWAITING_PRECHECK -> base;
         };

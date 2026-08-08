@@ -1,6 +1,7 @@
 package com.cloudfuze.deltatracker.service;
 
 import com.cloudfuze.deltatracker.dto.CombinationReadinessDto;
+import com.cloudfuze.deltatracker.entity.DeltaPhase;
 import com.cloudfuze.deltatracker.entity.ItemStatus;
 import com.cloudfuze.deltatracker.entity.PairStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckItem;
@@ -343,9 +344,11 @@ public class WorkspaceCombinationService {
         dto.setDeltaFinishedBy(combination.getDeltaFinishedBy());
         dto.setCurrentCycleNumber(combination.getCurrentCycleNumber());
         dto.setCurrentDeltaType(combination.getCurrentDeltaType());
+        DeltaPhase phase = DeltaPhase.of(combination);
+        dto.setDeltaPhase(phase);
         dto.setCurrentDeltaLabel(combination.getCurrentDeltaType() == null
                 ? null
-                : combination.getCurrentDeltaType().label(combination.getCurrentCycleNumber()));
+                : combination.getCurrentDeltaType().labelWithPhase(combination.getCurrentCycleNumber(), phase));
         dto.setCompletedCycleCount(deltaCycleService.completedCycleCount(combination.getId()));
         dto.setFinalDeltaCompletedAt(combination.getFinalDeltaCompletedAt());
         dto.setFinalDeltaCompletedBy(combination.getFinalDeltaCompletedBy());

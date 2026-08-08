@@ -14,9 +14,9 @@ export default function DeltaBadge({ deltaType, deltaPhase, label, fallback = "â
     return <span style={{ color: "var(--color-text-faint)" }}>{fallback}</span>;
   }
   const badge = DELTA_TYPE_BADGE[deltaType] || { color: "gray", label: deltaType };
-  // Phase wins when the caller has it. Callers that don't (the pre-check header, before a cycle's
-  // phase is meaningful) fall back to the type colour and keep their previous appearance.
-  const color = DELTA_PHASE_BADGE_COLOR[deltaPhase] || badge.color;
+  // Phase wins when the caller passes it â€” each phase has its own muted badge class.
+  const phaseClass = deltaPhase ? DELTA_PHASE_BADGE_COLOR[deltaPhase] : null;
+  const color = phaseClass || badge.color;
   return (
     <span className={`badge ${color}`} title={title}>
       {label || badge.label}

@@ -22,24 +22,6 @@ function fmtDateTime(value) {
 function CycleSnapshot({ cycle }) {
   return (
     <div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 18, marginBottom: 14 }}>
-        {cycle.signOffs?.map((s) => (
-          <div key={s.role}>
-            <div style={{ fontSize: 11, color: "var(--color-text-muted)", fontWeight: 600 }}>{s.roleLabel}</div>
-            <div style={{ fontSize: 12.5 }}>
-              {s.status === "SKIPPED" ? (
-                <span style={{ color: "var(--color-text-faint)" }}>Not required</span>
-              ) : (
-                <>
-                  {emailLocalPart(s.approvedBy) || "—"}
-                  <span style={{ color: "var(--color-text-faint)" }}> · {fmtDate(s.approvedAt)}</span>
-                </>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-
       {!cycle.items?.length ? (
         <div style={{ fontSize: 12.5, color: "var(--color-text-faint)" }}>
           No checklist snapshot was recorded for this cycle.
@@ -188,7 +170,7 @@ export default function DeltaHistoryPanel({ combinationId, reloadKey }) {
                   one past cycle in detail, not comparing rows. */}
               {isOpen && (
                 <Modal
-                  title={`${cycle.label} · frozen checklist`}
+                  title={cycle.label}
                   width={880}
                   closeIcon
                   onClose={() => setOpenCycleId(null)}

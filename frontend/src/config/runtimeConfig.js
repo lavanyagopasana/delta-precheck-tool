@@ -97,5 +97,5 @@ export const BACKEND_BASE = (
   resolve("apiBase", process.env.REACT_APP_API_BASE, { treatLoopbackAsUnset: true }) ||
   // Same-origin is the safe default everywhere else -- and if it is wrong, it fails visibly with
   // 404s against a real host instead of silently reaching for a localhost that isn't running.
-  (isLocalDevelopment ? "http://localhost:8080" : origin)
+  (isLocalDevelopment ? "http://localhost:8081" : origin)
 ).replace(/\/+$/, "");

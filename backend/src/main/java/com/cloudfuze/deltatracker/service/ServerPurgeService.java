@@ -21,7 +21,8 @@ import java.util.List;
 
 /**
  * Permanently erases one Server and everything hanging off it. Extracted so the two callers that need
- * it -- ServerService.decommission (an admin closing out a finished server) and ProjectService.delete
+ * it -- ServerService.decommission (an admin closing out a finished server), ServerService.deleteServer
+ * (an admin removing a server at any time), and ProjectService.delete
  * (deleting a whole project) -- share one definition of "everything hanging off a server" instead of
  * each maintaining its own list. That list has already grown once: DeltaCycle/DeltaCycleItem/
  * DeltaCycleSignOff were added after ProjectService.delete was written and never added to its cascade,
