@@ -390,20 +390,6 @@ export default function ApprovalsPage() {
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7 }}>
                 <OverallStepper approval={a} siblings={byCombination.get(a.combinationId) || []} />
                 <CurrentStatusText label={a.currentStatus} />
-                {/* Carries only what the status line above doesn't: who declined, and what they said.
-                    The role is deliberately not repeated -- "Declined by Migration Manager" already
-                    states it. Styling is in .decline-note; see the comment there for why this isn't a
-                    boxed callout.
-
-                    Keyed on declinedByRoleLabel, not on the reason: declines recorded before reasons
-                    were required have none, and rendering nothing for those looked like the feature was
-                    broken rather than like there was nothing to show. It now says so explicitly. */}
-                {a.declinedByRoleLabel && (
-                  <div className="decline-note" title={a.declineReason || undefined}>
-                    {a.declinedBy && <span className="decline-note__who">{emailLocalPart(a.declinedBy)}: </span>}
-                    {a.declineReason || <span className="decline-note__missing">no reason recorded</span>}
-                  </div>
-                )}
               </div>
             ),
           },
