@@ -55,4 +55,5 @@ export const DELTA_CYCLE_STATUS_BADGE = {
   APPROVED: { color: "yellow", label: "Approved — not started" },
   RUNNING: { color: "blue", label: "Running" },
   COMPLETED: { color: "green", label: "Completed" },
+  DECLINED: { color: "red", label: "Declined" },
 };

@@ -118,6 +118,7 @@ export default function DeltaHistoryPanel({ combinationId, reloadKey }) {
         {cycles.map((cycle) => {
           const status = DELTA_CYCLE_STATUS_BADGE[cycle.status] || { color: "gray", label: cycle.status };
           const isOpen = openCycleId === cycle.id;
+          const declined = cycle.status === "DECLINED";
           const ran = `${fmtDate(cycle.deltaStartedAt)} → ${fmtDate(cycle.deltaFinishedAt)}`;
           return (
             <div className="delta-cycle" key={cycle.id}>
@@ -129,16 +130,28 @@ export default function DeltaHistoryPanel({ combinationId, reloadKey }) {
                     <span className="delta-cycle__fact-label">Submitted by</span>
                     <span className="delta-cycle__fact-value">{emailLocalPart(cycle.submittedBy) || "—"}</span>
                   </span>
-                  {/* Start and finish read as one fact ("when did this run"), which also keeps two
-                      short dates on one line instead of two columns that each wrapped. Full
-                      timestamps stay available on hover. */}
-                  <span
-                    className="delta-cycle__fact"
-                    title={`Started ${fmtDateTime(cycle.deltaStartedAt)}\nFinished ${fmtDateTime(cycle.deltaFinishedAt)}`}
-                  >
-                    <span className="delta-cycle__fact-label">Ran</span>
-                    <span className="delta-cycle__fact-value">{ran}</span>
-                  </span>
+                  {/* A declined cycle never started running, so "Ran" would just read "— → —" --
+                      show who declined it and why instead, which is the fact that actually matters
+                      here. */}
+                  {declined ? (
+                    <span className="delta-cycle__fact" title={cycle.declineReason || ""}>
+                      <span className="delta-cycle__fact-label">Declined by</span>
+                      <span className="delta-cycle__fact-value">
+                        {cycle.declinedByRoleLabel} ({emailLocalPart(cycle.declinedBy) || "—"})
+                      </span>
+                    </span>
+                  ) : (
+                    // Start and finish read as one fact ("when did this run"), which also keeps two
+                    // short dates on one line instead of two columns that each wrapped. Full
+                    // timestamps stay available on hover.
+                    <span
+                      className="delta-cycle__fact"
+                      title={`Started ${fmtDateTime(cycle.deltaStartedAt)}\nFinished ${fmtDateTime(cycle.deltaFinishedAt)}`}
+                    >
+                      <span className="delta-cycle__fact-label">Ran</span>
+                      <span className="delta-cycle__fact-value">{ran}</span>
+                    </span>
+                  )}
                 </div>
 
                 <span className={`badge ${status.color}`}>{status.label}</span>
@@ -151,6 +164,12 @@ export default function DeltaHistoryPanel({ combinationId, reloadKey }) {
                 </button>
               </div>
 
+              {declined && cycle.declineReason && (
+                <div style={{ fontSize: 12.5, color: "var(--color-text-muted)", marginTop: 6 }}>
+                  “{cycle.declineReason}”
+                </div>
+              )}
+
               {/* One chip per role rather than a single joined string -- the joined version was the
                   worst-wrapping cell on the old table. */}
               {cycle.signOffs?.length > 0 && (
@@ -158,7 +177,11 @@ export default function DeltaHistoryPanel({ combinationId, reloadKey }) {
                   {cycle.signOffs.map((s) => (
                     <span key={s.role}>
                       <span className="delta-cycle__approval-role">{s.roleLabel}</span>
-                      {s.status === "SKIPPED" ? "not required" : emailLocalPart(s.approvedBy) || "—"}
+                      {s.status === "SKIPPED"
+                        ? "not required"
+                        : s.status === "DECLINED"
+                        ? `declined${s.declineReason ? ` — ${s.declineReason}` : ""}`
+                        : emailLocalPart(s.approvedBy) || "—"}
                     </span>
                   ))}
                 </div>

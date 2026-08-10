@@ -9,7 +9,6 @@ import com.cloudfuze.deltatracker.entity.SignOffRole;
 import com.cloudfuze.deltatracker.entity.SignOffStatus;
 import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import com.cloudfuze.deltatracker.exception.ApiException;
-import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
 import com.cloudfuze.deltatracker.repository.SignOffRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,12 +16,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
-import org.springframework.http.HttpStatus;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -30,342 +25,151 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for {@link SignOffService} -- the most business-rule-dense class in the app. Pure
- * Mockito; all repositories and collaborators are mocked. Covers the fixed approval sequence,
- * turn-taking, eligibility, the Dev-Lead-skips-QA branch, decline bounce-back, chain create/teardown,
- * and specifically the guard that an already-approved role cannot be re-approved (double-approval).
- *
- * <p>Sign-offs are scoped to a WorkspaceCombination now, not a Server directly -- a server can have
- * several combinations, each with its own independent approval chain (see the per-combination
- * migration in decisions.md). {@code combination.getServer()} still resolves back to the server for
- * eligibility checks (Migration Manager is a project-level assignment) and Delta-initiated emails.
+ * Covers SignOffService.decline()'s rewritten behavior: a decline at any step now ends the cycle and
+ * rolls the combination over to a fresh one (DeltaCycleService.recordDeclineAndRollOver), rather than
+ * bouncing the chain back one step for rework on the same submission. See
+ * .claude/rules/testing-standard.md -- this is priority #1 (SignOffService).
  */
 @ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class SignOffServiceTest {
 
-    private static final Long CID = 1L;
-    private static final String MM_EMAIL = "mgr@cloudfuze.com";
-    private static final String DEV_EMAIL = "dev@cloudfuze.com";
-    private static final String QA_EMAIL = "qa@cloudfuze.com";
+    @Mock
+    private SignOffRepository signOffRepository;
+    @Mock
+    private WorkspaceCombinationService combinationService;
+    @Mock
+    private EmailService emailService;
+    @Mock
+    private AppUserService appUserService;
+    @Mock
+    private PreCheckSubmissionRepository preCheckSubmissionRepository;
+    @Mock
+    private TicketService ticketService;
+    @Mock
+    private DeltaCycleService deltaCycleService;
 
-    @Mock private SignOffRepository signOffRepository;
-    @Mock private WorkspaceCombinationService combinationService;
-    @Mock private EmailService emailService;
-    @Mock private AppUserService appUserService;
-    @Mock private PreCheckSubmissionRepository preCheckSubmissionRepository;
-    @Mock private TicketService ticketService;
-    @Mock private DeltaCycleService deltaCycleService;
+    private SignOffService signOffService;
 
-    private SignOffService service;
     private WorkspaceCombination combination;
+    private SignOff migrationLeadSignOff;
+    private SignOff devLeadSignOff;
+    private SignOff qaLeadSignOff;
 
     @BeforeEach
     void setUp() {
-        service = new SignOffService(signOffRepository, combinationService, emailService, appUserService,
+        signOffService = new SignOffService(signOffRepository, combinationService, emailService, appUserService,
                 preCheckSubmissionRepository, ticketService, deltaCycleService);
-        Project project = new Project("Alpha", "eng@cloudfuze.com", MM_EMAIL, null);
-        Server server = new Server("SRV-1");
-        server.setId(10L);
+
+        Project project = new Project("Acme", "creator@cloudfuze.com", "manager@cloudfuze.com", null);
+        Server server = new Server("box.com");
+        server.setId(1L);
         server.setProject(project);
+
         combination = new WorkspaceCombination(server, "Box to OneDrive");
-        combination.setId(CID);
+        combination.setId(10L);
 
-        when(combinationService.findOrThrow(CID)).thenReturn(combination);
-        when(combinationService.save(any(WorkspaceCombination.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(combinationService.pairCount(any(WorkspaceCombination.class))).thenReturn(0);
-        when(preCheckSubmissionRepository.findByCombinationId(anyLong())).thenReturn(Optional.empty());
-        when(ticketService.countOpenForCombination(anyLong())).thenReturn(0L);
-        when(appUserService.isAdmin(anyString())).thenReturn(false);
-        when(appUserService.emailsForRole(any())).thenReturn(List.of());
+        migrationLeadSignOff = new SignOff(combination, SignOffRole.MIGRATION_LEAD, "manager@cloudfuze.com");
+        migrationLeadSignOff.setStatus(SignOffStatus.APPROVED);
+        migrationLeadSignOff.setApprovedBy("manager@cloudfuze.com");
+        migrationLeadSignOff.setApprovedAt(LocalDateTime.now().minusHours(1));
+
+        devLeadSignOff = new SignOff(combination, SignOffRole.DEV_LEAD, "Any Dev Lead");
+        devLeadSignOff.setStatus(SignOffStatus.PENDING);
+
+        qaLeadSignOff = new SignOff(combination, SignOffRole.QA_LEAD, "Any QA Lead");
+        qaLeadSignOff.setStatus(SignOffStatus.PENDING);
+
+        when(combinationService.findOrThrow(10L)).thenReturn(combination);
+        // Only reached on the success path (toApprovalDto/computeCombinationStats) -- the
+        // missing-reason test throws before any of this, so these are lenient rather than shared.
+        lenient().when(combinationService.pairCount(any())).thenReturn(3);
+        lenient().when(ticketService.countOpenForCombination(10L)).thenReturn(0L);
+        lenient().when(preCheckSubmissionRepository.findByCombinationId(10L)).thenReturn(Optional.empty());
+        lenient().when(signOffRepository.save(any(SignOff.class))).thenAnswer(inv -> inv.getArgument(0));
     }
-
-    private SignOff row(SignOffRole role, SignOffStatus status) {
-        SignOff s = new SignOff(combination, role, role.label());
-        s.setStatus(status);
-        s.setSignedAt(LocalDateTime.of(2026, 1, 1, 9, 0));
-        return s;
-    }
-
-    private void stubChain(SignOff mm, SignOff dev, SignOff qa) {
-        List<SignOff> chain = new ArrayList<>(List.of(mm, dev, qa));
-        when(signOffRepository.findByCombinationId(CID)).thenReturn(chain);
-        when(signOffRepository.findByCombinationIdAndRole(CID, SignOffRole.MIGRATION_LEAD)).thenReturn(Optional.of(mm));
-        when(signOffRepository.findByCombinationIdAndRole(CID, SignOffRole.DEV_LEAD)).thenReturn(Optional.of(dev));
-        when(signOffRepository.findByCombinationIdAndRole(CID, SignOffRole.QA_LEAD)).thenReturn(Optional.of(qa));
-    }
-
-    // ---- approve: happy path & sequence ----
 
     @Test
-    void migrationLeadApprovesWhenItIsTheirTurn() {
-        SignOff mm = row(SignOffRole.MIGRATION_LEAD, SignOffStatus.PENDING);
-        stubChain(mm, row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING), row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
+    void declineWithoutReasonIsRejected() {
+        when(signOffRepository.findByCombinationIdAndRole(10L, SignOffRole.DEV_LEAD))
+                .thenReturn(Optional.of(devLeadSignOff));
 
-        SignOffApprovalDto dto = service.approve(CID, SignOffRole.MIGRATION_LEAD, MM_EMAIL, null);
-
-        assertThat(mm.getStatus()).isEqualTo(SignOffStatus.APPROVED);
-        assertThat(mm.getApprovedBy()).isEqualTo(MM_EMAIL);
-        assertThat(dto.getStatus()).isEqualTo(SignOffStatus.APPROVED);
-        verify(signOffRepository).save(mm);
-        // Next approver (Dev Lead) is notified.
-        verify(emailService).notifyApprovalRequired(eq("Dev Lead"), any(), any(), any(), anyInt(), any(), any());
-        assertThat(combination.getDeltaInitiatedAt()).isNull();
-    }
-
-    // ---- approve: the double-approval guard the audit asked to lock in ----
-
-    @Test
-    void cannotReApproveAnAlreadyApprovedRole() {
-        SignOff mm = row(SignOffRole.MIGRATION_LEAD, SignOffStatus.APPROVED);
-        stubChain(mm, row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING), row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
-
-        // MM is already APPROVED -> it's the Dev Lead's turn, so re-approving MM is rejected, not re-applied.
-        assertThatThrownBy(() -> service.approve(CID, SignOffRole.MIGRATION_LEAD, MM_EMAIL, null))
+        assertThatThrownBy(() -> signOffService.decline(10L, SignOffRole.DEV_LEAD, "dev@cloudfuze.com", "   "))
                 .isInstanceOf(ApiException.class)
-                .satisfies(e -> assertThat(((ApiException) e).getStatus()).isEqualTo(HttpStatus.BAD_REQUEST))
-                .hasMessageContaining("Dev Lead must act first");
-        verify(signOffRepository, never()).save(any());
+                .hasMessageContaining("A reason is required");
+
+        verify(deltaCycleService, never()).recordDeclineAndRollOver(any(), any(), any(), any(), any());
     }
 
+    // The core behavior change: a Dev Lead decline used to reset the already-approved Migration
+    // Manager row back to PENDING so the same submission bounced back for rework. It no longer does --
+    // the cycle ends and rolls over instead, so the Migration Manager's row is never touched.
     @Test
-    void cannotApproveOutOfTurn() {
-        stubChain(row(SignOffRole.MIGRATION_LEAD, SignOffStatus.PENDING),
-                row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING),
-                row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
-        when(appUserService.roleOf(DEV_EMAIL)).thenReturn(Optional.of(AppUserRole.DEV_LEAD));
+    void devLeadDeclineDoesNotBounceMigrationManagerBackToPending() {
+        when(signOffRepository.findByCombinationIdAndRole(10L, SignOffRole.DEV_LEAD))
+                .thenReturn(Optional.of(devLeadSignOff));
+        when(signOffRepository.findByCombinationId(10L))
+                .thenReturn(List.of(migrationLeadSignOff, devLeadSignOff, qaLeadSignOff));
+        when(appUserService.isAdmin("dev@cloudfuze.com")).thenReturn(false);
+        when(appUserService.roleOf("dev@cloudfuze.com")).thenReturn(Optional.of(AppUserRole.DEV_LEAD));
+        when(appUserService.emailsForRole(AppUserRole.MIGRATION_ENGINEER))
+                .thenReturn(List.of("engineer@cloudfuze.com"));
 
-        assertThatThrownBy(() -> service.approve(CID, SignOffRole.DEV_LEAD, DEV_EMAIL, Boolean.TRUE))
-                .isInstanceOf(ApiException.class)
-                .hasMessageContaining("Migration Manager must act first");
-        verify(signOffRepository, never()).save(any());
+        SignOffApprovalDto result = signOffService.decline(10L, SignOffRole.DEV_LEAD, "dev@cloudfuze.com",
+                "Missing evidence");
+
+        assertThat(result).isNotNull();
+        assertThat(devLeadSignOff.getStatus()).isEqualTo(SignOffStatus.DECLINED);
+        assertThat(devLeadSignOff.getDeclineReason()).isEqualTo("Missing evidence");
+        // The Migration Manager row is never re-saved as PENDING -- only the declining role's own row
+        // is ever written by decline() now.
+        verify(signOffRepository, times(1)).save(any(SignOff.class));
+        assertThat(migrationLeadSignOff.getStatus()).isEqualTo(SignOffStatus.APPROVED);
+
+        verify(deltaCycleService).recordDeclineAndRollOver(eq(combination), eq(SignOffRole.DEV_LEAD),
+                eq("dev@cloudfuze.com"), eq("Missing evidence"), any(LocalDateTime.class));
+
+        // Every decline notifies the Migration Engineers pool -- previously only a Dev/QA decline
+        // notified anyone at all, and never the engineers who'd actually redo the work.
+        verify(emailService).notifyMigrationEngineersPreCheckDeclined(anyString(), anyString(), anyString(),
+                eq("Dev Lead"), eq("dev@cloudfuze.com"), eq("Missing evidence"), eq(List.of("engineer@cloudfuze.com")));
+        // A Dev Lead decline (unlike a Migration Manager's own) also tells the manager, for visibility.
+        verify(emailService).notifyMigrationManagerApprovalDeclined(anyString(), anyString(), anyString(),
+                eq(3), eq("Dev Lead"), eq("dev@cloudfuze.com"), eq("Missing evidence"), eq("manager@cloudfuze.com"));
     }
 
+    // A Migration Manager decline used to sit permanently blocked with no email to anyone. It now
+    // rolls over just like every other role, and skips the (redundant) manager email since they
+    // already know -- they just declined it themselves.
     @Test
-    void cannotApproveIfNotEligibleForRole() {
-        stubChain(row(SignOffRole.MIGRATION_LEAD, SignOffStatus.PENDING),
-                row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING),
-                row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
+    void migrationLeadDeclineRollsOverAndSkipsManagerEmail() {
+        when(signOffRepository.findByCombinationIdAndRole(10L, SignOffRole.MIGRATION_LEAD))
+                .thenReturn(Optional.of(migrationLeadSignOff));
+        migrationLeadSignOff.setStatus(SignOffStatus.PENDING);
+        migrationLeadSignOff.setApprovedBy(null);
+        migrationLeadSignOff.setApprovedAt(null);
+        when(signOffRepository.findByCombinationId(10L))
+                .thenReturn(List.of(migrationLeadSignOff, devLeadSignOff, qaLeadSignOff));
+        when(appUserService.isAdmin("manager@cloudfuze.com")).thenReturn(false);
+        when(appUserService.emailsForRole(AppUserRole.MIGRATION_ENGINEER))
+                .thenReturn(List.of("engineer@cloudfuze.com"));
 
-        assertThatThrownBy(() -> service.approve(CID, SignOffRole.MIGRATION_LEAD, "stranger@cloudfuze.com", null))
-                .isInstanceOf(ApiException.class)
-                .satisfies(e -> assertThat(((ApiException) e).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
-        verify(signOffRepository, never()).save(any());
-    }
+        signOffService.decline(10L, SignOffRole.MIGRATION_LEAD, "manager@cloudfuze.com", "Wrong workspace pairs");
 
-    @Test
-    void devLeadMustDecideQaRequirementBeforeApproving() {
-        stubChain(row(SignOffRole.MIGRATION_LEAD, SignOffStatus.APPROVED),
-                row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING),
-                row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
-        when(appUserService.roleOf(DEV_EMAIL)).thenReturn(Optional.of(AppUserRole.DEV_LEAD));
-
-        assertThatThrownBy(() -> service.approve(CID, SignOffRole.DEV_LEAD, DEV_EMAIL, null))
-                .isInstanceOf(ApiException.class)
-                .hasMessageContaining("whether QA Lead approval is required");
-        verify(signOffRepository, never()).save(any());
-    }
-
-    @Test
-    void devLeadApprovingWithQaNotRequiredSkipsQaAndFinalizesDelta() {
-        SignOff dev = row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING);
-        SignOff qa = row(SignOffRole.QA_LEAD, SignOffStatus.PENDING);
-        stubChain(row(SignOffRole.MIGRATION_LEAD, SignOffStatus.APPROVED), dev, qa);
-        when(appUserService.roleOf(DEV_EMAIL)).thenReturn(Optional.of(AppUserRole.DEV_LEAD));
-
-        service.approve(CID, SignOffRole.DEV_LEAD, DEV_EMAIL, Boolean.FALSE);
-
-        assertThat(dev.getStatus()).isEqualTo(SignOffStatus.APPROVED);
-        assertThat(qa.getStatus()).isEqualTo(SignOffStatus.SKIPPED);
-        assertThat(combination.getDeltaInitiatedAt()).isNotNull();
-        verify(combinationService).save(combination);
-        verify(emailService).notifyMigrationEngineersDeltaInitiated(any(), any(), any(), any(), any(), any());
-    }
-
-    @Test
-    void qaLeadApprovalFinalizesDelta() {
-        SignOff qa = row(SignOffRole.QA_LEAD, SignOffStatus.PENDING);
-        stubChain(row(SignOffRole.MIGRATION_LEAD, SignOffStatus.APPROVED),
-                row(SignOffRole.DEV_LEAD, SignOffStatus.APPROVED), qa);
-        when(appUserService.roleOf(QA_EMAIL)).thenReturn(Optional.of(AppUserRole.QA_LEAD));
-
-        service.approve(CID, SignOffRole.QA_LEAD, QA_EMAIL, null);
-
-        assertThat(qa.getStatus()).isEqualTo(SignOffStatus.APPROVED);
-        assertThat(combination.getDeltaInitiatedAt()).isNotNull();
-    }
-
-    @Test
-    void approveThrowsWhenNoRowForRole() {
-        when(signOffRepository.findByCombinationIdAndRole(CID, SignOffRole.MIGRATION_LEAD)).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> service.approve(CID, SignOffRole.MIGRATION_LEAD, MM_EMAIL, null))
-                .isInstanceOf(ResourceNotFoundException.class);
-    }
-
-    // ---- decline: bounce-back ----
-
-    @Test
-    void decliningBouncesPreviousRoleBackToPending() {
-        SignOff mm = row(SignOffRole.MIGRATION_LEAD, SignOffStatus.APPROVED);
-        mm.setApprovedBy(MM_EMAIL);
-        SignOff dev = row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING);
-        stubChain(mm, dev, row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
-        when(appUserService.roleOf(DEV_EMAIL)).thenReturn(Optional.of(AppUserRole.DEV_LEAD));
-
-        service.decline(CID, SignOffRole.DEV_LEAD, DEV_EMAIL, "Permissions look wrong");
-
-        assertThat(dev.getStatus()).isEqualTo(SignOffStatus.DECLINED);
-        assertThat(mm.getStatus()).isEqualTo(SignOffStatus.PENDING);
-        assertThat(mm.getApprovedBy()).isNull();
-    }
-
-    @Test
-    void migrationLeadDeclineHasNothingToBounceTo() {
-        SignOff mm = row(SignOffRole.MIGRATION_LEAD, SignOffStatus.PENDING);
-        stubChain(mm, row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING), row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
-
-        service.decline(CID, SignOffRole.MIGRATION_LEAD, MM_EMAIL, "Evidence missing");
-
-        assertThat(mm.getStatus()).isEqualTo(SignOffStatus.DECLINED);
-    }
-
-    // ---- decline reason ----
-
-    @Test
-    void declineStoresTheReason() {
-        SignOff mm = row(SignOffRole.MIGRATION_LEAD, SignOffStatus.PENDING);
-        stubChain(mm, row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING), row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
-
-        service.decline(CID, SignOffRole.MIGRATION_LEAD, MM_EMAIL, "  Evidence is missing for two items  ");
-
-        // Trimmed on the way in, so the UI never renders leading/trailing whitespace it can't see.
-        assertThat(mm.getDeclineReason()).isEqualTo("Evidence is missing for two items");
-    }
-
-    @Test
-    void declineRejectsAnEmptyReason() {
-        // Without a reason the person the chain bounces back to is told to redo the work with no
-        // indication of what was wrong, which is the whole problem this guards against.
-        stubChain(row(SignOffRole.MIGRATION_LEAD, SignOffStatus.PENDING),
-                row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING), row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
-
-        assertThatThrownBy(() -> service.decline(CID, SignOffRole.MIGRATION_LEAD, MM_EMAIL, "   "))
-                .isInstanceOf(ApiException.class)
-                .hasMessageContaining("reason is required");
-    }
-
-    @Test
-    void declineRejectsANullReason() {
-        stubChain(row(SignOffRole.MIGRATION_LEAD, SignOffStatus.PENDING),
-                row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING), row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
-
-        assertThatThrownBy(() -> service.decline(CID, SignOffRole.MIGRATION_LEAD, MM_EMAIL, null))
-                .isInstanceOf(ApiException.class);
-    }
-
-    @Test
-    void devLeadDeclineEmailsTheMigrationManager() {
-        SignOff mm = row(SignOffRole.MIGRATION_LEAD, SignOffStatus.APPROVED);
-        mm.setApprovedBy(MM_EMAIL);
-        stubChain(mm, row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING), row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
-        when(appUserService.roleOf(DEV_EMAIL)).thenReturn(Optional.of(AppUserRole.DEV_LEAD));
-
-        service.decline(CID, SignOffRole.DEV_LEAD, DEV_EMAIL, "Hyperlinks not verified");
-
-        verify(emailService).notifyMigrationManagerApprovalDeclined(any(), any(), any(), anyInt(),
-                eq("Dev Lead"), eq(DEV_EMAIL), eq("Hyperlinks not verified"), eq(MM_EMAIL));
-    }
-
-    @Test
-    void migrationManagerDeclineSendsNoEmail() {
-        // It bounces back to the engineer, and the manager just did it -- mailing them their own action
-        // would be noise.
-        stubChain(row(SignOffRole.MIGRATION_LEAD, SignOffStatus.PENDING),
-                row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING), row(SignOffRole.QA_LEAD, SignOffStatus.PENDING));
-
-        service.decline(CID, SignOffRole.MIGRATION_LEAD, MM_EMAIL, "Needs rework");
-
-        verify(emailService, never()).notifyMigrationManagerApprovalDeclined(any(), any(), any(), anyInt(),
-                any(), any(), any(), any());
-    }
-
-    // ---- createChainIfAbsent ----
-
-    @Test
-    void createChainSavesThreeRowsWhenAbsent() {
-        when(signOffRepository.findByCombinationId(CID)).thenReturn(List.of());
-
-        service.createChainIfAbsent(combination);
-
-        verify(signOffRepository, times(3)).save(any(SignOff.class));
-    }
-
-    @Test
-    void createChainIsNoOpWhenAlreadyPresent() {
-        when(signOffRepository.findByCombinationId(CID))
-                .thenReturn(List.of(row(SignOffRole.MIGRATION_LEAD, SignOffStatus.PENDING)));
-
-        service.createChainIfAbsent(combination);
-
-        verify(signOffRepository, never()).save(any());
-    }
-
-    // ---- removeChainForWithdrawal ----
-
-    @Test
-    void withdrawRejectedOnceDeltaInitiated() {
-        combination.setDeltaInitiatedAt(LocalDateTime.now());
-
-        assertThatThrownBy(() -> service.removeChainForWithdrawal(combination, false))
-                .isInstanceOf(ApiException.class)
-                .satisfies(e -> assertThat(((ApiException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT));
-        verify(signOffRepository, never()).deleteAll(any());
-    }
-
-    @Test
-    void withdrawRejectedOnceChainProgressed() {
-        when(signOffRepository.findByCombinationId(CID)).thenReturn(List.of(
-                row(SignOffRole.MIGRATION_LEAD, SignOffStatus.APPROVED),
-                row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING),
-                row(SignOffRole.QA_LEAD, SignOffStatus.PENDING)));
-
-        assertThatThrownBy(() -> service.removeChainForWithdrawal(combination, false))
-                .isInstanceOf(ApiException.class)
-                .hasMessageContaining("already been approved");
-        verify(signOffRepository, never()).deleteAll(any());
-    }
-
-    @Test
-    void withdrawDeletesCleanPendingChain() {
-        when(signOffRepository.findByCombinationId(CID)).thenReturn(List.of(
-                row(SignOffRole.MIGRATION_LEAD, SignOffStatus.PENDING),
-                row(SignOffRole.DEV_LEAD, SignOffStatus.PENDING),
-                row(SignOffRole.QA_LEAD, SignOffStatus.PENDING)));
-
-        service.removeChainForWithdrawal(combination, false);
-
-        verify(signOffRepository).deleteAll(any());
-    }
-
-    @Test
-    void adminRollbackDeletesEvenApprovedChain() {
-        when(signOffRepository.findByCombinationId(CID)).thenReturn(List.of(
-                row(SignOffRole.MIGRATION_LEAD, SignOffStatus.APPROVED),
-                row(SignOffRole.DEV_LEAD, SignOffStatus.APPROVED),
-                row(SignOffRole.QA_LEAD, SignOffStatus.APPROVED)));
-
-        service.removeChainForWithdrawal(combination, true);
-
-        verify(signOffRepository).deleteAll(any());
+        verify(deltaCycleService).recordDeclineAndRollOver(eq(combination), eq(SignOffRole.MIGRATION_LEAD),
+                eq("manager@cloudfuze.com"), eq("Wrong workspace pairs"), any(LocalDateTime.class));
+        verify(emailService).notifyMigrationEngineersPreCheckDeclined(anyString(), anyString(), anyString(),
+                eq("Migration Manager"), eq("manager@cloudfuze.com"), eq("Wrong workspace pairs"),
+                eq(List.of("engineer@cloudfuze.com")));
+        verify(emailService, never()).notifyMigrationManagerApprovalDeclined(anyString(), anyString(), anyString(),
+                anyInt(), anyString(), anyString(), anyString(), anyString());
     }
 }

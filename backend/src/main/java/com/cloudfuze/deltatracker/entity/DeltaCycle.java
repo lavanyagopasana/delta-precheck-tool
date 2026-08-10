@@ -92,6 +92,19 @@ public class DeltaCycle {
     @Column(name = "delta_finished_by")
     private String deltaFinishedBy;
 
+    // Only set on a DECLINED cycle -- which role declined, who they were, and why. Mirrors the same
+    // three facts SignOff.declineReason captures live, frozen here since the live row is deleted by
+    // the rollover that immediately follows a decline.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "declined_by_role")
+    private SignOffRole declinedByRole;
+
+    @Column(name = "declined_by")
+    private String declinedBy;
+
+    @Column(name = "decline_reason", length = 500)
+    private String declineReason;
+
     public DeltaCycle(WorkspaceCombination combination, int cycleNumber, DeltaType deltaType) {
         this.combination = combination;
         this.cycleNumber = cycleNumber;

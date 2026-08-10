@@ -170,17 +170,18 @@ public class SignOffService {
                 computeCombinationStats(combination));
     }
 
-    // Declining bounces the request back one step for rework: the role right before this one (in
-    // the Migration Manager -> Dev -> QA sequence) gets reset to pending so they have to reconsider.
-    // Declining as Migration Manager (the first step) has nothing earlier to bounce to -- it just
-    // sits blocked until the pre-check is resubmitted.
+    // Declining, at any step, ends this cycle rather than bouncing it back for rework: the checklist
+    // and every sign-off outcome are frozen into Delta History exactly as they stood at the moment of
+    // the decline (DeltaCycleService.recordDeclineAndRollOver), and the combination immediately rolls
+    // over to a fresh, blank pre-check for the Migration Engineers to redo. There is no "resubmit the
+    // same form" path anymore -- a declined attempt is a closed record, not a draft to fix in place.
     public SignOffApprovalDto decline(Long combinationId, SignOffRole role, String actorEmail, String reason) {
         WorkspaceCombination combination = combinationService.findOrThrow(combinationId);
         SignOff signOff = signOffRepository.findByCombinationIdAndRole(combinationId, role)
                 .orElseThrow(() -> new ResourceNotFoundException("No approval request found for this role."));
 
-        // A decline bounces the chain back a step and reopens work for someone else. Without a reason
-        // they are told to redo it with no idea what was wrong, so this is required rather than optional.
+        // A decline ends this cycle and reopens a fresh one for someone else to fill out. Without a
+        // reason they'd have no idea what to fix the second time around, so this is required.
         String trimmedReason = reason == null ? "" : reason.trim();
         if (!StringUtils.hasText(trimmedReason)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "A reason is required when declining an approval.");
@@ -190,28 +191,21 @@ public class SignOffService {
         requireTurn(role, chain);
         requireEligible(role, actorEmail, combination);
 
+        LocalDateTime declinedAt = LocalDateTime.now();
         signOff.setStatus(SignOffStatus.DECLINED);
         signOff.setApprovedBy(actorEmail);
-        signOff.setApprovedAt(LocalDateTime.now());
+        signOff.setApprovedAt(declinedAt);
         signOff.setDeclineReason(trimmedReason);
         signOffRepository.save(signOff);
 
-        notifyManagerOfDecline(combination, role, actorEmail, trimmedReason);
+        // Snapshot-and-reset must happen before the notification: the notification's own text describes
+        // the reopened state, and before this call the live checklist/chain still reflect the declined
+        // attempt rather than the fresh one.
+        deltaCycleService.recordDeclineAndRollOver(combination, role, actorEmail, trimmedReason, declinedAt);
+        notifyOfDecline(combination, role, actorEmail, trimmedReason);
 
-        int index = APPROVAL_SEQUENCE.indexOf(role);
-        if (index > 0) {
-            SignOffRole previousRole = APPROVAL_SEQUENCE.get(index - 1);
-            chain.stream()
-                    .filter(s -> s.getRole() == previousRole)
-                    .findFirst()
-                    .ifPresent(previous -> {
-                        previous.setStatus(SignOffStatus.PENDING);
-                        previous.setApprovedBy(null);
-                        previous.setApprovedAt(null);
-                        signOffRepository.save(previous);
-                    });
-        }
-
+        // The live chain no longer exists (rolled over) -- an empty chain correctly reads as "not yet
+        // approved by the Migration Manager" below, matching the fresh cycle that now exists.
         return toApprovalDto(signOff, combination, signOffRepository.findByCombinationId(combinationId), actorEmail,
                 computeCombinationStats(combination));
     }
@@ -451,20 +445,33 @@ public class SignOffService {
     }
 
     /**
-     * Emails the Migration Manager when a Dev Lead or QA Lead declines.
+     * Emails everyone who needs to know a decline just reopened this combination's pre-check.
      *
-     * <p>Only those two roles. A Migration Manager decline bounces back to the engineer who filled the
-     * pre-check, and the manager already knows -- they just did it. A Dev/QA decline, by contrast,
-     * lands on the manager's desk (the chain resets their approval to PENDING) and nothing else would
-     * tell them, so without this the combination silently stalls.
+     * <p>Migration Engineers always hear about it -- a fresh, blank checklist is now waiting for one of
+     * them to fill out, and before this change a Migration Manager decline told nobody at all. The
+     * Migration Manager additionally hears about it when a Dev Lead or QA Lead declined -- not because
+     * the chain comes back to them (it doesn't anymore), but because they're the project's point of
+     * contact and would otherwise have no visibility into why their combination just reset. A Migration
+     * Manager's own decline skips that second email; they already know, they just did it.
      */
-    private void notifyManagerOfDecline(WorkspaceCombination combination, SignOffRole role, String declinedBy,
-                                         String reason) {
+    private void notifyOfDecline(WorkspaceCombination combination, SignOffRole role, String declinedBy,
+                                  String reason) {
+        Server server = combination.getServer();
+        Project project = server.getProject();
+        String projectName = project != null ? project.getName() : "-";
+
+        List<String> engineerEmails = appUserService.emailsForRole(AppUserRole.MIGRATION_ENGINEER);
+        if (engineerEmails.isEmpty()) {
+            log.warn("{} declined \"{}\" but no Migration Engineer is configured -- no reopen email sent.",
+                    role.label(), combination.getName());
+        } else {
+            emailService.notifyMigrationEngineersPreCheckDeclined(projectName, server.getName(), combination.getName(),
+                    role.label(), declinedBy, reason, engineerEmails);
+        }
+
         if (role == SignOffRole.MIGRATION_LEAD) {
             return;
         }
-        Server server = combination.getServer();
-        Project project = server.getProject();
         String managerEmail = project != null ? project.getMigrationManagerName() : null;
         if (!StringUtils.hasText(managerEmail)) {
             log.warn("{} declined \"{}\" but the project has no Migration Manager assigned -- no email sent.",
@@ -472,7 +479,7 @@ public class SignOffService {
             return;
         }
         emailService.notifyMigrationManagerApprovalDeclined(
-                project != null ? project.getName() : "-",
+                projectName,
                 server.getName(),
                 combination.getName(),
                 combinationService.pairCount(combination),

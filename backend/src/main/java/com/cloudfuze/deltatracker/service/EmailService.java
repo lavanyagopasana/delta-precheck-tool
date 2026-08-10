@@ -257,6 +257,11 @@ public class EmailService {
      * way in. Workspace-pair count and submitter are dropped -- they don't help decide what to do about
      * a rejection, and every extra row pushes the reason further down. The reason is the point of the
      * email, so it sits in its own row rather than buried in the lede.
+     *
+     * <p>Only sent for a Dev/QA Lead decline (a Migration Manager's own decline skips this -- they
+     * already know). The decline no longer bounces back to the manager for re-approval -- it reopens a
+     * fresh pre-check for the Migration Engineers instead -- so this is purely a visibility email, not a
+     * call to act on this combination themselves.
      */
     @Async(AsyncConfig.EMAIL_EXECUTOR)
     public void notifyMigrationManagerApprovalDeclined(String projectName, String serverName, String combinationName,
@@ -272,9 +277,10 @@ public class EmailService {
         fields.add(new String[] { "Declined by", roleLabel + " (" + orDash(declinedBy) + ")" });
         fields.add(new String[] { "Reason", reason });
 
-        String lede = roleLabel + " declined this approval, so it has come back to you.";
+        String lede = roleLabel + " declined this approval -- a fresh pre-check has been opened for the "
+                + "Migration Engineers to redo, so no action is needed from you right now.";
         // badgeSuccess = false -> the pending/attention treatment, which is the right register here.
-        String html = renderEmail("Approval Declined", "ACTION NEEDED", false,
+        String html = renderEmail("Approval Declined", "FOR YOUR VISIBILITY", false,
                 lede, fields, "Review", approvalsUrl());
         String text = "Hi,\n\n"
                 + lede + "\n\n"
@@ -286,6 +292,46 @@ public class EmailService {
                 + "\nReview: " + approvalsUrl();
 
         send(new String[] { managerEmail }, subject, html, text);
+    }
+
+    /**
+     * Tells the Migration Engineers pool that a decline just reopened this combination's pre-check for
+     * them -- the previous attempt is preserved in Delta History, but a fresh, blank checklist is what's
+     * live now and someone needs to fill it out again.
+     *
+     * <p>Sent for every decline, including a Migration Manager's own -- before this email existed, a
+     * Migration Manager decline notified nobody at all and the combination simply sat blocked with no
+     * path forward.
+     */
+    @Async(AsyncConfig.EMAIL_EXECUTOR)
+    public void notifyMigrationEngineersPreCheckDeclined(String projectName, String serverName, String combinationName,
+                                                          String roleLabel, String declinedBy, String reason,
+                                                          List<String> migrationEngineerEmails) {
+        String subject = "Pre-check declined, reopened for rework: " + serverLabel(serverName, combinationName)
+                + " (" + projectName + ")";
+
+        List<String[]> fields = new ArrayList<>();
+        fields.add(new String[] { "Project", projectName });
+        fields.add(new String[] { "Server URL", serverName });
+        fields.add(new String[] { "Combination", combinationName });
+        fields.add(new String[] { "Declined by", roleLabel + " (" + orDash(declinedBy) + ")" });
+        fields.add(new String[] { "Reason", reason });
+
+        String lede = roleLabel + " declined the pre-check for \"" + serverLabel(serverName, combinationName)
+                + "\". The previous submission is preserved in Delta History, and a fresh checklist is now"
+                + " open for you to fill out.";
+        String html = renderEmail("Pre-Check Declined", "ACTION NEEDED", false,
+                lede, fields, "Open Dashboard", frontendUrl);
+        String text = "Hi,\n\n"
+                + lede + "\n\n"
+                + "Project: " + projectName + "\n"
+                + "Server URL: " + serverName + "\n"
+                + "Combination: " + combinationName + "\n"
+                + "Declined by: " + roleLabel + " (" + orDash(declinedBy) + ")\n"
+                + "Reason: " + reason + "\n\n"
+                + "Open dashboard: " + frontendUrl;
+
+        send(migrationEngineerEmails.toArray(new String[0]), subject, html, text);
     }
 
     private List<String[]> fieldRows(String projectName, String serverName, String combinationName,

@@ -12,6 +12,7 @@ import com.cloudfuze.deltatracker.entity.ItemStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckItem;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
 import com.cloudfuze.deltatracker.entity.SignOff;
+import com.cloudfuze.deltatracker.entity.SignOffRole;
 import com.cloudfuze.deltatracker.entity.SubmissionStatus;
 import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import com.cloudfuze.deltatracker.repository.DeltaCycleItemRepository;
@@ -135,6 +136,42 @@ public class DeltaCycleService {
         cycleSignOffRepository.saveAll(live.stream()
                 .map(signOff -> new DeltaCycleSignOff(cycle, signOff))
                 .toList());
+    }
+
+    /**
+     * Writes the cycle record when a role declines instead of approving, then immediately rolls the
+     * combination over to a fresh cycle -- every decline now reopens a brand-new pre-check for the
+     * Migration Engineers rather than bouncing the chain back one step for rework.
+     *
+     * <p>Unlike {@link #recordApproval}, there's no idempotent "update the existing row" branch: a
+     * given cycle number resolves exactly once, either via approval or via decline, never both, so a
+     * fresh {@link DeltaCycle} row is always the right call here.
+     *
+     * <p>Snapshotting has to happen before {@link #rollOver} -- rollOver deletes the live checklist
+     * items and sign-off chain that the snapshot reads from.
+     */
+    public DeltaCycle recordDeclineAndRollOver(WorkspaceCombination combination, SignOffRole declinedByRole,
+                                                String declinedBy, String reason, LocalDateTime declinedAt) {
+        DeltaType deltaType = combination.getCurrentDeltaType() != null
+                ? combination.getCurrentDeltaType()
+                : DeltaType.PRE_DELTA;
+
+        var submission = preCheckSubmissionRepository.findByCombinationId(combination.getId());
+
+        DeltaCycle cycle = new DeltaCycle(combination, combination.getCurrentCycleNumber(), deltaType);
+        cycle.setStatus(DeltaCycleStatus.DECLINED);
+        cycle.setSubmittedBy(submission.map(PreCheckSubmission::getSubmittedBy).orElse(null));
+        cycle.setSubmittedAt(submission.map(PreCheckSubmission::getSubmittedAt).orElse(null));
+        cycle.setDeclinedByRole(declinedByRole);
+        cycle.setDeclinedBy(declinedBy);
+        cycle.setDeclineReason(reason);
+        cycle = cycleRepository.save(cycle);
+
+        snapshotItems(cycle, combination);
+        snapshotSignOffs(cycle, combination);
+
+        rollOver(combination);
+        return cycle;
     }
 
     // Mirrors the Start click onto the cycle record. A missing cycle row is tolerated rather than
@@ -280,8 +317,12 @@ public class DeltaCycleService {
      */
     @Transactional(readOnly = true)
     public List<DeltaCycleDto> history(Long combinationId) {
+        // COMPLETED = a finished migration; DECLINED = a rejected attempt, frozen for the record but
+        // never run. Both are settled outcomes worth showing; only a still-open APPROVED/RUNNING cycle
+        // (the live one) is excluded here -- that one is what the current, editable form represents.
         List<DeltaCycle> cycles = cycleRepository.findByCombinationIdOrderByCycleNumberAsc(combinationId).stream()
-                .filter(cycle -> cycle.getStatus() == DeltaCycleStatus.COMPLETED)
+                .filter(cycle -> cycle.getStatus() == DeltaCycleStatus.COMPLETED
+                        || cycle.getStatus() == DeltaCycleStatus.DECLINED)
                 .toList();
         if (cycles.isEmpty()) {
             return List.of();

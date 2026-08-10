@@ -3,6 +3,7 @@ package com.cloudfuze.deltatracker.dto;
 import com.cloudfuze.deltatracker.entity.DeltaCycle;
 import com.cloudfuze.deltatracker.entity.DeltaCycleStatus;
 import com.cloudfuze.deltatracker.entity.DeltaType;
+import com.cloudfuze.deltatracker.entity.SignOffRole;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -35,6 +36,12 @@ public class DeltaCycleDto {
     private List<DeltaCycleSignOffDto> signOffs;
     private List<DeltaCycleItemDto> items;
 
+    // Only set when status == DECLINED -- which role cut the cycle short, who they were, and why.
+    private SignOffRole declinedByRole;
+    private String declinedByRoleLabel;
+    private String declinedBy;
+    private String declineReason;
+
     public static DeltaCycleDto fromEntity(DeltaCycle cycle, List<DeltaCycleSignOffDto> signOffs,
                                             List<DeltaCycleItemDto> items) {
         DeltaCycleDto dto = new DeltaCycleDto();
@@ -53,6 +60,10 @@ public class DeltaCycleDto {
         dto.setDeltaFinishedBy(cycle.getDeltaFinishedBy());
         dto.setSignOffs(signOffs);
         dto.setItems(items);
+        dto.setDeclinedByRole(cycle.getDeclinedByRole());
+        dto.setDeclinedByRoleLabel(cycle.getDeclinedByRole() != null ? cycle.getDeclinedByRole().label() : null);
+        dto.setDeclinedBy(cycle.getDeclinedBy());
+        dto.setDeclineReason(cycle.getDeclineReason());
         return dto;
     }
 }

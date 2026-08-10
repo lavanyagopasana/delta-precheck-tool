@@ -51,6 +51,11 @@ public class DeltaCycleSignOff {
     @Column(name = "qa_required")
     private Boolean qaRequired;
 
+    // Frozen copy of SignOff.declineReason -- only ever set on the row whose decline ended this
+    // cycle, since the live row (and its reason) is gone once the rollover that follows deletes it.
+    @Column(name = "decline_reason", length = 500)
+    private String declineReason;
+
     public DeltaCycleSignOff(DeltaCycle cycle, SignOff source) {
         this.cycle = cycle;
         this.role = source.getRole();
@@ -58,5 +63,6 @@ public class DeltaCycleSignOff {
         this.approvedBy = source.getApprovedBy();
         this.approvedAt = source.getApprovedAt();
         this.qaRequired = source.getQaRequired();
+        this.declineReason = source.getDeclineReason();
     }
 }

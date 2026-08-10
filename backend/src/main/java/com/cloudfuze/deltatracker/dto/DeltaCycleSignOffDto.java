@@ -20,6 +20,7 @@ public class DeltaCycleSignOffDto {
     private String approvedBy;
     private LocalDateTime approvedAt;
     private Boolean qaRequired;
+    private String declineReason;
 
     public static DeltaCycleSignOffDto fromEntity(DeltaCycleSignOff signOff) {
         DeltaCycleSignOffDto dto = new DeltaCycleSignOffDto();
@@ -29,6 +30,7 @@ public class DeltaCycleSignOffDto {
         dto.setApprovedBy(signOff.getApprovedBy());
         dto.setApprovedAt(signOff.getApprovedAt());
         dto.setQaRequired(signOff.getQaRequired());
+        dto.setDeclineReason(signOff.getDeclineReason());
         return dto;
     }
 }
