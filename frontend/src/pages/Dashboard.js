@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getDashboardSummary, getProjects } from "../api/client";
 import DashboardCharts from "../components/DashboardCharts";
+
+const PRODUCT_TYPE_LABELS = { MESSAGE: "Message", EMAIL: "Email", CONTENT: "Content" };
 
 const KPI_TONES = {
   green: "var(--color-green)",
@@ -18,10 +20,17 @@ const KPI_TONES = {
  * Tickets" in green competed for attention with metrics that genuinely needed it. Zero is the resting
  * state, so it stays in the default text colour and the colour means "there is something here".
  */
-function Kpi({ label, value, tone, meta }) {
+function Kpi({ label, value, tone, meta, onClick }) {
   const color = value > 0 && tone ? KPI_TONES[tone] : undefined;
   return (
-    <div className="kpi">
+    <div
+      className="kpi"
+      style={onClick ? { cursor: "pointer" } : undefined}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => (e.key === "Enter" || e.key === " ") && onClick() : undefined}
+    >
       <div className="kpi__value" style={{ color }}>{value}</div>
       <div className="kpi__label">{label}</div>
       <div className="kpi__meta">{meta}</div>
@@ -35,6 +44,11 @@ export default function Dashboard() {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const decommissionSectionRef = useRef(null);
+
+  const scrollToDecommissionSection = () => {
+    decommissionSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const load = () => {
     setLoading(true);
@@ -136,6 +150,7 @@ export default function Dashboard() {
           value={decommissionReady}
           tone="green"
           meta={decommissioned > 0 ? `${decommissioned} already done` : null}
+          onClick={scrollToDecommissionSection}
         />
       </div>
 
@@ -205,6 +220,40 @@ export default function Dashboard() {
       </div>
 
       <DashboardCharts projects={projects} />
+
+      {/* Bottom of the page on purpose -- this is what the "Servers To Decommission" tile scrolls
+          down to, rather than navigating away, so the count and the actual list stay on one screen. */}
+      <div className="card" style={{ marginTop: 16 }} ref={decommissionSectionRef}>
+        <strong style={{ fontSize: 14 }}>Servers To Decommission</strong>
+        {!summary.decommissionReadyServers?.length ? (
+          <p className="empty-state">No servers are ready to decommission right now.</p>
+        ) : (
+          <div style={{ marginTop: 10 }}>
+            {summary.decommissionReadyServers.map((s) => (
+              <div
+                key={s.serverId}
+                className="attention-row"
+                onClick={() => navigate(`/servers/${s.serverId}`)}
+              >
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{s.serverName}</div>
+                  <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{s.projectName}</div>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  {s.productType && (
+                    <span className="badge blue">{PRODUCT_TYPE_LABELS[s.productType] || s.productType}</span>
+                  )}
+                  {s.readySince && (
+                    <span style={{ fontSize: 11.5, color: "var(--color-text-faint)" }}>
+                      Ready since {new Date(s.readySince).toLocaleDateString()}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

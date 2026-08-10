@@ -3,6 +3,8 @@ package com.cloudfuze.deltatracker.dto;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.util.List;
+
 @Getter
 @Setter
 public class DashboardSummaryDto {
@@ -19,6 +21,9 @@ public class DashboardSummaryDto {
     // action now, and the dashboard tile previously derived this client-side from the projects list.
     private long serversReadyToDecommission;
     private long serversDecommissioned;
+    // The actual servers behind the count above -- backs the Dashboard's "Servers To Decommission"
+    // list, so clicking the tile has somewhere real to jump to instead of just a number.
+    private List<DecommissionReadyServerDto> decommissionReadyServers;
     // Combinations that have completed their Final Delta -- migrations fully finished.
     private long finalDeltasComplete;
     // Pre-delta cycles recorded so far across every combination, and how many combinations are

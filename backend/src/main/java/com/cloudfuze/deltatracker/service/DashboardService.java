@@ -1,6 +1,7 @@
 package com.cloudfuze.deltatracker.service;
 
 import com.cloudfuze.deltatracker.dto.DashboardSummaryDto;
+import com.cloudfuze.deltatracker.dto.DecommissionReadyServerDto;
 import com.cloudfuze.deltatracker.entity.DeltaCycleStatus;
 import com.cloudfuze.deltatracker.entity.DeltaType;
 import com.cloudfuze.deltatracker.entity.Server;
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
@@ -100,6 +102,7 @@ public class DashboardService {
         // calling it decommissionable would be misleading. Mirrors ServerService.isDecommissionReady.
         long readyToDecommission = 0;
         long decommissioned = 0;
+        List<DecommissionReadyServerDto> readyServers = new ArrayList<>();
         for (Server server : serverRepository.findAll()) {
             if (server.isDecommissioned()) {
                 decommissioned++;
@@ -108,6 +111,7 @@ public class DashboardService {
             List<WorkspaceCombination> combinations = combinationsByServer.getOrDefault(server.getId(), List.of());
             if (!combinations.isEmpty() && combinations.stream().allMatch(WorkspaceCombination::isFinalDeltaComplete)) {
                 readyToDecommission++;
+                readyServers.add(toDecommissionReadyDto(server, combinations));
             }
         }
 
@@ -119,6 +123,11 @@ public class DashboardService {
         dto.setMigrationManagerApprovalsPending(migrationManagerPending);
         dto.setServersReadyToDecommission(readyToDecommission);
         dto.setServersDecommissioned(decommissioned);
+        // Sorted oldest-ready-first -- the servers that have been waiting longest are the ones most
+        // worth acting on first.
+        readyServers.sort(Comparator.comparing(DecommissionReadyServerDto::getReadySince,
+                Comparator.nullsLast(Comparator.naturalOrder())));
+        dto.setDecommissionReadyServers(readyServers);
         dto.setFinalDeltasComplete(finalDeltasComplete);
         dto.setPreDeltasInFlight(preDeltasInFlight);
         // Every recorded cycle that wasn't a final delta -- i.e. how many pre-delta passes the team has
@@ -127,6 +136,26 @@ public class DashboardService {
                 .filter(cycle -> cycle.getDeltaType() == DeltaType.PRE_DELTA)
                 .filter(cycle -> cycle.getStatus() == DeltaCycleStatus.COMPLETED)
                 .count());
+        return dto;
+    }
+
+    // The server became ready the moment its LAST combination finished its Final Delta, not its
+    // first -- readySince is the latest of the per-combination timestamps, matching the "every
+    // combination done" condition the caller already checked before calling this.
+    private DecommissionReadyServerDto toDecommissionReadyDto(Server server, List<WorkspaceCombination> combinations) {
+        DecommissionReadyServerDto dto = new DecommissionReadyServerDto();
+        dto.setServerId(server.getId());
+        dto.setServerName(server.getName());
+        dto.setProductType(server.getProductType());
+        if (server.getProject() != null) {
+            dto.setProjectId(server.getProject().getId());
+            dto.setProjectName(server.getProject().getName());
+        }
+        combinations.stream()
+                .map(WorkspaceCombination::getFinalDeltaCompletedAt)
+                .filter(java.util.Objects::nonNull)
+                .max(Comparator.naturalOrder())
+                .ifPresent(dto::setReadySince);
         return dto;
     }
 }
