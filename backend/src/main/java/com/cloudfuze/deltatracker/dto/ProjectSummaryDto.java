@@ -13,6 +13,10 @@ public class ProjectSummaryDto {
     private Long id;
     private String name;
     private int serverCount;
+    // Every WorkspaceCombination across every one of this project's servers -- a server can have
+    // several (e.g. Box -> OneDrive and Google Drive -> OneDrive), each an independent migration, so
+    // this is a genuinely different number from serverCount, not a duplicate of it.
+    private long combinationCount;
     private long totalPairs;
     private long readyServerCount;
     private long notReadyServerCount;

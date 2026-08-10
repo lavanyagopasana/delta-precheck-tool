@@ -104,14 +104,21 @@ function ProjectBars({ projects }) {
           {withServers.map((p) => {
             const total = p.serverCount || 0;
             const ready = p.readyServerCount || 0;
+            const combos = p.combinationCount || 0;
             const pct = total ? Math.round((ready / total) * 100) : 0;
             return (
               <div key={p.id}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 4 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 2 }}>
                   <span style={{ color: INK, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "70%" }}>
                     {p.name}
                   </span>
                   <span style={{ color: MUTED }}>{ready}/{total} ready</span>
+                </div>
+                {/* The server count above is what the bar itself measures; the combination count is
+                    the finer-grained unit everything else (pre-checks, sign-offs, Delta) actually
+                    tracks -- shown together so neither number is mistaken for the other. */}
+                <div style={{ fontSize: 11, color: MUTED, marginBottom: 4 }}>
+                  {total} server{total === 1 ? "" : "s"} &middot; {combos} combination{combos === 1 ? "" : "s"}
                 </div>
                 <div
                   title={`${ready} of ${total} servers Delta Ready`}

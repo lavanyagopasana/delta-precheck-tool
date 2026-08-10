@@ -399,6 +399,7 @@ public class ProjectService {
         to.setId(from.getId());
         to.setName(from.getName());
         to.setServerCount(from.getServerCount());
+        to.setCombinationCount(from.getCombinationCount());
         to.setTotalPairs(from.getTotalPairs());
         to.setReadyServerCount(from.getReadyServerCount());
         to.setNotReadyServerCount(from.getNotReadyServerCount());
@@ -524,6 +525,7 @@ public class ProjectService {
         dto.setId(project.getId());
         dto.setName(project.getName());
         dto.setServerCount(servers.size());
+        dto.setCombinationCount(combinations.size());
         dto.setTotalPairs(totalPairs);
         dto.setReadyServerCount(readyServers);
         dto.setNotReadyServerCount(servers.size() - readyServers);
