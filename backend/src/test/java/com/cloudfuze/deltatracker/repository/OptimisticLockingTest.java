@@ -11,6 +11,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -24,10 +25,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <p>A Ticket belongs to a WorkspaceCombination now, not a Server directly (see the per-combination
  * migration in decisions.md) -- the combination still needs a Server to hang off of, so both are
  * persisted here.
+ *
+ * <p>{@code Replace.NONE} means this test uses exactly the datasource the "test" profile configures
+ * (H2) rather than Spring Boot's own auto-embedded replacement -- which makes it just as exposed as
+ * every other {@code @SpringBootTest} here to a {@code file:./application.properties} in the working
+ * directory silently outranking {@code application-test.properties}. {@code @TestPropertySource}
+ * fixes that the same way it does elsewhere in this test suite.
  */
 @DataJpaTest
 @ActiveProfiles("test")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@TestPropertySource(locations = "classpath:/application-test.properties")
 class OptimisticLockingTest {
 
     @Autowired

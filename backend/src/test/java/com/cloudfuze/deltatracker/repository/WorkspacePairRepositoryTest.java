@@ -11,6 +11,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 
 import java.util.List;
 
@@ -21,10 +22,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code findByServerId(Long, Pageable)} overload used by {@code WorkspacePairService.listByServer}
  * honours the 500-row cap (via {@code PageRequest} limit) and returns rows in ascending id order,
  * scoped to the requested server.
+ *
+ * <p>{@code @TestPropertySource} is required alongside {@code Replace.NONE} for the same reason as
+ * OptimisticLockingTest -- otherwise a {@code file:./application.properties} in the working
+ * directory can silently outrank {@code application-test.properties}'s H2 configuration.
  */
 @DataJpaTest
 @ActiveProfiles("test")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@TestPropertySource(locations = "classpath:/application-test.properties")
 class WorkspacePairRepositoryTest {
 
     private static final int MAX_DISPLAY_ROWS = 500;

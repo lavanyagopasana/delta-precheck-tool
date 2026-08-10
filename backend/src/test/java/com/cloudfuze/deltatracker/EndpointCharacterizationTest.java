@@ -26,6 +26,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDateTime;
@@ -44,9 +45,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // directly -- a server can have several combinations, each migrated independently (see the
 // per-combination migration in decisions.md). The seed below gives each server exactly one
 // combination so the shape stays simple, but every entity hangs off the combination, not the server.
+// @TestPropertySource wins over EVERY other property source, including a file:./application.properties
+// sitting in the working directory a developer launches tests from -- @ActiveProfiles("test") alone
+// isn't enough, since Spring Boot's config-data precedence ranks location (file:./ vs classpath:/)
+// above profile-specificity. Without this, a local-dev override file that happens to set
+// spring.datasource.url (or azure.client-id, etc.) silently wins over application-test.properties'
+// H2/no-auth setup, and this test stops being hermetic without any visible warning.
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@TestPropertySource(locations = "classpath:/application-test.properties")
 class EndpointCharacterizationTest {
 
     private static final LocalDateTime T_CREATED = LocalDateTime.of(2026, 1, 1, 9, 0, 0);

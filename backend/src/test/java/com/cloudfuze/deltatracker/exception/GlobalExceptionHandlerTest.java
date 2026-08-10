@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.hamcrest.Matchers.containsString;
@@ -30,10 +31,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>Uses the same {@code @SpringBootTest} + H2 + auth-off harness as EndpointCharacterizationTest,
  * because the point is what the dispatcher does with an unrouted request -- calling the advice
  * directly would assert the fix restates itself rather than that routing produces a 404 end to end.
+ *
+ * <p>{@code @TestPropertySource} is required, not just {@code @ActiveProfiles("test")} -- Spring
+ * Boot's config-data precedence ranks a {@code file:./application.properties} in the working
+ * directory a developer launches tests from ABOVE a profile-specific classpath file, so a local-dev
+ * override that happens to set {@code spring.datasource.url} (or {@code azure.client-id}, etc.)
+ * would otherwise silently win over this profile's H2/no-auth setup with no visible warning.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@TestPropertySource(locations = "classpath:/application-test.properties")
 class GlobalExceptionHandlerTest {
 
     @Autowired
