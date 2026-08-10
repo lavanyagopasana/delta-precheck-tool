@@ -54,21 +54,21 @@ describe("with nothing configured", () => {
     expect(cfg.BACKEND_BASE).toBe("https://delta.example.com");
   });
 
-  it("still points at the :8080 backend when served from localhost", () => {
+  it("still points at the :8081 backend when served from localhost", () => {
     const cfg = loadWith({ href: "http://localhost:3000/" });
-    expect(cfg.BACKEND_BASE).toBe("http://localhost:8080");
+    expect(cfg.BACKEND_BASE).toBe("http://localhost:8081");
     expect(cfg.AZURE_REDIRECT_URI).toBe("http://localhost:3000");
   });
 
   // react-scripts prints a LAN address ("On Your Network: http://192.168.x.x:3000") and developers
   // open it to test from a phone or a second machine. That origin is not loopback, but the backend is
-  // still on the developer's own :8080 -- same-origin would send /api to the dev server and 404.
-  it("still points at the :8080 backend for `npm start` opened via a LAN address", () => {
+  // still on the developer's own :8081 -- same-origin would send /api to the dev server and 404.
+  it("still points at the :8081 backend for `npm start` opened via a LAN address", () => {
     const cfg = loadWith({
       href: "http://192.168.1.7:3000/",
       env: { NODE_ENV: "development" },
     });
-    expect(cfg.BACKEND_BASE).toBe("http://localhost:8080");
+    expect(cfg.BACKEND_BASE).toBe("http://localhost:8081");
   });
 
   // The redirect URI must equal whatever origin the page is actually on, LAN address included.

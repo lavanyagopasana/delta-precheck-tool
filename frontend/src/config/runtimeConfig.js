@@ -85,7 +85,7 @@ export const AZURE_REDIRECT_URI =
     treatLoopbackAsUnset: true,
   }) || origin;
 
-// The dev server (:3000) and the backend (:8080) are always different ports, so same-origin is never
+// The dev server (:3000) and the backend (:8081) are always different ports, so same-origin is never
 // the right default for local development. NODE_ENV covers `npm start` even when the page is opened
 // via the LAN address react-scripts prints ("On Your Network: http://192.168.x.x:3000"), which is not
 // loopback but is still a dev session talking to a backend on the developer's own machine.
