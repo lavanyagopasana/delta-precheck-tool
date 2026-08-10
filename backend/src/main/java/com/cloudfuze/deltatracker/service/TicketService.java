@@ -68,14 +68,16 @@ public class TicketService {
     // -- has to happen inside ONE transaction/session together, though, or it throws
     // LazyInitializationException once that session closes; TransactionTemplate opens that single
     // explicit transaction just for the DB portion, after the Jira call has already finished.
+    //
+    // request.getTicketNumber() accepts either a bare key ("PROJ-123") or a full Jira URL containing
+    // one -- JiraService.fetchIssue extracts the key either way, so this method doesn't need to know
+    // or care which shape was typed in.
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public TicketDto create(TicketCreateRequest request) {
         JiraIssueDto issue = jiraService.fetchIssue(request.getTicketNumber());
 
         return transactionTemplate.execute(status -> {
-            WorkspaceCombination combination = workspaceCombinationRepository.findById(request.getCombinationId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Combination not found: " + request.getCombinationId()));
-
+            WorkspaceCombination combination = findCombinationOrThrow(request.getCombinationId());
             if (ticketRepository.existsByTicketUrlIgnoreCase(issue.getUrl())) {
                 throw new ApiException(HttpStatus.CONFLICT, "This ticket has already been logged.");
             }
@@ -88,6 +90,11 @@ public class TicketService {
             ticket.setJiraCreatedAt(issue.getCreatedAt());
             return TicketDto.fromEntity(ticketRepository.save(ticket));
         });
+    }
+
+    private WorkspaceCombination findCombinationOrThrow(Long combinationId) {
+        return workspaceCombinationRepository.findById(combinationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Combination not found: " + combinationId));
     }
 
     // Keeps an OPEN ticket in sync with Jira without anyone having to notice the change over there

@@ -28,9 +28,27 @@ const EMPTY_CREATE_FORM = {
   createdBy: "",
 };
 
+// Matches AddCombinationModal's field-label convention -- a real, visible label above each input
+// rather than the sr-only-label-plus-placeholder pattern, which reads as unlabeled ghost fields once
+// there's more than one dropdown in a row.
+const FIELD_LABEL_STYLE = { display: "block", fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 6 };
+
+// The two ways to log a ticket (Jira number vs. plain link) are mutually exclusive, so they're
+// visually two separate panels rather than a flat stack of inputs -- whichever one you're not using
+// dims via LogTicketForm's opacity override, making the "only one applies" rule visible, not just
+// enforced by a disabled attribute.
+const SOURCE_PANEL_STYLE = {
+  border: "1px solid var(--color-border)",
+  borderRadius: "var(--radius-md)",
+  background: "var(--color-gray-soft)",
+  padding: 14,
+  transition: "opacity 0.15s ease",
+};
+
+const SOURCE_HINT_STYLE = { fontSize: 12, color: "var(--color-text-faint)", marginTop: 8 };
+
 // A ticket link only needs to look like an http(s) URL to be submittable; the "Validate link" button
-// does the real server-side reachability check on demand. Only used by the edit form now -- creating
-// a ticket no longer takes a raw URL (see JiraService).
+// does the real server-side reachability check on demand.
 const isLikelyUrl = (value) => /^https?:\/\/.+/i.test(value.trim());
 
 // Editing an already-logged ticket still works the old way (raw URL + status) -- only *logging a new*
@@ -153,8 +171,10 @@ function EditTicketForm({ existing, existingTicketUrls, onCreated }) {
 }
 
 // Logging a new ticket: Project + Server still need picking (Jira has no idea which of our internal
-// servers a ticket is about), but the ticket number is all that's typed by hand -- status, reporter,
-// summary, and the link itself are fetched from Jira on submit (see JiraService/TicketService).
+// servers a ticket is about), then a single field takes either a bare ticket number ("PROJ-123") or
+// a full link to it -- either way, status, reporter, summary, and the canonical link are fetched
+// from Jira on submit (see JiraService.fetchIssue, which extracts the key from a pasted URL the same
+// way it uses a bare key).
 function LogTicketForm({ projects, servers, onCreated }) {
   const currentUser = useCurrentUser();
   const [form, setForm] = useState(EMPTY_CREATE_FORM);
@@ -190,7 +210,9 @@ function LogTicketForm({ projects, servers, onCreated }) {
     ? currentUser?.email || currentUser?.name || ""
     : form.createdBy.trim();
 
-  const canSubmit = !!(form.projectId && form.serverId && form.combinationId && form.ticketNumber.trim() && createdByName);
+  const ticketNumber = form.ticketNumber.trim();
+
+  const canSubmit = !!(form.projectId && form.serverId && form.combinationId && createdByName && ticketNumber);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -200,7 +222,7 @@ function LogTicketForm({ projects, servers, onCreated }) {
     try {
       await createTicket({
         combinationId: Number(form.combinationId),
-        ticketNumber: form.ticketNumber.trim(),
+        ticketNumber,
         createdBy: createdByName,
       });
       showToast("Ticket logged.", "success");
@@ -217,81 +239,98 @@ function LogTicketForm({ projects, servers, onCreated }) {
 
   return (
     <form onSubmit={handleSubmit}>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-        <label className="sr-only" htmlFor="ticket-project">Project</label>
-        <select id="ticket-project" value={form.projectId} onChange={setProject} style={{ minWidth: 180 }}>
-          <option value="">Select project...</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 10,
+          marginBottom: !AUTH_CONFIGURED ? 12 : 20,
+        }}
+      >
+        <div>
+          <label style={FIELD_LABEL_STYLE} htmlFor="ticket-project">Project</label>
+          <select id="ticket-project" value={form.projectId} onChange={setProject} style={{ width: "100%" }}>
+            <option value="">Select...</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label style={FIELD_LABEL_STYLE} htmlFor="ticket-server">Server</label>
+          <select
+            id="ticket-server"
+            value={form.serverId}
+            onChange={setServer}
+            disabled={!form.projectId}
+            style={{ width: "100%" }}
+          >
+            <option value="">{form.projectId ? "Select..." : "Pick a project first"}</option>
+            {serversForProject.map((s) => (
+              <option key={s.serverId} value={s.serverId}>
+                {s.serverName}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label style={FIELD_LABEL_STYLE} htmlFor="ticket-combination">Combination</label>
+          <select
+            id="ticket-combination"
+            value={form.combinationId}
+            onChange={set("combinationId")}
+            disabled={!form.serverId}
+            style={{ width: "100%" }}
+          >
+            <option value="">
+              {!form.serverId
+                ? "Pick a server first"
+                : combinationsForServer.length
+                ? "Select..."
+                : "No combinations yet"}
             </option>
-          ))}
-        </select>
-        <label className="sr-only" htmlFor="ticket-server">Server</label>
-        <select
-          id="ticket-server"
-          value={form.serverId}
-          onChange={setServer}
-          disabled={!form.projectId}
-          style={{ minWidth: 180 }}
-        >
-          <option value="">{form.projectId ? "Select server..." : "Select a project first"}</option>
-          {serversForProject.map((s) => (
-            <option key={s.serverId} value={s.serverId}>
-              {s.serverName}
-            </option>
-          ))}
-        </select>
-        <label className="sr-only" htmlFor="ticket-combination">Combination</label>
-        <select
-          id="ticket-combination"
-          value={form.combinationId}
-          onChange={set("combinationId")}
-          disabled={!form.serverId}
-          style={{ minWidth: 180 }}
-        >
-          <option value="">
-            {!form.serverId
-              ? "Select a server first"
-              : combinationsForServer.length
-              ? "Select combination..."
-              : "No combinations yet"}
-          </option>
-          {combinationsForServer.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        {!AUTH_CONFIGURED && (
-          <>
-            <label className="sr-only" htmlFor="ticket-created-by">Created by</label>
-            <input
-              id="ticket-created-by"
-              type="text"
-              placeholder="Created by"
-              value={form.createdBy}
-              onChange={set("createdBy")}
-              style={{ width: 200 }}
-            />
-          </>
-        )}
+            {combinationsForServer.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
-      <label className="sr-only" htmlFor="ticket-number">Ticket Number</label>
-      <input
-        id="ticket-number"
-        type="text"
-        placeholder="Jira ticket number (e.g. PROJ-123)"
-        value={form.ticketNumber}
-        onChange={set("ticketNumber")}
-        style={{ width: "100%", marginBottom: 8 }}
-      />
-      <div style={{ fontSize: 12, color: "var(--color-text-faint)", marginBottom: 10 }}>
-        Status, reporter, summary, and the link are pulled from Jira automatically once you submit.
+      {!AUTH_CONFIGURED && (
+        <div style={{ marginBottom: 20 }}>
+          <label style={FIELD_LABEL_STYLE} htmlFor="ticket-created-by">Created by</label>
+          <input
+            id="ticket-created-by"
+            type="text"
+            placeholder="you@cloudfuze.com"
+            value={form.createdBy}
+            onChange={set("createdBy")}
+            style={{ width: "100%" }}
+          />
+        </div>
+      )}
+
+      <div style={SOURCE_PANEL_STYLE}>
+        <label style={FIELD_LABEL_STYLE} htmlFor="ticket-number">Ticket Number or Link</label>
+        <input
+          id="ticket-number"
+          type="text"
+          placeholder="PROJ-123 or https://your-tracker.example.com/browse/PROJ-123"
+          value={form.ticketNumber}
+          onChange={set("ticketNumber")}
+          style={{ width: "100%" }}
+        />
+        <div style={SOURCE_HINT_STYLE}>
+          Either works -- status, reporter, summary, and the canonical link are pulled from Jira
+          automatically once you submit.
+        </div>
       </div>
 
-      {error && <div className="inline-hint" style={{ marginBottom: 10 }}>{error}</div>}
+      {error && <div className="inline-hint" style={{ marginTop: 14, marginBottom: 0 }}>{error}</div>}
 
       <div className="form-actions" style={{ justifyContent: "flex-end", gap: 10 }}>
         {AUTH_CONFIGURED && createdByName && (
