@@ -1,0 +1,5 @@
+target/
+uploads/
+*.log
+.mvn/
+application.properties
