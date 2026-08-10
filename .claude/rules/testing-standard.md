@@ -32,7 +32,7 @@ don't unilaterally add a large test suite to an unrelated PR — see `.claude/ru
   rather than spinning up a full Spring context. Reserve `@SpringBootTest` for the rare case that
   needs the real application context wired (e.g. verifying `SecurityConfig`'s filter chain
   behavior end-to-end).
-- **No test database exists.** Don't point tests at the real `delta_migration_tracker` MySQL
+- **No test database exists.** Don't point tests at the real `delta_migration_tracker` PostgreSQL
   database — either mock the repository layer (preferred for service-level tests) or introduce an
   in-memory H2 database scoped to `@DataJpaTest` if a real persistence-layer test is genuinely
   needed. Never assume a shared dev database is safe to write test data into.
@@ -48,7 +48,7 @@ don't unilaterally add a large test suite to an unrelated PR — see `.claude/ru
   search/filter/add/remove interactions), `DataTable` (sort/filter behavior), and
   `ApprovalsPage`'s `primaryRowFor`/`OverallStepper` logic. Purely presentational components
   (`StatusBadge`, `Modal`) are lower priority.
-- **Mock `src/api/client.js`**, never let a test hit `http://localhost:8080` for real.
+- **Mock `src/api/client.js`**, never let a test hit `http://localhost:8081` for real.
 
 ## What "done" looks like for a PR that adds tests
 

@@ -28,16 +28,35 @@ this when a limitation is added, fixed, or an ALTER/behavior change is approved.
 - **`ddl-auto=update` in all profiles.** Schema evolves by entity annotation changes; there is no
   migration file and no `validate` profile yet. A production `validate` profile (PART 5.5) is
   recommended so a silent schema drift fails fast at startup instead of being masked.
-- **`tickets.idx_ticket_url` was missing on MySQL — fixed in the entity, ALTER pending.** Confirmed
-  via `SHOW INDEX FROM tickets`: only `PRIMARY`, `idx_ticket_status`, and the `server_id` FK index
-  existed; `idx_ticket_url` never got created because a full index on the old `VARCHAR(2000)` column
-  exceeds InnoDB's 3072-byte utf8mb4 key limit (`ddl-auto=update` logged the failure as a warning
-  and continued). The entity column is now `VARCHAR(512)` (observed max stored length: 17). Apply the
-  ALTER before/at next deploy so the duplicate-URL lookup is indexed:
-  `ALTER TABLE tickets MODIFY COLUMN ticket_url VARCHAR(512) NOT NULL;` then
-  `CREATE INDEX idx_ticket_url ON tickets (ticket_url);` (or just restart — `ddl-auto=update` will
-  now create it). It is a plain lookup index, not a uniqueness constraint (uniqueness is enforced in
-  `TicketService.existsByTicketUrlIgnoreCase`).
+- **(Historical, MySQL-only — resolved by the Postgres migration) `tickets.idx_ticket_url` was
+  missing on MySQL.** Confirmed via `SHOW INDEX FROM tickets`: only `PRIMARY`, `idx_ticket_status`,
+  and the `server_id` FK index existed; `idx_ticket_url` never got created because a full index on
+  the old `VARCHAR(2000)` column exceeded InnoDB's 3072-byte utf8mb4 key limit (`ddl-auto=update`
+  logged the failure as a warning and continued instead of failing loudly). The entity column was
+  fixed to `VARCHAR(512)` at the time, which resolved it on MySQL too. Kept here only as a reminder
+  of the failure *mode* — MySQL's `ddl-auto=update` can silently skip a DDL statement it can't apply,
+  so a missing index doesn't necessarily surface as an error. Postgres's btree index limits work
+  differently and this project's fresh Postgres database has no pre-existing `tickets` table for the
+  old failure to have happened against.
+- **(Historical, MySQL-only) `delta_cycles.status` was a native MySQL `ENUM`, which
+  `ddl-auto=update` could not widen when `DECLINED` was added as a fourth value** — had to be applied
+  manually via `ALTER TABLE delta_cycles MODIFY COLUMN status ENUM(...) NOT NULL;`.
+- **The same problem class exists on Postgres too, just via a different mechanism — corrected after
+  first (wrongly) claiming this was MySQL-only.** `@Enumerated(EnumType.STRING)` maps to a plain
+  `VARCHAR` on Postgres (confirmed: no native Postgres `ENUM` type is used), but Hibernate 6 also
+  auto-generates a `CHECK` constraint enumerating every allowed value for **every** enum-mapped
+  column in the schema — confirmed via `pg_constraint` right after the migration: all 18 of them,
+  not just `delta_cycles.status`. `ddl-auto=update` only ever adds schema elements; it does not
+  alter an existing `CHECK` constraint (same conservative behavior that caused the MySQL problem
+  above). So adding a new value to **any** enum in this codebase (`ItemStatus`, `AppUserRole`,
+  `SignOffStatus`, `TicketStatus`, `ProductType`, `PairStatus`, `SignOffRole`, `DeltaType`,
+  `DeltaCycleStatus`, …) will likely need a manual
+  `ALTER TABLE <table> DROP CONSTRAINT <table>_<column>_check, ADD CONSTRAINT <table>_<column>_check
+  CHECK (<column> IN (...));` in any environment with an existing table — not verified end-to-end
+  (would need an actual add-a-value-and-restart cycle to confirm `ddl-auto=update` really never
+  touches it), but consistent with Hibernate's documented additive-only schema-update behavior.
+  Not needed for a brand-new database: the constraint is created with every current value already
+  included the first time the table is created.
 
 ## Correctness (reported, not yet fixed)
 

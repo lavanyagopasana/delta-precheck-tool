@@ -26,7 +26,7 @@ a real running instance) and "add the first tests for an area" (a separate, opt-
 3. Priority order (don't scatter effort evenly): `SignOffService` → `PreCheckSubmissionService.submit`
    → `AppUserService` → `ProjectService.buildSummary`.
 4. Backend: JUnit 5 + Mockito, mock repositories, never touch the real `delta_migration_tracker`
-   MySQL database from a test.
+   PostgreSQL database from a test.
 5. Frontend: Jest + React Testing Library (already bundled via `react-scripts test`), mock
    `frontend/src/api/client.js` at the module boundary rather than `axios` directly.
 6. Confirm any regression test actually fails on the pre-fix code before considering it done —

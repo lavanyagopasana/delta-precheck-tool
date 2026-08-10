@@ -5,7 +5,7 @@
 - All backend routes are under `/api/**` (except `/uploads/**`, served statically by `WebConfig`).
 - Frontend's single source of truth for the API surface is `frontend/src/api/client.js` —
   `API_BASE`/`FILE_BASE` derive from `REACT_APP_API_BASE` (set in `frontend/.env.local` or the
-  deployed build's env), falling back to `http://localhost:8080` for local dev.
+  deployed build's env), falling back to `http://localhost:8081` for local dev.
 - CORS (`SecurityConfig.corsConfigurationSource`) reads a comma-separated origin list from
   `app.allowed-origins`/`APP_ALLOWED_ORIGINS`, defaulting to `http://localhost:3000`. Add the
   deployed frontend's origin via that env var before it will work against a deployed backend.

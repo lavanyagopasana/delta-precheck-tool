@@ -122,7 +122,7 @@ components/
 ## Config files
 
 ```
-backend/pom.xml                          Spring Boot 3.3.4, Java 21, MySQL + (unused) Postgres driver, Lombok
+backend/pom.xml                          Spring Boot 3.3.4, Java 21, PostgreSQL driver, Lombok
 backend/src/main/resources/application.properties   all env-var-overridable defaults; see CLAUDE.md's table
 frontend/package.json                    React 18, MSAL, axios, react-router-dom, CRA (react-scripts 5)
 frontend/.env.local (gitignored)         REACT_APP_AZURE_CLIENT_ID + REACT_APP_AZURE_REDIRECT_URI

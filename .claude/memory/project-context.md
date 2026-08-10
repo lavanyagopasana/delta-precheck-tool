@@ -29,7 +29,7 @@ each tied to a real ticket number (the sidebar calls this feature "Jira Tickets 
   `AZURE_ALLOWED_EMAIL_DOMAIN` is blank (no domain restriction), both explicitly "temporarily off
   while testing" per `application.properties`'s own comments. Don't assume these represent the
   intended production posture — they're a deliberate loosening for active development.
-- The app is being actively developed and manually tested against a real local MySQL database with
+- The app is being actively developed and manually tested against a real local PostgreSQL database with
   real-looking (if not real) project/server data — see `.claude/memory/progress.md` for what's been
   touched recently.
 

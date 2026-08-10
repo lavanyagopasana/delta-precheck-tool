@@ -2,6 +2,52 @@
 
 Why things are the way they are. Newest first.
 
+## 2026-08-10 — Migrated from MySQL to PostgreSQL
+
+Swapped the database engine at the user's explicit request. Checked first whether this was safe to
+do as a pure driver/config swap: both hand-written `@Query`s (`TicketRepository`) are plain portable
+JPQL with no native SQL, and the one raw `columnDefinition` fragment (`WorkspaceCombination
+.currentCycleNumber`, `"int default 1"`) is ANSI-compatible with both engines — so no entity or
+query changes were needed, only `pom.xml` (`mysql-connector-j` → `org.postgresql:postgresql`) and
+`application.properties` (JDBC URL/driver/default credentials, dropped the now-unnecessary
+`spring.jpa.database-platform` line the same way the MySQL one already logged a deprecation warning
+about).
+
+**Corrected claim, checked against the real running database:** first assumed the
+`delta_cycles.status` native-MySQL-`ENUM` problem (Hibernate's `ddl-auto=update` couldn't widen it
+when `DECLINED` was added) simply didn't exist on Postgres, since `@Enumerated(EnumType.STRING)`
+maps to a plain `VARCHAR` here with no native enum type. That's true but incomplete — after actually
+installing Postgres locally and inspecting `pg_constraint`, Hibernate 6 turns out to auto-generate a
+`CHECK` constraint enumerating every allowed value for all 18 enum-mapped columns in this schema, and
+`ddl-auto=update` is exactly as unable to widen an existing `CHECK` constraint as it was unable to
+widen MySQL's native `ENUM`. Same problem class, different mechanism — see the corrected
+`docs/KNOWN_LIMITATIONS.md` entry. Caught this specifically by verifying with `psql` instead of
+trusting the first (wrong) assumption.
+
+**Real operational difference to know about:** Postgres has no `createDatabaseIfNotExist`-style
+connection-string flag like MySQL did — the target database must already exist
+(`createdb delta_migration_tracker`) before the app's first connection anywhere this runs, including
+a fresh local setup. Updated `CLAUDE.md`, `README.md`, and this project's other `.claude/` docs that
+referenced MySQL specifically.
+
+**Verified end-to-end, not just compiled:** installed PostgreSQL 16 locally
+(`winget install PostgreSQL.PostgreSQL.16`), created the `delta_migration_tracker` database, and
+confirmed the backend actually starts against it — real `HikariPool` → `PgConnection`, all 13 tables
+created fresh by `ddl-auto=update`, port 8081 live, `/api/tickets/open-count` correctly returning 401
+unauthenticated (proves the security filter chain initialized, not just that the process is up).
+This same verification pass also caught two more things that needed fixing, not just the tracked
+`application.properties`: a gitignored `backend/application.properties` local override still had the
+old MySQL URL (Spring's `file:./` property-source precedence makes it outrank the tracked config, so
+it silently would have kept connecting to MySQL, or after this fix, failed outright since
+`mysql-connector-j` is no longer even on the classpath) — and
+`backend/src/test/resources/application-test.properties`'s H2 test database was running in
+`MODE=MySQL` compatibility mode (now `MODE=PostgreSQL`).
+
+**Not migrated:** this local dev machine's existing MySQL data (the `delta_migration_tracker`
+database, including real-looking project/server/combination test data) does not carry over
+automatically — the app now points at a fresh, empty Postgres database. No data-migration script
+was requested or written.
+
 ## 2026-07-30 — Corrected Azure app registration (the 2026-07-27 pair was stale)
 
 The client ID `a55e053f-bfe9-4b4a-8b74-362649f82cf0` / tenant ID

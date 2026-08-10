@@ -29,7 +29,7 @@ machine is worth more than shallow tests across every DTO.
   constructor (every service in this repo uses constructor injection — no reflection needed).
 - No `@SpringBootTest` unless genuinely testing Spring wiring itself (e.g. `SecurityConfig`'s
   filter chain) — prefer plain unit tests for service logic.
-- **Never point a test at the real `delta_migration_tracker` MySQL database.** If a persistence
+- **Never point a test at the real `delta_migration_tracker` PostgreSQL database.** If a persistence
   test is truly needed, that requires adding an H2 test dependency to `pom.xml` first (not present
   today) and scoping it with `@DataJpaTest` — treat adding that dependency as a deliberate, visible
   change, not something to slip in silently.

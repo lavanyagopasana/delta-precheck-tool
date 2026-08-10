@@ -50,7 +50,12 @@ Inside any Claude Code session, run `/gstack-upgrade`.
 ## Tech Stack
 
 - **Backend**: Java 21, Spring Boot 3.3.4 (Web, Data JPA, Validation, Security, OAuth2 Resource Server, Mail), Maven, Lombok, Hibernate (`ddl-auto=update` — **no Flyway/Liquibase**, schema evolves by annotation changes only)
-- **Database**: MySQL 8 (`mysql-connector-j`). A `postgresql` driver is also on the classpath but unused today — leftover from an earlier deploy target consideration, not an active dual-DB setup.
+- **Database**: PostgreSQL (`org.postgresql:postgresql`). Migrated from MySQL 8 on 2026-08-10 — no
+  MySQL-specific SQL existed anywhere (both hand-written `@Query`s are plain portable JPQL, and the
+  one raw `columnDefinition` fragment is ANSI-compatible), so the swap was driver + connection
+  config only, no entity/query changes. Unlike MySQL's connection string, Postgres has no
+  `createDatabaseIfNotExist` equivalent — the target database must exist before first connect (see
+  the `DB_URL` row below).
 - **Frontend**: React 18 (Create React App / `react-scripts` 5), `react-router-dom` 6, `axios`, `@azure/msal-browser` + `@azure/msal-react`
 - **Auth**: Microsoft Entra ID (Azure AD), single-tenant app registration (client ID + tenant ID are baked into `application.properties` as defaults — see Environment Variables). The frontend deliberately sends the **ID token** (not an access token) as the bearer credential — see `frontend/src/auth/getAccessToken.js` for why. Auth can still be disabled entirely by explicitly overriding `AZURE_CLIENT_ID` to blank (the backend then runs fully open, `permitAll`, no login screen) — but that's no longer the default state.
 - **File storage**: local filesystem (`backend/uploads`), served at `/uploads/**`
@@ -151,9 +156,11 @@ frontend/src/
 
 | Variable | Default | Notes |
 |---|---|---|
-| `DB_URL` | `jdbc:mysql://localhost:3306/delta_migration_tracker?...` | DB auto-created on first connect |
-| `DB_USERNAME` | `root` | |
-| `DB_PASSWORD` | `root` | |
+| `SERVER_PORT` (or `PORT`) | `8081` | Listen port. `PORT` is checked second, so a PaaS that injects it works unchanged |
+| `APP_FIRST_ADMIN_EMAIL` | `lavanya.gopasana@cloudfuze.com` | The single `ADMIN` row `AdminBootstrap` seeds **only** into a completely empty `app_users` table. Set this per deployment; blank skips seeding (and logs a warning, since nobody can then sign in) |
+| `DB_URL` | `jdbc:postgresql://localhost:5432/delta_migration_tracker` | Database must already exist — run `createdb delta_migration_tracker` once; tables/columns are still created automatically |
+| `DB_USERNAME` | `postgres` | |
+| `DB_PASSWORD` | `postgres` | |
 | `AZURE_CLIENT_ID` | `4145c1b2-a596-4d84-bede-6e2ca276c9c7` | Baked in; override only to test a different app registration or to disable auth (set blank) |
 | `AZURE_TENANT_ID` | `807d6772-847c-40e2-9bec-e2c930b3a42e` | Single-tenant — only accounts in this Entra ID tenant can authenticate at all |
 | `AZURE_ALLOWED_EMAIL_DOMAIN` | *(blank)* | Currently unset for testing; set to `cloudfuze.com` to restrict sign-in |
@@ -165,13 +172,13 @@ frontend/src/
 | (frontend) `REACT_APP_AZURE_CLIENT_ID` | — | Set in `frontend/.env.local`, same value as backend's `AZURE_CLIENT_ID` |
 | (frontend) `REACT_APP_AZURE_TENANT_ID` | — | Set in `frontend/.env.local`, same value as backend's `AZURE_TENANT_ID` |
 | (frontend) `REACT_APP_ALLOWED_EMAIL_DOMAIN` | *(blank)* | |
-| (frontend) `REACT_APP_API_BASE` | `http://localhost:8080` | Backend origin, no `/api` suffix, no trailing slash — set for a deployed backend |
+| (frontend) `REACT_APP_API_BASE` | `http://localhost:8081` | Backend origin, no `/api` suffix, no trailing slash — set for a deployed backend |
 
 ## Common Commands
 
 ```bash
 # Backend (run from backend/)
-mvn spring-boot:run                    # start API on :8080 — auth config is now baked in, no env var needed
+mvn spring-boot:run                    # start API on :8081 — auth config is now baked in, no env var needed
 mvn -o -q compile                      # fast offline compile check
 
 # Frontend (run from frontend/)

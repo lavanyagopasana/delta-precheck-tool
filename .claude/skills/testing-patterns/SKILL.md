@@ -40,11 +40,11 @@ In priority order (see `.claude/rules/testing-standard.md` for the full rational
   `@Mock` the `*Repository` dependencies, construct the service under test with the real
   constructor (this codebase uses constructor injection everywhere, which makes this
   straightforward — no need for `@InjectMocks` reflection magic, just call the constructor).
-- **There is no test database.** Don't point a test at the real `delta_migration_tracker` MySQL
+- **There is no test database.** Don't point a test at the real `delta_migration_tracker` PostgreSQL
   instance (it likely has real-looking project/server data from manual testing). If a real
   persistence-layer test is needed, use `@DataJpaTest` with the in-memory H2 driver (not currently
   a dependency — it would need to be added to `pom.xml` under `test` scope) rather than the real
-  MySQL connection.
+  PostgreSQL connection.
 - Mirror the main package path exactly under `backend/src/test/java/...` — this directory doesn't
   exist yet; creating it is part of writing the first test, not a separate setup step.
 

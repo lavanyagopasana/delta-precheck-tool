@@ -12,7 +12,7 @@ initiated.
 - **Backend**: Java 21, Spring Boot 3.3.4 (Web, Data JPA, Validation, Security, OAuth2 Resource
   Server, Mail), Maven, Lombok, Hibernate (`ddl-auto=update` — no migration tool; schema evolves by
   editing `@Entity` annotations)
-- **Database**: MySQL 8
+- **Database**: PostgreSQL
 - **Frontend**: React 18 (Create React App), `react-router-dom`, `axios`, `@azure/msal-browser` +
   `@azure/msal-react`
 - **Auth**: Microsoft Entra ID (Azure AD), single-tenant app registration
@@ -23,9 +23,10 @@ initiated.
 
 - JDK 21+ and Maven (`mvn -version`)
 - Node.js 18+ and npm
-- MySQL 8 running locally (a `MySQL80` Windows service is common on dev machines — check with
-  `sc query MySQL80` on Windows). No database needs to be created manually; the app creates
-  `delta_migration_tracker` automatically on first connect.
+- PostgreSQL running locally, with the `delta_migration_tracker` database already created —
+  unlike MySQL, Postgres has no "create on first connect" option, so run `createdb
+  delta_migration_tracker` (or `psql -c "CREATE DATABASE delta_migration_tracker;"`) once before
+  starting the app for the first time. Tables/columns are still created automatically after that.
 
 ## Configuration
 
@@ -35,9 +36,11 @@ by environment variable — nothing needs editing for local dev, the defaults be
 
 | Property | Env var | Local default | Set for production |
 |---|---|---|---|
-| JDBC URL | `DB_URL` | `jdbc:mysql://localhost:3306/delta_migration_tracker?...` | your real DB host/name |
-| DB username | `DB_USERNAME` | `root` | real DB user |
-| DB password | `DB_PASSWORD` | `root` | real DB password (secret) |
+| JDBC URL | `DB_URL` | `jdbc:postgresql://localhost:5432/delta_migration_tracker` | your real DB host/name |
+| Listen port | `SERVER_PORT` (or `PORT`) | `8081` | as needed — a PaaS-injected `PORT` is honoured automatically |
+| First admin seeded on an empty DB | `APP_FIRST_ADMIN_EMAIL` | `lavanya.gopasana@cloudfuze.com` | the admin who should own Manage Access in *that* environment |
+| DB username | `DB_USERNAME` | `postgres` | real DB user |
+| DB password | `DB_PASSWORD` | `postgres` | real DB password (secret) |
 | CORS allowlist for `/api/**` | `APP_ALLOWED_ORIGINS` | `http://localhost:3000` | your deployed frontend origin (comma-separate for more than one) |
 | Frontend URL (used in email links) | `APP_FRONTEND_URL` | `http://localhost:3000` | your deployed frontend URL |
 | Azure app (client) ID | `AZURE_CLIENT_ID` | baked-in default | usually leave as-is — it's a public identifier, not a secret |
@@ -56,7 +59,7 @@ Frontend settings are build-time env vars (Create React App) in `frontend/.env.l
 
 | Env var | Local default | Set for production |
 |---|---|---|
-| `REACT_APP_API_BASE` | `http://localhost:8080` | your deployed backend URL, no `/api` suffix |
+| `REACT_APP_API_BASE` | `http://localhost:8081` | your deployed backend URL, no `/api` suffix |
 | `REACT_APP_AZURE_CLIENT_ID` | — | same value as backend's `AZURE_CLIENT_ID` |
 | `REACT_APP_AZURE_TENANT_ID` | — | same value as backend's `AZURE_TENANT_ID` |
 | `REACT_APP_AZURE_REDIRECT_URI` | `http://localhost:3000` | your deployed frontend URL — must also be registered as a redirect URI on the Azure app registration |
@@ -69,13 +72,13 @@ cd backend
 mvn spring-boot:run
 ```
 
-The API starts on **http://localhost:8080**. Auth is already configured (client/tenant ID are
+The API starts on **http://localhost:8081**. Auth is already configured (client/tenant ID are
 baked into `application.properties` as defaults) — no environment variable is required to get a
 working login locally. The database starts empty; an admin user is seeded automatically on first
 run against an empty `app_users` table (`AdminBootstrap`).
 
 Uploaded evidence files are stored under `backend/uploads` and served at
-`http://localhost:8080/uploads/<file>`.
+`http://localhost:8081/uploads/<file>`.
 
 ## Run the frontend
 
@@ -86,7 +89,7 @@ npm start
 ```
 
 The app opens on **http://localhost:3000** and talks to the backend at
-`http://localhost:8080/api` by default (override with `REACT_APP_API_BASE`).
+`http://localhost:8081/api` by default (override with `REACT_APP_API_BASE`).
 
 ## Sign in with Microsoft
 

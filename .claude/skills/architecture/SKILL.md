@@ -67,7 +67,5 @@ rules) on top of the coarse role check? See `.claude/rules/security-rules.md`.
 
 - `APPROVAL_SEQUENCE` is duplicated (`SignOffService`, `ProjectService`).
 - `normalizeHeader` (CSV header detection) is duplicated (`AppUserService`, `WorkspacePairService`).
-- `postgresql` driver is on the backend classpath but unused (MySQL is the actual database) —
-  likely leftover from an earlier deploy-target consideration, not an active dual-DB setup.
 - CORS is hardcoded to `http://localhost:3000` (`WebConfig`) — no environment-based configuration
   yet for a deployed frontend origin.

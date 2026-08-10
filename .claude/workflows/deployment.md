@@ -46,9 +46,11 @@ variable or removing the key from `.env.local` does.
    in a terminal") — a process manager/container/PaaS env-var configuration, not a manual export.
    Getting this wrong doesn't fail loudly (see `.claude/rules/security-rules.md`) — verify
    `/api/me` returns a real populated response post-deploy, don't just confirm the app loads.
-4. **Database** — currently assumes a local MySQL at `localhost:3306` with `root`/`root` by
-   default. A real deploy needs real `DB_URL`/`DB_USERNAME`/`DB_PASSWORD` and a real MySQL
-   instance reachable from wherever the backend runs. `Hibernate ddl-auto=update` will create the
+4. **Database** — currently assumes a local PostgreSQL at `localhost:5432` with `postgres`/`postgres`
+   by default. A real deploy needs real `DB_URL`/`DB_USERNAME`/`DB_PASSWORD` and a real PostgreSQL
+   instance reachable from wherever the backend runs — and unlike MySQL, the target database must
+   already exist (`createdb delta_migration_tracker`) before the app's first connection.
+   `Hibernate ddl-auto=update` will create the
    schema on first connect — same as local — but there's no rollback story if a schema change
    goes wrong in production (see `.claude/agents/architect.md`'s schema-change escalation rule).
 5. **SMTP** — `spring.mail.username` defaults to `leo@fuzebot.io`, password blank (sending
