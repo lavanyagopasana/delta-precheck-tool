@@ -39,6 +39,9 @@ public class EmailService {
     @Value("${spring.mail.username:}")
     private String fromEmail;
 
+    @Value("${spring.mail.password:}")
+    private String mailPassword;
+
     @Value("${app.frontend-url:http://localhost:3000}")
     private String frontendUrl;
 
@@ -433,7 +436,7 @@ public class EmailService {
                 .filter(StringUtils::hasText)
                 .toArray(String[]::new);
 
-        if (!StringUtils.hasText(fromEmail) || recipients.length == 0) {
+        if (!StringUtils.hasText(fromEmail) || !StringUtils.hasText(mailPassword) || recipients.length == 0) {
             log.warn("Email not sent (SMTP not configured, or no recipient): subject=\"{}\"", subject);
             return;
         }
