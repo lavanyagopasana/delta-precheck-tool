@@ -131,10 +131,21 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
   const [dragOver, setDragOver] = useState(false);
   const [notesInput, setNotesInput] = useState(item.notes || "");
   const showToast = useToast();
+  const notesSaveTimer = useRef(null);
 
   useEffect(() => {
     setNotesInput(item.notes || "");
   }, [item.notes]);
+
+  // Saving only on blur meant the Submit button (which depends on every item's saved item.notes,
+  // not this component's own draft state) stayed hidden until the user clicked elsewhere, even
+  // once every field was actually filled in. Auto-saving shortly after typing stops means it
+  // appears as soon as the form is genuinely complete.
+  useEffect(() => {
+    return () => {
+      if (notesSaveTimer.current) clearTimeout(notesSaveTimer.current);
+    };
+  }, []);
 
   const save = async (patch) => {
     setError(null);
@@ -192,8 +203,25 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
     uploadFile(e.dataTransfer.files[0]);
   };
 
+  const handleNotesChange = (e) => {
+    const value = e.target.value;
+    setNotesInput(value);
+    if (locked) return;
+    if (notesSaveTimer.current) clearTimeout(notesSaveTimer.current);
+    notesSaveTimer.current = setTimeout(() => {
+      const trimmed = value.trim();
+      if (trimmed !== (item.notes || "")) {
+        save({ notes: trimmed });
+      }
+    }, 600);
+  };
+
   const handleNotesBlur = () => {
     if (locked) return;
+    if (notesSaveTimer.current) {
+      clearTimeout(notesSaveTimer.current);
+      notesSaveTimer.current = null;
+    }
     const trimmed = notesInput.trim();
     if (trimmed === (item.notes || "")) return;
     save({ notes: trimmed });
@@ -302,7 +330,7 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
                 className="precheck-note"
                 placeholder="Add a note..."
                 value={notesInput}
-                onChange={(e) => setNotesInput(e.target.value)}
+                onChange={handleNotesChange}
                 onBlur={handleNotesBlur}
                 rows={1}
               />
