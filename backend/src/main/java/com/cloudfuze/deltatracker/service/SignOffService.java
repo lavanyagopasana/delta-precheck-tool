@@ -202,6 +202,10 @@ public class SignOffService {
         // the reopened state, and before this call the live checklist/chain still reflect the declined
         // attempt rather than the fresh one.
         deltaCycleService.recordDeclineAndRollOver(combination, role, actorEmail, trimmedReason, declinedAt);
+        // The rollover resets the live checklist/submission but never touches PairStatus itself --
+        // without this, a combination that had already reached DELTA_READY (or IN_PROGRESS) before
+        // the decline would stay stuck showing that stale status against a checklist that's now blank.
+        combinationService.recomputeStatus(combination);
         notifyOfDecline(combination, role, actorEmail, trimmedReason);
 
         // The live chain no longer exists (rolled over) -- an empty chain correctly reads as "not yet
@@ -391,6 +395,10 @@ public class SignOffService {
         combination.setDeltaInitiatedAt(LocalDateTime.now());
         combination.setDeltaInitiatedBy(requestedBy);
         WorkspaceCombination saved = combinationService.save(combination);
+        // PairStatus only ever gets recomputed on submission/withdrawal/item-edit otherwise, so
+        // without this call a combination sits at IN_PROGRESS (correct while approvals are pending)
+        // forever, even once the chain that just resolved makes it genuinely DELTA_READY.
+        combinationService.recomputeStatus(saved);
 
         // The chain has fully resolved, so this cycle is settled -- freeze what was approved (checklist
         // answers, evidence, and all three sign-off outcomes) into delta_cycles before any of it can be

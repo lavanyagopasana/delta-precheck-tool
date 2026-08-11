@@ -151,13 +151,26 @@ public class WorkspaceCombinationService {
                 || preCheckItemRepository.findByCombinationId(combination.getId()).stream()
                         .anyMatch(item -> item.getStatus() != com.cloudfuze.deltatracker.entity.ItemStatus.NOT_STARTED);
 
-        PairStatus newStatus = status == SubmissionStatus.SUBMITTED
+        // DELTA_READY requires the sign-off chain to have actually fully resolved, not just a
+        // submitted checklist -- this used to flip green the moment the engineer hit Submit, before
+        // any approver had acted, which made the Dashboard's "Delta Ready" figure disagree with its
+        // own Approvals donut on the same page for the exact same combination.
+        PairStatus newStatus = status == SubmissionStatus.SUBMITTED && isFullyApproved(combination.getId())
                 ? PairStatus.DELTA_READY
                 : anyProgress ? PairStatus.IN_PROGRESS : PairStatus.PENDING;
 
         combination.setStatus(newStatus);
         combinationRepository.save(combination);
         serverService.recomputeStatus(combination.getServer());
+    }
+
+    // Mirrors applyReadinessStage's own chain-resolved check (SKIPPED counts as cleared -- it only
+    // appears on QA Lead when Dev Lead decided QA approval wasn't required).
+    private boolean isFullyApproved(Long combinationId) {
+        List<SignOff> chain = signOffRepository.findByCombinationId(combinationId);
+        return APPROVAL_SEQUENCE.stream().allMatch(role -> chain.stream()
+                .anyMatch(s -> s.getRole() == role
+                        && (s.getStatus() == SignOffStatus.APPROVED || s.getStatus() == SignOffStatus.SKIPPED)));
     }
 
     public CombinationReadinessDto getReadiness(Long combinationId) {
