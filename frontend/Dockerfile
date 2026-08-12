@@ -25,6 +25,15 @@ ENV REACT_APP_AZURE_CLIENT_ID=${REACT_APP_AZURE_CLIENT_ID} \
     REACT_APP_ALLOWED_EMAIL_DOMAIN=${REACT_APP_ALLOWED_EMAIL_DOMAIN} \
     REACT_APP_API_BASE=${REACT_APP_API_BASE}
 
+# react-scripts emits a .map next to every bundle and chunk by default, and nginx serves them --
+# the deployed site was publishing all 11, so anyone unauthenticated could reconstruct the whole
+# frontend, including api/client.js's full endpoint list and the role-gating logic in
+# PreCheckPanel/WorkspacePairsPanel. That hands an attacker an inventory of routes and the roles
+# each expects. Not generating them beats blocking .map in nginx: the files never ship at all.
+# If maps are ever needed for error triage, upload them to the error tracker during the build and
+# delete them from build/ before the nginx stage copies it.
+ENV GENERATE_SOURCEMAP=false
+
 RUN npm run build
 
 FROM nginx:alpine AS runtime
