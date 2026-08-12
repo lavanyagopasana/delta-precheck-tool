@@ -460,23 +460,29 @@ function CombinationRow({ server, row, isAdmin, canManage, onSaved }) {
         </div>
         {/* Status chips and actions are separate groups so badges never squeeze against the icon
             buttons when the row wraps on a narrow screen. */}
+        {/* Always render the status group. A combination whose pre-check hasn't been started has no
+            currentDeltaLabel, so the old `label || priorDeltas` guard rendered NOTHING at all -- an
+            empty cell that reads identically to a badge that failed to load, right next to sibling
+            rows that do show one. An explicit muted chip says which it is. */}
         <div className="combo-row-trailing">
-          {(row.summary?.currentDeltaLabel || priorDeltasLabel) && (
-            <div className="combo-row-status">
-              {row.summary?.currentDeltaLabel && (
-                <DeltaBadge
-                  deltaType={row.summary.currentDeltaType}
-                  deltaPhase={row.summary.deltaPhase}
-                  label={row.summary.currentDeltaLabel}
-                />
-              )}
-              {priorDeltasLabel && (
-                <span className="badge delta-done" title="Finished pre-delta cycles">
-                  {priorDeltasLabel}
-                </span>
-              )}
-            </div>
-          )}
+          <div className="combo-row-status">
+            {row.summary?.currentDeltaLabel ? (
+              <DeltaBadge
+                deltaType={row.summary.currentDeltaType}
+                deltaPhase={row.summary.deltaPhase}
+                label={row.summary.currentDeltaLabel}
+              />
+            ) : (
+              <span className="badge gray" title="No Delta cycle in progress -- pre-check not started">
+                Not started
+              </span>
+            )}
+            {priorDeltasLabel && (
+              <span className="badge delta-done" title="Finished pre-delta cycles">
+                {priorDeltasLabel}
+              </span>
+            )}
+          </div>
           <div className="combo-row-actions" onClick={(e) => e.stopPropagation()}>
           <button className="btn icon-btn secondary" title="Download CSV" aria-label="Download CSV" onClick={handleDownload}>
             <DownloadIcon style={{ marginRight: 0 }} />

@@ -164,8 +164,9 @@ export const removeTicket = (id) => client.delete(`/tickets/${id}`).then((r) => 
 
 export const approveSignOff = (combinationId, role, approverEmail, qaRequired) =>
   client.post(`/combinations/${combinationId}/signoffs/${role}/approve`, { approverEmail, qaRequired }).then((r) => r.data);
-// reason is required by the backend -- a decline bounces the chain back a step, and without one the
-// person it lands on has no idea what to fix.
+// reason is required by the backend -- a decline ends this Delta cycle and reopens a blank pre-check
+// for rework (it does NOT hand back to the previous approver), so without a reason whoever refills
+// the checklist has no idea what to fix.
 export const declineSignOff = (combinationId, role, reason, approverEmail) =>
   client
     .post(`/combinations/${combinationId}/signoffs/${role}/decline`, { approverEmail, reason })

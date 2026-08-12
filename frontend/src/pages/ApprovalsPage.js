@@ -183,8 +183,16 @@ function ActionsCell({ approval, onActed }) {
 
       {rejecting && (
         <Modal title={`Reject as ${roleLabel}?`} onClose={() => setRejecting(false)} width={480}>
+          {/* "back a step" was wrong and understated this badly: declining does not return the
+              combination to the previous approver, it ends the whole Delta cycle and reopens a
+              BLANK pre-check (see SignOffService.decline -> DeltaCycleService.recordDeclineAndRollOver,
+              which resets every checklist item, clears submittedBy/At and deletes the live sign-off
+              chain). The answers and evidence survive in the cycle history, but somebody has to fill
+              the entire checklist in again -- so the copy has to say so before the click, not after. */}
           <p style={{ fontSize: 13.5, color: "var(--color-text-muted)", marginTop: 0 }}>
-            This sends <strong>{label}</strong> back a step for rework.
+            This ends the current Delta cycle for <strong>{label}</strong> and reopens a{" "}
+            <strong>blank</strong> pre-check. The current answers and evidence stay in the cycle
+            history for reference, but the whole checklist has to be filled in again.
           </p>
           <label
             htmlFor="reject-reason"
