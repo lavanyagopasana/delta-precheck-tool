@@ -1,0 +1,188 @@
+# Edge-proxy reference config — the five findings that CANNOT be fixed from this repo
+#
+# Context: the container built from frontend/Dockerfile serves ONLY the static SPA. Something
+# upstream of it terminates TLS and routes /api and /uploads to the Spring backend. That upstream
+# proxy's config lives outside this repository, so the issues below were found by QA against
+# https://deltaprechecks.cftools.live on 2026-08-12 but could not be fixed in a commit.
+#
+# Apply the equivalent of this file to whatever terminates TLS (nginx, Traefik, Caddy, an ingress
+# controller, a cloud LB). Line numbers/severities refer to .gstack/qa-reports/.
+#
+# HOW TO VERIFY EACH FIX IS LIVE is at the bottom of this file.
+
+server {
+    listen 443 ssl;
+    # ---------------------------------------------------------------------------------------------
+    # PERF-003 (Medium) — HTTP/1.1 only was negotiated; no HTTP/2.
+    # Measured: 11 assets on a cold load, ~270ms connect + ~300ms TLS handshake. HTTP/1.1 caps
+    # parallelism at 6 connections per host and has no multiplexing, so those round trips serialize.
+    # ---------------------------------------------------------------------------------------------
+    http2 on;                      # nginx >= 1.25.1; older: `listen 443 ssl http2;`
+
+    server_name deltaprechecks.cftools.live;
+
+    ssl_certificate     /etc/letsencrypt/live/deltaprechecks.cftools.live/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/deltaprechecks.cftools.live/privkey.pem;
+
+    # Already correct in production — TLS 1.0/1.1 were verified rejected, 1.2/1.3 accepted. Kept
+    # here so applying this file doesn't regress it.
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # =============================================================================================
+    # BUG-010 (HIGH) — THE MOST IMPORTANT LINE IN THIS FILE
+    #
+    # nginx's default client_max_body_size is 1m, and that default was live in front of /api while
+    # the application advertises and enforces 20MB
+    # (spring.servlet.multipart.max-file-size=20MB). Measured boundary on the deployed site:
+    #
+    #     1000 KB -> 200 OK
+    #     1024 KB -> 413 Request Entity Too Large   <-- raw nginx HTML, not the app's JSON envelope
+    #
+    # A 20x gap between promise and reality. Pre-check evidence is normally a screenshot (1-5MB) or
+    # a screen recording, so in practice most real evidence uploads failed -- and because the body
+    # is HTML rather than the uniform {"timestamp","status","error","message"} shape, the frontend
+    # could not even render a useful error.
+    #
+    # This MUST stay >= spring.servlet.multipart.max-file-size. If you raise the Spring limit,
+    # raise this too, or the app's limit silently becomes a fiction again.
+    # =============================================================================================
+    client_max_body_size 20m;
+
+    # ---------------------------------------------------------------------------------------------
+    # BUG-003 (Medium) — the deployed CSP was permissive enough to be near-inert.
+    #
+    # It was:
+    #   script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https:
+    #   connect-src 'self' ws: wss: https:
+    #
+    # A bare `https:` on script-src permits loading a script from ANY origin on the internet, and
+    # 'unsafe-eval' + 'unsafe-inline' remove most of what remains. connect-src `https:` likewise
+    # allows exfiltration to any host. For an app whose whole job is gating migration approvals,
+    # that is worth tightening.
+    #
+    # Below drops the wildcards to the origins actually used and removes 'unsafe-eval'.
+    # 'unsafe-inline' on script-src is KEPT deliberately: react-scripts emits an inline bootstrap,
+    # so removing it needs a nonce and is a larger change than this file should make silently.
+    #
+    # !! connect-src is the one directive that can break sign-in. MSAL talks to
+    # !! login.microsoftonline.com. After applying this, RE-TEST A REAL SIGN-IN before calling it
+    # !! done -- a CSP that blocks the token endpoint locks everyone out of the app.
+    # ---------------------------------------------------------------------------------------------
+    add_header Content-Security-Policy "\
+default-src 'self'; \
+script-src 'self' 'unsafe-inline' blob:; \
+style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; \
+img-src 'self' data: blob:; \
+font-src 'self' data: https://fonts.gstatic.com; \
+connect-src 'self' https://login.microsoftonline.com https://login.windows.net; \
+worker-src 'self' blob:; \
+object-src 'none'; \
+frame-ancestors 'none'; \
+base-uri 'self'" always;
+
+    # ---------------------------------------------------------------------------------------------
+    # BUG-004 (Low) — every response carried X-Frame-Options TWICE with conflicting values:
+    #     X-Frame-Options: DENY         (Spring Security's default, on /api responses)
+    #     X-Frame-Options: SAMEORIGIN   (added here, at the edge)
+    # Browsers handle a duplicated X-Frame-Options inconsistently and some ignore it entirely when
+    # it conflicts, which silently drops clickjacking protection.
+    #
+    # Fix: ONE owner. `frame-ancestors 'none'` in the CSP above supersedes X-Frame-Options entirely
+    # in every browser that matters, so do NOT re-add an X-Frame-Options header here. Leaving
+    # Spring's own DENY in place is fine -- it's then the only one, and it agrees with the CSP.
+    # ---------------------------------------------------------------------------------------------
+
+    # Already correct in production; kept so applying this file doesn't regress it.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+    add_header X-Content-Type-Options "nosniff" always;
+
+    # ---------------------------------------------------------------------------------------------
+    # BUG-008 (Low) — no rate limiting: 20 rapid requests to /api/me all returned 401 with no
+    # throttling or 429. Sign-in is delegated to Entra ID so there is no password to brute-force,
+    # which is why this is Low -- but each rejected request still costs JWT-validation CPU and
+    # there is no protection against a request flood.
+    # `nodelay` so legitimate bursts (a dashboard fanning out several calls on load) aren't queued.
+    # ---------------------------------------------------------------------------------------------
+    limit_req zone=api_limit burst=40 nodelay;
+    limit_req_status 429;
+
+    location /api/ {
+        proxy_pass http://backend:8081;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Evidence uploads can be slow on a poor connection; don't cut them off mid-body.
+        proxy_request_buffering off;
+        proxy_read_timeout 120s;
+    }
+
+    # Evidence attachments. Same backend, and note this path is deliberately permitAll in
+    # SecurityConfig -- the filenames are unguessable UUIDs, which is what stands in for auth here.
+    location /uploads/ {
+        proxy_pass http://backend:8081;
+        proxy_set_header Host $host;
+    }
+
+    location / {
+        proxy_pass http://frontend:80;
+        proxy_set_header Host $host;
+    }
+}
+
+# limit_req zone must be declared at http{} level, not inside server{}.
+# 20r/s per IP is generous for a tool with a handful of internal users.
+#   limit_req_zone $binary_remote_addr zone=api_limit:10m rate=20r/s;
+
+
+# =================================================================================================
+# VERIFY AFTER APPLYING — every one of these was a real observed failure, so check all of them.
+# =================================================================================================
+#
+# BUG-010 — the 20MB limit is real (this is the one that actually unblocks users):
+#   head -c 5000000 /dev/urandom > /tmp/5mb.bin
+#   curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" \
+#        -F file=@/tmp/5mb.bin https://deltaprechecks.cftools.live/api/upload
+#   # expect 200, NOT 413
+#
+# PERF-003 — HTTP/2 negotiated:
+#   curl -s -o /dev/null -w '%{http_version}\n' https://deltaprechecks.cftools.live/
+#   # expect 2, not 1.1
+#
+# BUG-004 — X-Frame-Options appears at most once:
+#   curl -sI https://deltaprechecks.cftools.live/api/me | grep -ci x-frame-options
+#   # expect 0 or 1, never 2
+#
+# BUG-003 — no wildcards left in script-src/connect-src:
+#   curl -sI https://deltaprechecks.cftools.live/ | tr ';' '\n' | grep -E 'script-src|connect-src'
+#   THEN SIGN IN WITH A REAL ACCOUNT. A broken connect-src fails only at the token exchange,
+#   which no header check will catch.
+#
+# BUG-008 — flooding gets throttled:
+#   for i in $(seq 1 80); do curl -s -o /dev/null -w '%{http_code} ' \
+#     https://deltaprechecks.cftools.live/api/me; done; echo
+#   # expect some 429s past the burst
+#
+# Also confirm the repo-side fixes landed (commits abca452 / bfe78c2 / 83b643a):
+#   curl -sI -H 'Accept-Encoding: gzip' \
+#     https://deltaprechecks.cftools.live/static/js/main.<hash>.js | grep -i content-encoding
+#   # expect: Content-Encoding: gzip   (was absent -- 486KB/71% of every cold load wasted)
+#   curl -s -o /dev/null -w '%{http_code}\n' \
+#     https://deltaprechecks.cftools.live/static/js/main.<hash>.js.map      # expect 404
+#   curl -s -o /dev/null -w '%{http_code}\n' \
+#     https://deltaprechecks.cftools.live/uploads/does-not-exist.png        # expect 404, not 500
+#
+# =================================================================================================
+# NOT a proxy concern, but verify before the next redeploy — potential DATA LOSS
+# =================================================================================================
+# backend/Dockerfile sets APP_UPLOAD_DIR=/data/uploads and its comment references a
+# docker-compose.yml `backend-uploads` volume -- but no docker-compose.yml, k8s manifest or any
+# other orchestration file exists in this repository, so whether /data/uploads is actually a
+# persistent volume is UNVERIFIED.
+#
+#   docker inspect <backend-container> --format '{{json .Mounts}}'
+#
+# If nothing mounts to /data/uploads, every evidence file is erased on each redeploy. Postgres is
+# external so evidence_file_path rows SURVIVE -- leaving pre-checks that display an attached
+# filename whose link 404s, with no reconciliation job to detect the mismatch. Only the path is in
+# the database; the bytes live solely on that filesystem.

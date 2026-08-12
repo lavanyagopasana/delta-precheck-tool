@@ -60,29 +60,51 @@ Inside any Claude Code session, run `/gstack-upgrade`.
 - **Auth**: Microsoft Entra ID (Azure AD), single-tenant app registration (client ID + tenant ID are baked into `application.properties` as defaults — see Environment Variables). The frontend deliberately sends the **ID token** (not an access token) as the bearer credential — see `frontend/src/auth/getAccessToken.js` for why. Auth can still be disabled entirely by explicitly overriding `AZURE_CLIENT_ID` to blank (the backend then runs fully open, `permitAll`, no login screen) — but that's no longer the default state.
 - **File storage**: local filesystem (`backend/uploads`), served at `/uploads/**`
 - **Email**: SMTP via Spring Mail, defaults to Office 365's relay (`smtp.office365.com`)
-- **Tests**: none exist yet in either backend (`spring-boot-starter-test` is on the classpath but `backend/src/test/` doesn't exist) or frontend (no `*.test.js` files). See `.claude/rules/testing-standard.md` before writing the first ones.
-- **CI/CD**: none configured (no `.github/workflows`). This also isn't a git repository yet (no `.git/`) — see `.claude/memory/decisions.md`.
+- **Tests**: a real suite exists on both sides — **backend 22 files / 156 tests** (`mvn -o test`, JUnit 5 + Mockito + `@SpringBootTest`, H2 via `application-test.properties`) and **frontend 4 files / 26 tests** (`CI=true npx react-scripts test --watchAll=false`, Jest + React Testing Library). Both were green as of 2026-08-12. Note the characterization gate: `EndpointCharacterizationTest` STRICT-compares endpoint JSON against committed golden files in `backend/src/test/resources/snapshots/`. When you intentionally add a DTO field, that test fails with `Unexpected: <field>` — delete the affected snapshot, re-run to regenerate the baseline (it fails loudly the first time by design), **review the diff to confirm it's purely additive**, then re-run to lock it in.
+- **CI/CD**: none configured (no `.github/workflows`), so nothing runs those suites automatically — run both locally before opening a PR.
 
 ## Architecture Summary
 
 ```
-Project (1) ──< Server (N) ──< WorkspacePair (N)      [CSV-imported source/destination rows, no own status]
+Project (1) ──< Server (N) ──< WorkspaceCombination (N)   ["Teams to Slack" — the real unit of work]
+                     │                  │
+                     │                  ├──< PreCheckItem (N)        [checklist, per COMBINATION]
+                     │                  ├──1 PreCheckSubmission      [NOT_STARTED → SUBMITTED]
+                     │                  ├──< SignOff (3: MM, Dev, QA) [chain, auto-created on submit]
+                     │                  └──< DeltaCycle (N)          [immutable per-cycle history]
                      │
-                     ├──< PreCheckItem (N)              [flat server-wide checklist]
-                     ├──1 PreCheckSubmission            [NOT_STARTED → DRAFT → SUBMITTED, one per server]
-                     └──< SignOff (3: MM, Dev, QA)      [sequential chain, auto-created on submit]
+                     └──< WorkspacePair (N)   [CSV-imported rows; FK is to SERVER, and the owning
+                                               combination is matched by NAME string, not a FK]
 
 AppUser (email → role)  ── independent of Azure AD identity; drives all authorization
 ```
 
-Submitting a server's pre-check (`PreCheckSubmissionService.submit`) requires every item to have a
-status, evidence file, and note, and a Migration Manager to be assigned to the project — then it
-auto-creates all three `SignOff` rows (`SignOffService.createChainIfAbsent`) in one shot, all
-`PENDING`. Approval is strictly sequential (`SignOffService.APPROVAL_SEQUENCE`, duplicated in
-`ProjectService`): only the role whose turn it is can approve/decline; declining bounces the chain
-back one step. The Dev Lead decides at approval time whether QA Lead is required — saying no
-auto-`SKIP`s the QA row and finalizes the Delta immediately. Once the whole chain resolves, the
-server's `deltaInitiatedAt`/`By` are stamped.
+**The pre-check and sign-off chain are per `WorkspaceCombination`, not per `Server`.** A server
+holds several combinations (each a source→destination product pairing) and each runs its own
+checklist, submission, chain, and Delta lifecycle independently. Routes are
+`/api/combinations/{id}/...` accordingly. `WorkspacePair` is the exception — it hangs off `Server`
+and is tied to its combination by a plain name string (`ServerService.sameCombination`), so renaming
+a combination without migrating its pairs orphans them.
+
+Submitting (`PreCheckSubmissionService.submit`) requires a Migration Manager on the project and
+every item to have a status, plus evidence and a note — except `DELTA_TYPE_ITEM`, which is
+deliberately exempt from the evidence/note requirements, and pre-delta-migration items, which are
+exempt unless that migration is required. It then auto-creates all three `SignOff` rows
+(`SignOffService.createChainIfAbsent`), all `PENDING`. Approval is strictly sequential
+(`SignOffRole.APPROVAL_SEQUENCE` — a single shared constant now, no longer duplicated in
+`ProjectService`): only the role whose turn it is may act, though **`ADMIN` can override any step**
+(`SignOffService.isEligible`). The Dev Lead decides at approval time whether QA Lead is required —
+saying no auto-`SKIP`s the QA row and marks the combination Delta Ready immediately.
+
+**Declining does NOT hand back one step.** `SignOffService.decline` →
+`DeltaCycleService.recordDeclineAndRollOver` snapshots the whole attempt (every item's status, note
+and evidence path, plus the full chain outcome) into a `DeltaCycle`, then **rolls over**: the live
+checklist is wiped back to unfilled, `submittedBy`/`submittedAt`/`startedByEmail` are cleared, the
+live `SignOff` rows are deleted, and `currentCycleNumber` is incremented. Nothing is lost — the
+history holds it — but somebody has to fill the entire checklist in again. A combination sitting at
+`currentCycleNumber: 2` with `submissionStatus: NOT_STARTED` and `completedCycleCount: 0` is the
+normal post-decline state, not a bug (`completedCycleCount` only counts cycles whose status is
+`COMPLETED`, and a declined cycle never is).
 
 Authorization is a separate concern from authentication: any valid Microsoft account can sign in,
 but `AppUserService` (backed by the `app_users` table) decides what they can actually do via
