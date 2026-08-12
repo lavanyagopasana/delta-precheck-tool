@@ -87,9 +87,13 @@ public class GlobalExceptionHandler {
     // as a 500 -- confirmed live on the deployed site, where GET /uploads/<any-missing-file> returned
     // the generic 500 envelope. Evidence attachments are served from /uploads/**, so this is the
     // path users actually hit when a file is gone.
+    // Wording is fixed by GlobalExceptionHandlerTest and deliberately says nothing about what was
+    // looked for: notFoundMessageDoesNotLeakTheResolvedPath asserts the resolved filesystem path
+    // never reaches the client, so this must stay a constant string, not ex.getResourcePath().
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<Map<String, Object>> handleNoResourceFound(NoResourceFoundException ex) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body(HttpStatus.NOT_FOUND, "Not found."));
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(body(HttpStatus.NOT_FOUND, "That resource doesn't exist."));
     }
 
     // The worst case of the 4xx-as-500 problem: attaching an over-limit evidence file told the user

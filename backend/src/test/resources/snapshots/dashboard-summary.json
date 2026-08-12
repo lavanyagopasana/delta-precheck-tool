@@ -6,6 +6,7 @@
   "migrationManagerApprovalsDone" : 2,
   "serversReadyToDecommission" : 0,
   "serversDecommissioned" : 0,
+  "decommissionReadyServers" : [ ],
   "finalDeltasComplete" : 0,
   "preDeltaCyclesCompleted" : 0,
   "preDeltasInFlight" : 0

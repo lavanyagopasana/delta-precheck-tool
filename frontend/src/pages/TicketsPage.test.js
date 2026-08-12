@@ -70,7 +70,7 @@ describe("TicketsPage", () => {
     await userEvent.selectOptions(modal.getByLabelText("Server"), "5");
     await userEvent.selectOptions(modal.getByLabelText("Combination"), "21");
     await userEvent.type(modal.getByLabelText("Created by"), "eng@cloudfuze.com");
-    await userEvent.type(modal.getByLabelText("Ticket Number"), "PROJ-123");
+    await userEvent.type(modal.getByLabelText("Ticket Number or Link"), "PROJ-123");
 
     const submit = modal.getByRole("button", { name: "Log Ticket" });
     expect(submit).toBeEnabled();
@@ -101,7 +101,7 @@ describe("TicketsPage", () => {
     await userEvent.selectOptions(modal.getByLabelText("Server"), "5");
     await userEvent.selectOptions(modal.getByLabelText("Combination"), "21");
     await userEvent.type(modal.getByLabelText("Created by"), "eng@cloudfuze.com");
-    await userEvent.type(modal.getByLabelText("Ticket Number"), "PROJ-123");
+    await userEvent.type(modal.getByLabelText("Ticket Number or Link"), "PROJ-123");
     await userEvent.click(modal.getByRole("button", { name: "Log Ticket" }));
 
     // The message is surfaced in both the inline hint and a toast -- assert at least one.

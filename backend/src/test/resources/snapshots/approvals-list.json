@@ -23,7 +23,10 @@
   "canAct" : false,
   "cycleNumber" : 1,
   "deltaType" : null,
-  "deltaLabel" : null
+  "deltaLabel" : null,
+  "declineReason" : null,
+  "declinedByRoleLabel" : null,
+  "declinedBy" : null
 }, {
   "id" : 2,
   "combinationId" : 1,
@@ -49,7 +52,10 @@
   "canAct" : false,
   "cycleNumber" : 1,
   "deltaType" : null,
-  "deltaLabel" : null
+  "deltaLabel" : null,
+  "declineReason" : null,
+  "declinedByRoleLabel" : null,
+  "declinedBy" : null
 }, {
   "id" : 6,
   "combinationId" : 2,
@@ -75,7 +81,10 @@
   "canAct" : false,
   "cycleNumber" : 1,
   "deltaType" : null,
-  "deltaLabel" : null
+  "deltaLabel" : null,
+  "declineReason" : null,
+  "declinedByRoleLabel" : null,
+  "declinedBy" : null
 }, {
   "id" : 5,
   "combinationId" : 2,
@@ -101,7 +110,10 @@
   "canAct" : false,
   "cycleNumber" : 1,
   "deltaType" : null,
-  "deltaLabel" : null
+  "deltaLabel" : null,
+  "declineReason" : null,
+  "declinedByRoleLabel" : null,
+  "declinedBy" : null
 }, {
   "id" : 1,
   "combinationId" : 1,
@@ -127,7 +139,10 @@
   "canAct" : false,
   "cycleNumber" : 1,
   "deltaType" : null,
-  "deltaLabel" : null
+  "deltaLabel" : null,
+  "declineReason" : null,
+  "declinedByRoleLabel" : null,
+  "declinedBy" : null
 }, {
   "id" : 4,
   "combinationId" : 2,
@@ -153,5 +168,8 @@
   "canAct" : false,
   "cycleNumber" : 1,
   "deltaType" : null,
-  "deltaLabel" : null
+  "deltaLabel" : null,
+  "declineReason" : null,
+  "declinedByRoleLabel" : null,
+  "declinedBy" : null
 } ]
