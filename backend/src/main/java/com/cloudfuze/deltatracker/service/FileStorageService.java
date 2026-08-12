@@ -28,15 +28,37 @@ public class FileStorageService {
     // exported reports (PDF), spreadsheets/CSVs, and the occasional document. Kept deliberately
     // broad for Stage 1 -- the point of observe mode is to LEARN whether real uploads ever fall
     // outside this before it's ever used to reject anything.
+    // Deliberately broad: pre-check evidence is whatever proves the item, and the previous list was
+    // narrow enough that a screen recording (the most natural proof for "Delta Message Sync works")
+    // or a HAR capture got flagged. Anything genuinely unrecognized still only produces a warning
+    // while app.upload.enforce-validation is false, so this list is about what we're willing to
+    // ENDORSE once enforcement is switched on.
+    //
+    // Formats that execute script when a browser renders them (html, svg, xhtml, mhtml, js) are
+    // deliberately ABSENT and are additionally forced to download by UploadDispositionFilter --
+    // /uploads/** is same-origin and permitAll, so an inline-rendered SVG or HTML upload would be
+    // stored XSS against every signed-in reviewer. See that filter for the rest of the reasoning.
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
-            "png", "jpg", "jpeg", "gif", "webp", "bmp",
-            "pdf", "csv", "txt",
-            "doc", "docx", "xls", "xlsx", "ppt", "pptx",
-            "msg", "eml", "zip");
+            // images
+            "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif", "avif",
+            // documents / plain data
+            "pdf", "csv", "tsv", "txt", "log", "json", "xml", "md", "rtf", "har",
+            // office
+            "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp",
+            // email exports
+            "msg", "eml",
+            // archives
+            "zip", "7z", "rar", "tar", "gz", "tgz",
+            // screen recordings and audio -- the natural evidence for "I watched it sync"
+            "mp4", "mov", "webm", "mkv", "avi", "m4v", "mp3", "wav", "m4a");
 
     private static final String ACCEPTED_FORMATS_MESSAGE =
-            "Accepted formats: images (PNG, JPG, GIF, WEBP, BMP), PDF, CSV, TXT, Office documents "
-                    + "(DOC/DOCX, XLS/XLSX, PPT/PPTX), and email exports (MSG, EML).";
+            "Accepted formats: images (PNG, JPG, GIF, WEBP, BMP, TIFF, HEIC, AVIF), PDF, "
+                    + "text/data (CSV, TSV, TXT, LOG, JSON, XML, MD, RTF, HAR), Office documents "
+                    + "(DOC/DOCX, XLS/XLSX, PPT/PPTX, ODT/ODS/ODP), email exports (MSG, EML), "
+                    + "archives (ZIP, 7Z, RAR, TAR, GZ), and recordings (MP4, MOV, WEBM, MKV, AVI, "
+                    + "MP3, WAV, M4A). Web pages and SVG aren't accepted as evidence -- they can "
+                    + "carry scripts; export a PDF or a screenshot instead.";
 
     private final Path uploadRoot;
 

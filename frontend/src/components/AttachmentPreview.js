@@ -1,7 +1,23 @@
 import React, { useState } from "react";
 import { FILE_BASE } from "../api/client";
 
-const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
+// How each extension should be PRESENTED. This is not an allowlist -- FileStorageService decides what
+// may be uploaded. Anything not listed here still previews, just as a download card rather than a
+// guess at inline rendering.
+//
+// Note svg/html are deliberately absent: UploadDispositionFilter serves those with
+// `Content-Disposition: attachment`, so an <img>/<iframe> pointed at one would fail to load anyway.
+// They fall through to the download card, which is the correct and safe presentation.
+const KIND_BY_EXTENSION = {
+  png: "image", jpg: "image", jpeg: "image", gif: "image", webp: "image", bmp: "image", avif: "image",
+  // tif/tiff/heic/heif are uploadable but most browsers can't decode them in an <img>. Treating them
+  // as images would reliably produce the broken-image icon this component now guards against, so
+  // they're presented as downloads on purpose.
+  pdf: "pdf",
+  txt: "text", csv: "text", tsv: "text", log: "text", json: "text", md: "text", har: "text",
+  mp4: "video", mov: "video", webm: "video", m4v: "video", mkv: "video",
+  mp3: "audio", wav: "audio", m4a: "audio",
+};
 
 function getExtension(fileName) {
   if (!fileName) return "";
@@ -9,15 +25,46 @@ function getExtension(fileName) {
   return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : "";
 }
 
+function iconFor(kind) {
+  switch (kind) {
+    case "image": return "🖼️";
+    case "pdf": return "📕";
+    case "text": return "📄";
+    case "video": return "🎬";
+    case "audio": return "🎧";
+    default: return "📎";
+  }
+}
+
 export default function AttachmentPreview({ filePath, fileName, caption, variant = "chip", onRemove, showName = true }) {
   const [open, setOpen] = useState(false);
+  // A file can be a perfectly valid upload and still be undecodable by the browser -- a truncated or
+  // corrupt PNG, or a non-image renamed to .png. Previously both <img> tags had no onError, so that
+  // case rendered the browser's broken-image icon with no way to reach the file. Tracking the failure
+  // lets it degrade to the same download card an unknown type gets.
+  const [thumbFailed, setThumbFailed] = useState(false);
+  const [previewFailed, setPreviewFailed] = useState(false);
 
   if (!filePath) return null;
 
   const url = `${FILE_BASE}${filePath}`;
-  const isImage = IMAGE_EXTENSIONS.includes(getExtension(fileName));
   const displayName = fileName || "attachment";
+  const kind = KIND_BY_EXTENSION[getExtension(fileName)] || "file";
   const isFull = variant === "full";
+  const showThumb = kind === "image" && !thumbFailed;
+  const thumbSize = isFull ? 30 : 26;
+
+  const downloadLink = (
+    <a
+      href={url}
+      download={displayName}
+      onClick={(e) => e.stopPropagation()}
+      className="btn secondary"
+      style={{ padding: "4px 10px", fontSize: 12, textDecoration: "none" }}
+    >
+      Download
+    </a>
+  );
 
   return (
     <>
@@ -54,17 +101,18 @@ export default function AttachmentPreview({ filePath, fileName, caption, variant
         }
         title={displayName}
       >
-        {isImage ? (
+        {showThumb ? (
           <img
             src={url}
             alt={displayName}
-            width={isFull ? 30 : 26}
-            height={isFull ? 30 : 26}
+            width={thumbSize}
+            height={thumbSize}
             loading="lazy"
-            style={{ width: isFull ? 30 : 26, height: isFull ? 30 : 26, objectFit: "cover", borderRadius: 4, flexShrink: 0 }}
+            onError={() => setThumbFailed(true)}
+            style={{ width: thumbSize, height: thumbSize, objectFit: "cover", borderRadius: 4, flexShrink: 0 }}
           />
         ) : (
-          <span style={{ fontSize: isFull ? 17 : 15 }}>📄</span>
+          <span style={{ fontSize: isFull ? 17 : 15 }}>{iconFor(kind)}</span>
         )}
         {showName && (
           <div style={{ overflow: "hidden", flex: isFull ? 1 : undefined }}>
@@ -145,21 +193,80 @@ export default function AttachmentPreview({ filePath, fileName, caption, variant
                 borderBottom: "1px solid var(--color-border)",
               }}
             >
-              <strong style={{ fontSize: 13.5 }}>{displayName}</strong>
-              <button className="btn secondary" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setOpen(false)}>
-                Close ×
-              </button>
+              <strong style={{ fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {displayName}
+              </strong>
+              {/* Download is offered for every type, not just the ones that can't preview -- a reviewer
+                  frequently wants the original file even when it renders fine (to attach to a ticket,
+                  or to open a spreadsheet in Excel rather than squint at a frame). */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                {downloadLink}
+                <button className="btn secondary" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setOpen(false)}>
+                  Close ×
+                </button>
+              </div>
             </div>
             <div style={{ padding: 14, overflow: "auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              {isImage ? (
-                <img src={url} alt={displayName} loading="lazy" style={{ maxWidth: "78vw", maxHeight: "72vh", objectFit: "contain" }} />
-              ) : (
-                <iframe title={displayName} src={url} style={{ width: "70vw", height: "68vh", border: "none" }} />
-              )}
+              <PreviewBody
+                kind={kind}
+                url={url}
+                displayName={displayName}
+                failed={previewFailed}
+                onFail={() => setPreviewFailed(true)}
+              />
             </div>
           </div>
         </div>
       )}
     </>
   );
+}
+
+// Split out so the modal body stays readable: five presentations plus the fallback, rather than a
+// nested ternary chain.
+function PreviewBody({ kind, url, displayName, failed, onFail }) {
+  // No Download button here on purpose: the modal header already carries one for every attachment,
+  // and rendering a second identical action inside the card just duplicates it.
+  if (failed || kind === "file") {
+    return (
+      <div style={{ textAlign: "center", padding: "28px 20px", maxWidth: 420 }}>
+        <div style={{ fontSize: 40, marginBottom: 10 }}>{iconFor(failed ? "file" : kind)}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 6, wordBreak: "break-all" }}>{displayName}</div>
+        <div style={{ fontSize: 12.5, color: "var(--color-text-muted)" }}>
+          {failed
+            ? "This file can't be shown in the browser -- it may be a format your browser can't display, or the file may be damaged. Use Download above to open it with another app."
+            : "This file type can't be previewed here. Use Download above to open it with another app."}
+        </div>
+      </div>
+    );
+  }
+
+  if (kind === "image") {
+    return (
+      <img
+        src={url}
+        alt={displayName}
+        loading="lazy"
+        onError={onFail}
+        style={{ maxWidth: "78vw", maxHeight: "72vh", objectFit: "contain" }}
+      />
+    );
+  }
+
+  if (kind === "video") {
+    return (
+      <video controls preload="metadata" onError={onFail} style={{ maxWidth: "78vw", maxHeight: "72vh" }}>
+        <source src={url} />
+      </video>
+    );
+  }
+
+  if (kind === "audio") {
+    return <audio controls preload="metadata" onError={onFail} src={url} style={{ width: "60vw", maxWidth: 520 }} />;
+  }
+
+  // pdf and text: the browser's own viewer is better than anything hand-rolled. An <iframe> can't
+  // report a load failure for these the way <img>/<video> can, so the header's Download button is the
+  // escape hatch rather than an onError fallback.
+  return <iframe title={displayName} src={url} style={{ width: "70vw", height: "68vh", border: "none" }} />;
 }
