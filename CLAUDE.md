@@ -92,17 +92,27 @@ signing in with the auto-provision domain (default `cloudfuze.com`) is silently 
 
 ## Critical Constraints
 
-- **`AZURE_CLIENT_ID`/`AZURE_TENANT_ID` are baked into `application.properties` as defaults**
-  (as of 2026-07-30 — client ID `4145c1b2-a596-4d84-bede-6e2ca276c9c7`, tenant ID
-  `807d6772-847c-40e2-9bec-e2c930b3a42e`; this is the "delta migration readiness tracker" app
-  registration confirmed with the team, replacing an earlier stale pair. This is a
-  **single-tenant** registration, not multi-tenant as it was originally). Neither value is a secret (both are public OAuth identifiers,
-  not credentials), so baking them in as defaults is safe — and it closes a footgun that bit this
-  project repeatedly before: when these had to be exported manually every backend restart,
-  forgetting silently fell back to fully-open `permitAll` mode (`/api/me` would return
-  `{email: null, role: null, allowed: true}` for everyone) rather than failing loudly. If auth ever
-  looks broken again, the first thing to check is whether something is now *explicitly* overriding
-  `AZURE_CLIENT_ID` to blank (the only way it can degrade now) — see `.claude/memory/decisions.md`.
+- **`AZURE_CLIENT_ID`/`AZURE_TENANT_ID` are baked into `application.properties` as defaults** —
+  client ID `a55e053f-bfe9-4b4a-8b74-362649f82cf0`, tenant ID
+  `66d8848d-26b6-4147-8124-127624d7b3a6`. This is the "Delta Migration Readiness Tracker"
+  registration, single-tenant ("Accounts in this organizational directory only —
+  cloudfuze.com"), SPA platform, delegated scopes only, no client secret. Confirmed working
+  end-to-end against the deployed site on 2026-08-12 (the sign-in redirect carries exactly this
+  pair and `/api/me` returns a populated `email`/`role`).
+  - **Do NOT reintroduce client ID `4145c1b2-a596-4d84-bede-6e2ca276c9c7` / tenant ID
+    `807d6772-847c-40e2-9bec-e2c930b3a42e`.** This file previously recorded that pair as "confirmed
+    with the team" — it is **wrong** and can never work for `@cloudfuze.com` accounts. It belongs to
+    a directory whose real Entra ID name is `filefuze`; signing in produces *"Selected user account
+    does not exist in tenant 'filefuze' and cannot access the application '4145c1b2-…'"*. Tenant
+    membership follows which directory an account was created in, not the email domain suffix, so no
+    app-side config can rescue it.
+  - Neither value is a secret (both are public OAuth identifiers, not credentials), so baking them
+    in as defaults is safe — and it closes a footgun that bit this project repeatedly before: when
+    these had to be exported manually every backend restart, forgetting silently fell back to
+    fully-open `permitAll` mode (`/api/me` would return `{email: null, role: null, allowed: true}`
+    for everyone) rather than failing loudly. If auth ever looks broken again, the first thing to
+    check is whether something is now *explicitly* overriding `AZURE_CLIENT_ID` to blank (the only
+    way it can degrade now) — see `.claude/memory/decisions.md`.
 - **`README.md` was rewritten on 2026-07-27 to match the actual current code** (server-level
   pre-check/sign-off, manually-created escalations, the real CSV column aliases, current env var
   list). If it and the entities/services (`.claude/memory/domain-knowledge.md`) ever disagree
@@ -161,8 +171,8 @@ frontend/src/
 | `DB_URL` | `jdbc:postgresql://localhost:5432/delta_migration_tracker` | Database must already exist — run `createdb delta_migration_tracker` once; tables/columns are still created automatically |
 | `DB_USERNAME` | `postgres` | |
 | `DB_PASSWORD` | `postgres` | |
-| `AZURE_CLIENT_ID` | `4145c1b2-a596-4d84-bede-6e2ca276c9c7` | Baked in; override only to test a different app registration or to disable auth (set blank) |
-| `AZURE_TENANT_ID` | `807d6772-847c-40e2-9bec-e2c930b3a42e` | Single-tenant — only accounts in this Entra ID tenant can authenticate at all |
+| `AZURE_CLIENT_ID` | `a55e053f-bfe9-4b4a-8b74-362649f82cf0` | Baked in; override only to test a different app registration or to disable auth (set blank) |
+| `AZURE_TENANT_ID` | `66d8848d-26b6-4147-8124-127624d7b3a6` | Single-tenant — only accounts in this Entra ID tenant can authenticate at all |
 | `AZURE_ALLOWED_EMAIL_DOMAIN` | *(blank)* | Currently unset for testing; set to `cloudfuze.com` to restrict sign-in |
 | `AZURE_REQUIRE_ALLOWLIST` | `true` | Only people added under Manage Access can sign in. Set `false` only for local testing with unregistered accounts |
 | `AZURE_AUTO_PROVISION_DOMAIN` | `cloudfuze.com` | Auto-added as `MIGRATION_ENGINEER` on first sign-in |
