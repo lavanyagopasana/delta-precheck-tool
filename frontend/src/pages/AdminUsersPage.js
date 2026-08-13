@@ -47,6 +47,8 @@ export default function AdminUsersPage() {
   const [csvRole, setCsvRole] = useState("MIGRATION_ENGINEER");
   const [csvSaving, setCsvSaving] = useState(false);
   const [csvError, setCsvError] = useState(null);
+  // "ALL" rather than "" so the value is never falsy-ambiguous with a real role.
+  const [roleFilter, setRoleFilter] = useState("ALL");
 
   const load = () => {
     setLoading(true);
@@ -68,6 +70,13 @@ export default function AdminUsersPage() {
     });
     return c;
   }, [users]);
+
+  // Role filtering happens here rather than inside DataTable because DataTable's own filtering is
+  // free-text across columns; a role dropdown is an exact-match narrow, and the two need to compose.
+  const visibleUsers = useMemo(
+    () => (roleFilter === "ALL" ? users : users.filter((u) => u.role === roleFilter)),
+    [users, roleFilter],
+  );
 
   const handleAdd = async (e) => {
     e.preventDefault();
@@ -250,11 +259,36 @@ export default function AdminUsersPage() {
 
       {error && <div className="inline-hint" style={{ marginBottom: 12 }}>{error}</div>}
 
+      {/* Role filter lives in DataTable's toolbarRight, next to the search box, matching how
+          Approvals and Project details present their filters. It composes with the free-text search
+          (both must match) rather than replacing it: the text box is still the way to find one
+          person by email, while this narrows to a whole role -- useful now that a single CSV import
+          can add 20 people across five roles at once. */}
       <DataTable
-        rows={users}
+        rows={visibleUsers}
         rowKey={(u) => u.email}
         searchPlaceholder="Search users by email or role..."
-        emptyMessage="No users yet."
+        emptyMessage={roleFilter === "ALL" ? "No users yet." : `No ${roleLabel(roleFilter)} users.`}
+        toolbarRight={
+          <>
+            <label htmlFor="role-filter" className="sr-only">
+              Filter by role
+            </label>
+            <select
+              id="role-filter"
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value)}
+              aria-label="Filter by role"
+            >
+              <option value="ALL">All roles ({counts.total})</option>
+              {ROLE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label} ({counts[opt.value] || 0})
+                </option>
+              ))}
+            </select>
+          </>
+        }
         columns={[
           {
             key: "email",
