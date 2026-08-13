@@ -104,9 +104,20 @@ export default function AdminUsersPage() {
       const result = await importUsersCsv(csvFile, csvRole);
       const parts = [`${result.createdCount} added`, `${result.updatedCount} updated`];
       if (result.errors?.length) parts.push(`${result.errors.length} skipped`);
-      showToast(`${parts.join(", ")} as ${roleLabel(csvRole)}.`);
-      closeCsvModal();
-      load();
+      // Deliberately no longer claims a single role ("... as Migration Engineer"): rows can now each
+      // carry their own, so naming the default would be wrong for any mixed-role file.
+      showToast(`${parts.join(", ")}.`);
+
+      // Row errors used to vanish -- the modal closed on success and the toast only counted them, so
+      // an admin importing 30 people had no way to see WHICH rows were skipped or why. Keep the modal
+      // open and show them; only auto-close when every row landed.
+      if (result.errors?.length) {
+        setCsvError(result.errors.join("\n"));
+        load();
+      } else {
+        closeCsvModal();
+        load();
+      }
     } catch (err) {
       setCsvError(err.response?.data?.message || "Failed to import CSV.");
     } finally {
@@ -356,11 +367,14 @@ export default function AdminUsersPage() {
       {csvModalOpen && (
         <Modal title="Add Users via CSV" onClose={closeCsvModal} width={420} closeIcon>
           <form onSubmit={handleCsvImport}>
+            {/* Relabelled from "Role for everyone in this file": the file may now carry a per-person
+                role column, in which case this is only the fallback for rows that leave it blank. */}
             <div style={{ marginBottom: 14 }}>
-              <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
-                Role for everyone in this file
+              <label htmlFor="csv-default-role" style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+                Default role
               </label>
               <select
+                id="csv-default-role"
                 value={csvRole}
                 onChange={(e) => setCsvRole(e.target.value)}
                 style={{ width: "100%" }}
@@ -371,6 +385,9 @@ export default function AdminUsersPage() {
                   </option>
                 ))}
               </select>
+              <p style={{ fontSize: 12, color: "var(--color-text-faint)", margin: "6px 0 0" }}>
+                Used only for rows that don't specify their own role.
+              </p>
             </div>
 
             <div style={{ marginBottom: 8 }}>
@@ -384,12 +401,41 @@ export default function AdminUsersPage() {
                 style={{ width: "100%" }}
               />
             </div>
-            <p style={{ fontSize: 12, color: "var(--color-text-faint)", marginTop: 0 }}>
-              One email per row. A header row is optional (a column named "email" is auto-detected);
-              otherwise the first column of every row is used.
+            <p style={{ fontSize: 12, color: "var(--color-text-faint)", marginTop: 0, marginBottom: 8 }}>
+              One person per row. Add a <strong>role</strong> column to give each person their own
+              role in a single file; leave a cell blank to use the default above. Columns named
+              "email" and "role" are auto-detected in any order. With no header row, the first column
+              is treated as the email.
             </p>
+            <pre
+              style={{
+                fontSize: 11.5,
+                background: "var(--color-gray-soft)",
+                color: "var(--color-text-muted)",
+                padding: "8px 10px",
+                borderRadius: 6,
+                margin: "0 0 10px",
+                overflowX: "auto",
+              }}
+            >
+{`email,role
+asha@cloudfuze.com,Migration Manager
+ravi@cloudfuze.com,Dev Lead
+priya@cloudfuze.com,QA Lead
+sam@cloudfuze.com,`}
+            </pre>
 
-            {csvError && <div className="inline-hint" style={{ marginBottom: 12 }}>{csvError}</div>}
+            {/* pre-line so per-row errors (joined with \n) each get their own line instead of running
+                together, and a max height so a 50-bad-row file scrolls rather than pushing the
+                buttons off screen. */}
+            {csvError && (
+              <div
+                className="inline-hint"
+                style={{ marginBottom: 12, whiteSpace: "pre-line", maxHeight: 180, overflowY: "auto" }}
+              >
+                {csvError}
+              </div>
+            )}
 
             <div className="form-actions" style={{ justifyContent: "flex-end", gap: 8 }}>
               <button type="button" className="btn secondary" onClick={closeCsvModal} disabled={csvSaving}>

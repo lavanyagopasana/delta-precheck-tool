@@ -31,6 +31,9 @@ import java.util.Optional;
 @Transactional
 public class AppUserService {
 
+    private static final String ACCEPTED_ROLES_MESSAGE =
+            "Accepted roles: Admin, Migration Manager, Dev Lead, QA Lead, Migration Engineer.";
+
     private final AppUserRepository appUserRepository;
 
     // Temporary testing switch: while false, everyone with a valid token is treated as allowed,
@@ -146,24 +149,38 @@ public class AppUserService {
         return saved;
     }
 
-    // One email per row. A header row is auto-detected if any cell normalizes to "email"; otherwise
-    // every row (including the first) is treated as data, with the email in the first column. Every
-    // valid row gets upserted to the given role, same as adding one at a time -- an email already on
-    // the allowlist just has its role updated, it's never duplicated.
-    public AppUserImportResultDto importCsv(MultipartFile file, AppUserRole role, String addedBy) {
+    // One person per row. A header row is auto-detected if any cell normalizes to "email" or "role";
+    // otherwise every row (including the first) is data with the email in the first column.
+    //
+    // Role resolution per row: the row's own "role" cell wins, falling back to defaultRole when that
+    // cell is blank or the column is absent. defaultRole may be null, which is valid as long as every
+    // row carries its own role -- a row with neither is reported as a row error rather than failing
+    // the file, matching how a bad email is handled.
+    //
+    // Every valid row is upserted, same as adding one at a time: an email already on the allowlist has
+    // its role updated, never duplicated.
+    public AppUserImportResultDto importCsv(MultipartFile file, AppUserRole defaultRole, String addedBy) {
         List<String> lines = readLines(file);
         if (lines.isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "CSV file is empty");
         }
 
+        // A "role" column lets one file carry people of mixed roles, which is the normal case when
+        // onboarding a whole team -- previously every role needed its own separate import because the
+        // single defaultRole applied to every row. The column is optional and per-row: a blank cell
+        // falls back to defaultRole, so existing single-role files keep working unchanged.
         int emailColumn = 0;
+        int roleColumn = -1;
         int startRow = 0;
         List<String> header = CsvUtils.parseLine(lines.get(0));
         for (int i = 0; i < header.size(); i++) {
-            if (normalizeHeader(header.get(i)).equals("email")) {
+            String normalized = normalizeHeader(header.get(i));
+            if (normalized.equals("email")) {
                 emailColumn = i;
                 startRow = 1;
-                break;
+            } else if (normalized.equals("role")) {
+                roleColumn = i;
+                startRow = 1;
             }
         }
 
@@ -185,9 +202,26 @@ public class AppUserService {
                 continue;
             }
 
+            AppUserRole rowRole = defaultRole;
+            String rawRole = roleColumn >= 0 && roleColumn < fields.size() ? fields.get(roleColumn).trim() : "";
+            if (StringUtils.hasText(rawRole)) {
+                rowRole = parseRole(rawRole);
+                if (rowRole == null) {
+                    errors.add("Row " + (rowNum + 1) + ": \"" + rawRole + "\" isn't a known role. "
+                            + ACCEPTED_ROLES_MESSAGE);
+                    continue;
+                }
+            } else if (rowRole == null) {
+                // No role in the row and no fallback chosen. Naming the row rather than failing the
+                // whole file keeps this consistent with every other per-row error here.
+                errors.add("Row " + (rowNum + 1) + ": no role given for \"" + email
+                        + "\" and no default role was selected. Add a role column value or pick a default.");
+                continue;
+            }
+
             boolean existed = appUserRepository.existsByEmailIgnoreCase(email);
             try {
-                upsert(email, role, addedBy);
+                upsert(email, rowRole, addedBy);
             } catch (ApiException e) {
                 // Keep processing the rest of the batch -- one guarded row (e.g. the acting admin's
                 // own, or a last-admin demotion) must not fail the whole import.
@@ -207,6 +241,28 @@ public class AppUserService {
         result.setUpdatedCount(updated);
         result.setErrors(errors);
         return result;
+    }
+
+    /**
+     * Resolves a CSV role cell to an {@link AppUserRole}, or null when it matches nothing.
+     *
+     * <p>Matches on the same normalization used for headers (lowercase, letters only) so that the
+     * enum name and the label shown in the UI both work: "MIGRATION_ENGINEER", "Migration Engineer"
+     * and "migration engineer" all resolve. People fill these files in by copying what the screen
+     * shows them, not the enum constant, so accepting only the constant would reject the most likely
+     * input.
+     */
+    private AppUserRole parseRole(String raw) {
+        String normalized = normalizeHeader(raw);
+        if (normalized.isEmpty()) {
+            return null;
+        }
+        for (AppUserRole candidate : AppUserRole.values()) {
+            if (normalizeHeader(candidate.name()).equals(normalized)) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     private String normalizeHeader(String header) {

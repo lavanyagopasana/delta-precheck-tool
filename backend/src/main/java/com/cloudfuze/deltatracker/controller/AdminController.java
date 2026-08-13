@@ -38,10 +38,13 @@ public class AdminController {
         return appUserService.upsert(request.getEmail().trim().toLowerCase(), request.getRole(), adminEmail);
     }
 
+    // `role` is the FALLBACK applied to rows whose own "role" column is blank or absent; it is
+    // optional so a file that carries a role for every person needs no default at all. A row with
+    // neither a role cell nor a default comes back as a per-row error.
     @PostMapping("/import-csv")
     public AppUserImportResultDto importCsv(@AuthenticationPrincipal Jwt jwt,
                                              @RequestParam MultipartFile file,
-                                             @RequestParam AppUserRole role) {
+                                             @RequestParam(required = false) AppUserRole role) {
         String adminEmail = requireAdmin(jwt);
         return appUserService.importCsv(file, role, adminEmail);
     }

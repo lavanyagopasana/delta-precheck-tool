@@ -143,10 +143,15 @@ export const upsertAllowedUser = (payload) => client.post("/admin/users", payloa
 export const removeAllowedUser = (email) =>
   client.delete(`/admin/users/${encodeURIComponent(email)}`).then((r) => r.data);
 
+// `role` is the fallback for rows whose own "role" column is blank or absent -- a file that gives
+// every person a role needs none. Omitted from the form entirely when not set, rather than sent as
+// the string "undefined", which Spring would reject as an unparseable AppUserRole.
 export const importUsersCsv = (file, role) => {
   const formData = new FormData();
   formData.append("file", file);
-  formData.append("role", role);
+  if (role) {
+    formData.append("role", role);
+  }
   return client
     .post("/admin/users/import-csv", formData, { headers: { "Content-Type": "multipart/form-data" } })
     .then((r) => r.data);
