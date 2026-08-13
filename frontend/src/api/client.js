@@ -128,11 +128,27 @@ export const submitPreCheckForReview = (combinationId, payload) =>
 export const withdrawPreCheck = (combinationId) =>
   client.post(`/combinations/${combinationId}/precheck-submission/withdraw`).then((r) => r.data);
 
-export const uploadEvidence = (file) => {
+// onProgress, when given, is called with 0-100 as the body uploads. Needed because the limit is now
+// 1GB: a screen recording over a normal office link takes minutes, and without this the UI just sat
+// there looking hung with no way to tell "uploading" from "broken". Optional so existing callers that
+// don't care are unaffected.
+//
+// axios only reports progress when the total length is known; it is for a FormData body, but the
+// guard keeps this from emitting NaN if that ever stops holding.
+export const uploadEvidence = (file, onProgress) => {
   const formData = new FormData();
   formData.append("file", file);
   return client
-    .post("/upload", formData, { headers: { "Content-Type": "multipart/form-data" } })
+    .post("/upload", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      onUploadProgress: onProgress
+        ? (e) => {
+            if (e.total) {
+              onProgress(Math.round((e.loaded * 100) / e.total));
+            }
+          }
+        : undefined,
+    })
     .then((r) => r.data);
 };
 

@@ -31,22 +31,27 @@ server {
     # =============================================================================================
     # BUG-010 (HIGH) — THE MOST IMPORTANT LINE IN THIS FILE
     #
-    # nginx's default client_max_body_size is 1m, and that default was live in front of /api while
-    # the application advertises and enforces 20MB
-    # (spring.servlet.multipart.max-file-size=20MB). Measured boundary on the deployed site:
+    # nginx's default client_max_body_size is 1m, and that default was live in front of /api. Measured
+    # against the deployed site on 2026-08-12, when the app's own limit was still 20MB:
     #
     #     1000 KB -> 200 OK
     #     1024 KB -> 413 Request Entity Too Large   <-- raw nginx HTML, not the app's JSON envelope
     #
-    # A 20x gap between promise and reality. Pre-check evidence is normally a screenshot (1-5MB) or
-    # a screen recording, so in practice most real evidence uploads failed -- and because the body
-    # is HTML rather than the uniform {"timestamp","status","error","message"} shape, the frontend
-    # could not even render a useful error.
+    # So the real ceiling was 1MB against an advertised 20MB: a 20x gap between promise and reality.
+    # Pre-check evidence is normally a screenshot (1-5MB) or a screen recording, so in practice most
+    # real evidence uploads failed -- and because the body is HTML rather than the uniform
+    # {"timestamp","status","error","message"} shape, the frontend could not even render a useful
+    # error. The app limit has since been raised to 1GB, which widens that gap to 1000x until this
+    # line is applied.
     #
-    # This MUST stay >= spring.servlet.multipart.max-file-size. If you raise the Spring limit,
-    # raise this too, or the app's limit silently becomes a fiction again.
+    # This MUST stay >= spring.servlet.multipart.max-file-size (now 1GB, raised so a full screen
+    # recording of a Delta run can be attached). If you raise the Spring limit, raise this too, or the
+    # app's limit silently becomes a fiction again.
+    #
+    # At 1GB the timeouts below matter as much as the size: a slow link can take many minutes and the
+    # nginx defaults (60s) will kill the upload midway with no useful error.
     # =============================================================================================
-    client_max_body_size 20m;
+    client_max_body_size 1g;
 
     # ---------------------------------------------------------------------------------------------
     # BUG-003 (Medium) — the deployed CSP was permissive enough to be near-inert.
@@ -114,7 +119,9 @@ base-uri 'self'" always;
         proxy_set_header X-Forwarded-Proto $scheme;
         # Evidence uploads can be slow on a poor connection; don't cut them off mid-body.
         proxy_request_buffering off;
-        proxy_read_timeout 120s;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        client_body_timeout 600s;
     }
 
     # Evidence attachments. Same backend, and note this path is deliberately permitAll in

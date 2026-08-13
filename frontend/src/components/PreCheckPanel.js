@@ -16,6 +16,7 @@ import { UndoIcon, SendIcon, ServerIcon, SwapIcon } from "./Icons";
 import { useConfirm } from "./ConfirmDialog";
 import {
   MAX_EVIDENCE_FILE_SIZE_MB,
+  MAX_EVIDENCE_FILE_SIZE_LABEL,
   DELTA_TYPE_ITEM,
   DELTA_MESSAGE_SYNC_ITEM,
   isPreDeltaMigrationItem,
@@ -127,6 +128,9 @@ function evidenceDisplayName(item) {
 
 function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved }) {
   const [uploading, setUploading] = useState(false);
+  // null while idle; 0-100 during an upload. Separate from `uploading` so the label can
+  // fall back to a plain "Uploading..." if progress is ever unavailable.
+  const [uploadPercent, setUploadPercent] = useState(null);
   const [error, setError] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const [notesInput, setNotesInput] = useState(item.notes || "");
@@ -175,7 +179,7 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
   const uploadFile = async (file) => {
     if (!file) return;
     if (file.size > MAX_EVIDENCE_FILE_SIZE_MB * 1024 * 1024) {
-      const msg = `"${file.name}" is larger than the ${MAX_EVIDENCE_FILE_SIZE_MB}MB attachment limit.`;
+      const msg = `"${file.name}" is larger than the ${MAX_EVIDENCE_FILE_SIZE_LABEL} attachment limit.`;
       setError(msg);
       showToast(msg, "error");
       return;
@@ -183,7 +187,8 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
     setUploading(true);
     setError(null);
     try {
-      const result = await uploadEvidence(file);
+      setUploadPercent(0);
+      const result = await uploadEvidence(file, setUploadPercent);
       await save({ evidenceFilePath: result.filePath, evidenceFileName: result.fileName });
     } catch (err) {
       const msg = err.response?.data?.message || `Couldn't upload "${file.name}". Please try again.`;
@@ -191,6 +196,7 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
       showToast(msg, "error");
     } finally {
       setUploading(false);
+      setUploadPercent(null);
     }
   };
 
@@ -304,11 +310,15 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
               >
                 <span className="precheck-dropzone-icon">⬆</span>
                 <label style={{ cursor: "pointer" }}>
-                  {uploading ? "Uploading..." : "Drop evidence file here, or "}
+                  {uploading
+                    ? uploadPercent === null
+                      ? "Uploading..."
+                      : `Uploading... ${uploadPercent}%`
+                    : "Drop evidence file here, or "}
                   {!uploading && <span style={{ color: "var(--color-primary)", fontWeight: 600 }}>click to browse</span>}
                   <input type="file" onChange={handleFileChange} disabled={uploading} style={{ display: "none" }} />
                 </label>
-                <span className="progress-label">· up to {MAX_EVIDENCE_FILE_SIZE_MB}MB</span>
+                <span className="progress-label">· up to {MAX_EVIDENCE_FILE_SIZE_LABEL}</span>
               </div>
             )
           )}

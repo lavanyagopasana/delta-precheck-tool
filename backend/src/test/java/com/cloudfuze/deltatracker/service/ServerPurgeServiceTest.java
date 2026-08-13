@@ -168,6 +168,37 @@ class ServerPurgeServiceTest {
         verify(preCheckItemRepository).deleteAll(List.of(item));
     }
 
+    /**
+     * Regression: per-cycle snapshot evidence was orphaned on disk forever.
+     *
+     * <p>A decline hands file ownership to the DeltaCycleItem snapshot and CLEARS the live
+     * PreCheckItem's path, so for any combination that was ever declined the snapshot row is the only
+     * thing that still knows where those files are. purgeDeltaCycles deleted those rows without
+     * deleting the files, so purging left the bytes stranded with nothing left to find them by. That
+     * broke the assumption that deleting a project after decommission reclaims its storage, and it
+     * matters far more now the per-file limit is 1GB rather than 20MB.
+     */
+    @Test
+    void deletesEvidenceFilesBehindPerCycleSnapshotsToo() {
+        DeltaCycle cycle = new DeltaCycle();
+        cycle.setId(77L);
+        when(deltaCycleRepository.findByCombinationIdOrderByCycleNumberAsc(CID)).thenReturn(List.of(cycle));
+
+        DeltaCycleItem snapshot = new DeltaCycleItem();
+        snapshot.setEvidenceFilePath("/uploads/declined-cycle-evidence.png");
+        DeltaCycleItem noEvidence = new DeltaCycleItem();
+        when(deltaCycleItemRepository.findByCycleIdInOrderBySortOrderAsc(List.of(77L)))
+                .thenReturn(List.of(snapshot, noEvidence));
+
+        service.purge(server);
+
+        verify(fileStorageService).delete("/uploads/declined-cycle-evidence.png");
+        // The null path is handed over as-is; FileStorageService.delete no-ops on blank input rather
+        // than making every caller pre-check it.
+        verify(fileStorageService).delete(null);
+        verify(deltaCycleItemRepository).deleteAll(List.of(snapshot, noEvidence));
+    }
+
     @Test
     void deletesTheSubmissionSignOffChainAndTickets() {
         PreCheckSubmission submission = new PreCheckSubmission();

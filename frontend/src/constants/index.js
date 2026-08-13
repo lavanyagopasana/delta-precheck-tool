@@ -3,8 +3,19 @@
 // out of sync. Values are unchanged from their previous inline definitions.
 
 // Max size for an evidence/attachment upload, in megabytes. Mirrors the backend multipart cap
-// (spring.servlet.multipart.max-file-size=20MB).
-export const MAX_EVIDENCE_FILE_SIZE_MB = 20;
+// (spring.servlet.multipart.max-file-size=1GB) AND the proxy's client_max_body_size. All three have
+// to agree; if this one is the smallest, the extra headroom the others allow is unreachable.
+//
+// Checked client-side purely so the user finds out in a second instead of after pushing 1GB up a
+// slow link only to be rejected. It is not a security control -- the backend limit is.
+export const MAX_EVIDENCE_FILE_SIZE_MB = 1024;
+
+// Human-readable form of the limit above. 1024MB is technically accurate and reads badly in a
+// sentence like "larger than the 1024MB attachment limit", so the UI says "1GB".
+export const MAX_EVIDENCE_FILE_SIZE_LABEL =
+  MAX_EVIDENCE_FILE_SIZE_MB >= 1024
+    ? `${MAX_EVIDENCE_FILE_SIZE_MB / 1024}GB`
+    : `${MAX_EVIDENCE_FILE_SIZE_MB}MB`;
 
 // How often the NavBar re-polls the open-ticket count badge, in milliseconds.
 export const TICKET_POLL_MS = 30000;

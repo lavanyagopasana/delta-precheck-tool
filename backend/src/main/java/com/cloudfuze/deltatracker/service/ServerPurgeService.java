@@ -4,6 +4,7 @@ import com.cloudfuze.deltatracker.entity.DeltaCycle;
 import com.cloudfuze.deltatracker.entity.PreCheckItem;
 import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
+import com.cloudfuze.deltatracker.entity.DeltaCycleItem;
 import com.cloudfuze.deltatracker.repository.DeltaCycleItemRepository;
 import com.cloudfuze.deltatracker.repository.DeltaCycleRepository;
 import com.cloudfuze.deltatracker.repository.DeltaCycleSignOffRepository;
@@ -103,13 +104,25 @@ public class ServerPurgeService {
 
     // Per-cycle snapshot rows (checklist items + sign-offs) point at the cycle, which points at the
     // combination -- so all three go, deepest first.
+    //
+    // The evidence files these snapshots reference MUST be deleted here too. A rollover deliberately
+    // leaves the file on disk and hands ownership to the DeltaCycleItem snapshot (see that entity's
+    // own comment) while CLEARING the live PreCheckItem's path -- so for any combination that was
+    // ever declined, the snapshot row is the ONLY thing that still knows where those files are. The
+    // live-item cleanup in purge() therefore deletes nothing for them, and before this they were
+    // orphaned on disk forever: rows gone, bytes stranded, nothing left to find them by.
+    //
+    // That leak is why "we delete the project after decommission, so storage takes care of itself"
+    // did not actually hold. It matters much more now that a single evidence file can be 1GB.
     private void purgeDeltaCycles(Long combinationId) {
         List<DeltaCycle> cycles = deltaCycleRepository.findByCombinationIdOrderByCycleNumberAsc(combinationId);
         if (cycles.isEmpty()) {
             return;
         }
         List<Long> cycleIds = cycles.stream().map(DeltaCycle::getId).toList();
-        deltaCycleItemRepository.deleteAll(deltaCycleItemRepository.findByCycleIdInOrderBySortOrderAsc(cycleIds));
+        List<DeltaCycleItem> cycleItems = deltaCycleItemRepository.findByCycleIdInOrderBySortOrderAsc(cycleIds);
+        cycleItems.forEach(item -> fileStorageService.delete(item.getEvidenceFilePath()));
+        deltaCycleItemRepository.deleteAll(cycleItems);
         deltaCycleSignOffRepository.deleteAll(deltaCycleSignOffRepository.findByCycleIdIn(cycleIds));
         deltaCycleRepository.deleteAll(cycles);
     }
