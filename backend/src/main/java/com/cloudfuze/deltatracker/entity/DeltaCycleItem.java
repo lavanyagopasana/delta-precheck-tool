@@ -15,7 +15,12 @@ import java.time.LocalDateTime;
 // actually signed off on, so it must not change when the live item is reset for the next cycle.
 // evidenceFilePath still points at the same file under uploads/, which a rollover never deletes.
 @Entity
-@Table(name = "delta_cycle_items")
+// The Delta history panel loads items by cycle, often for several cycles at once
+// (findByCycleIdInOrderBySortOrderAsc). sort_order is included so that ordering is served by the
+// index rather than a separate sort step, and cycle_id alone is still covered by the leading column.
+@Table(name = "delta_cycle_items", indexes = {
+        @Index(name = "idx_cycle_item_cycle_sort", columnList = "cycle_id, sort_order")
+})
 @Getter
 @Setter
 @NoArgsConstructor

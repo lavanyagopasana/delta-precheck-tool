@@ -11,7 +11,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Table(name = "servers")
+// The projects list and every project detail view fetch a project's servers, and duplicate-name
+// checks hit findByProjectIdAndNameIgnoreCase. project_id had no index of any kind.
+@Table(name = "servers", indexes = {
+        @Index(name = "idx_server_project", columnList = "project_id")
+})
 @Getter
 @Setter
 @NoArgsConstructor

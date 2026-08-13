@@ -11,7 +11,12 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "precheck_items")
+// Every pre-check read (the checklist itself, completedCount, the submit preconditions) filters by
+// combination_id, and unlike sign_offs/precheck_submissions/delta_cycles there is no unique
+// constraint on this table whose leading column would cover it -- so these were sequential scans.
+@Table(name = "precheck_items", indexes = {
+        @Index(name = "idx_precheck_item_combination", columnList = "combination_id")
+})
 @Getter
 @Setter
 @NoArgsConstructor
