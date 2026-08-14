@@ -211,6 +211,13 @@ public class TicketService {
         return ticketRepository.countByCombinationIdAndStatus(combinationId, TicketStatus.OPEN);
     }
 
+    // All tickets logged against this combination, open or resolved -- the combination detail view
+    // shows this instead of just the open count so a resolved ticket doesn't just vanish from the
+    // number the moment it's closed.
+    public long countTotalForCombination(Long combinationId) {
+        return ticketRepository.countByCombinationId(combinationId);
+    }
+
     public long countOpen() {
         return ticketRepository.countByStatus(TicketStatus.OPEN);
     }

@@ -13,8 +13,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 // The per-combination equivalent of ServerReadinessDto -- one combination's own pre-check,
-// sign-off, and Delta lifecycle. Escalation count is still server-level (tickets aren't split per
-// combination -- see .claude/memory or the architecture skill for that scope decision).
+// sign-off, and Delta lifecycle. Tickets are combination-scoped (Ticket -> WorkspaceCombination),
+// not server-level -- see TicketService.countOpenForCombination/countTotalForCombination.
 @Getter
 @Setter
 public class CombinationReadinessDto {
@@ -35,6 +35,11 @@ public class CombinationReadinessDto {
     private PairStatus status;
     private int totalPairs;
     private long openEscalationCount;
+    // All tickets logged against this combination, open or resolved. The detail view shows this
+    // total rather than openEscalationCount alone, so a resolved ticket doesn't just disappear from
+    // the number the moment it's closed -- openEscalationCount is kept too, since it still drives
+    // the red-highlight ("needs attention") styling.
+    private long totalTicketCount;
     private String readinessStatus;
     // One of READY / NOT_SUBMITTED / IN_PROGRESS -- READY means the pre-check is submitted and all
     // three roles have approved. readinessDetail explains the other two: "Pre-check isn't submitted

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   getServerReadiness,
   getCombinationReadiness,
@@ -136,6 +136,9 @@ export default function WorkspacePairsPanel({
   // Seeded from initialCombination (e.g. arriving via a "?combination=" link) -- the effect below
   // still falls back to the first group if this doesn't match any real combination.
   const [selectedCombination, setSelectedCombination] = useState(initialCombination);
+  // Scrolled to by the "View Delta History" button -- the panel it wraps already renders for every
+  // role (it's not gated by canFillPreCheck), so no separate visibility toggle is needed here.
+  const historyRef = useRef(null);
 
   const load = () => {
     setLoading(true);
@@ -239,15 +242,37 @@ export default function WorkspacePairsPanel({
                       like a first-time one. */}
                   {activeCombinationSummary.finalDeltaComplete
                     ? "View Completed Pre-Check"
-                    : activeCombinationSummary.submissionStatus === "SUBMITTED" || !canFillPreCheck
+                    : activeCombinationSummary.submissionStatus === "SUBMITTED"
                     ? "View Pre-Check Form"
                     : lockedByEmail
                     ? "View Pre-Check Form"
+                    : !canFillPreCheck
+                    // A viewer role (Manager/Dev Lead/QA Lead) with nothing submitted and nobody
+                    // drafting it yet has nothing to view -- "View Pre-Check Form" here used to
+                    // imply there was, leading straight to a blank NOT_STARTED checklist. That
+                    // combination reads as "review this" when there's genuinely nothing to review
+                    // yet; anything already resolved lives in Delta History instead. Cycle 2+ names
+                    // itself explicitly, same reasoning as the engineer-facing label below -- without
+                    // it, "not submitted yet" on a combination with prior completed cycles reads as
+                    // "nothing has ever been submitted here," not "this cycle hasn't started."
+                    ? activeCombinationSummary.currentCycleNumber > 1
+                    ? `Not Submitted Yet · Delta ${activeCombinationSummary.currentCycleNumber}`
+                    : "Pre-Check Not Submitted Yet"
                     : activeCombinationSummary.submissionStatus === "DRAFT"
                     ? "Continue Pre-Check Form"
                     : activeCombinationSummary.currentCycleNumber > 1
                     ? `Start Pre-Check · Delta ${activeCombinationSummary.currentCycleNumber}`
                     : "Start Pre-Check Form"}
+                </button>
+                {/* Same visibility as the panel it scrolls to (every role, not gated by
+                    canFillPreCheck) -- a Dev/QA Lead landing on a blank current cycle is exactly who
+                    most needs a quick way to what they actually approved/declined last time. */}
+                <button
+                  className="btn secondary"
+                  style={{ marginLeft: 8 }}
+                  onClick={() => historyRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                >
+                  View Delta History
                 </button>
               </>
             ) : null
@@ -305,7 +330,7 @@ export default function WorkspacePairsPanel({
       </div>
 
       {showStats && activeCombinationSummary && comboReadiness && (
-        <div style={{ marginTop: 24 }}>
+        <div style={{ marginTop: 24 }} ref={historyRef}>
           <DeltaHistoryPanel
             combinationId={activeCombinationSummary.id}
             reloadKey={comboReadiness.deltaFinishedAt || comboReadiness.deltaStartedAt}

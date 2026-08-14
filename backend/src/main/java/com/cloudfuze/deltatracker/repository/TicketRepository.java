@@ -15,6 +15,11 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
 
     long countByCombinationIdAndStatus(Long combinationId, TicketStatus status);
 
+    // Every ticket for this combination regardless of status (open + resolved) -- the combination
+    // detail view shows this total rather than just the open count, so a resolved ticket doesn't
+    // just disappear from the number the moment it's closed.
+    long countByCombinationId(Long combinationId);
+
     // Aggregate across every combination on a server -- ServerReadinessDto's server-wide ticket
     // count still needs this even though a single ticket now belongs to one specific combination.
     long countByCombination_Server_IdAndStatus(Long serverId, TicketStatus status);

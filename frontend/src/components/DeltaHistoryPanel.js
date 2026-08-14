@@ -100,8 +100,22 @@ export default function DeltaHistoryPanel({ combinationId, reloadKey }) {
     );
   }
 
-  // Nothing recorded yet (or still loading) -- stay out of the way entirely.
-  if (!cycles?.length) return null;
+  // Still loading -- stay out of the way rather than flash "No Delta History" before the real
+  // answer arrives.
+  if (cycles === null) return null;
+
+  // Genuinely nothing recorded yet (no cycle has ever been declined or completed). This still
+  // needs the heading, not a bare absence: the "View Delta History" button next to the pre-check
+  // form scrolls here, and scrolling to nothing renders as "the button is broken" rather than "no
+  // history exists yet" -- the visible heading + message says which one it actually is.
+  if (!cycles.length) {
+    return (
+      <div className="card">
+        <h3 className="section-title">Delta History</h3>
+        <span className="progress-label">No Delta History yet.</span>
+      </div>
+    );
+  }
 
   return (
     <div className="card">

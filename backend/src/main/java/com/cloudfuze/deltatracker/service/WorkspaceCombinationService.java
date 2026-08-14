@@ -338,6 +338,7 @@ public class WorkspaceCombinationService {
         Server server = combination.getServer();
         List<WorkspacePair> pairs = pairs(server.getId(), combination.getName());
         long openEscalations = ticketService.countOpenForCombination(combination.getId());
+        long totalTickets = ticketService.countTotalForCombination(combination.getId());
 
         CombinationReadinessDto dto = new CombinationReadinessDto();
         dto.setCombinationId(combination.getId());
@@ -348,6 +349,7 @@ public class WorkspaceCombinationService {
         dto.setStatus(combination.getStatus());
         dto.setTotalPairs(pairs.size());
         dto.setOpenEscalationCount(openEscalations);
+        dto.setTotalTicketCount(totalTickets);
         dto.setReadinessStatus(com.cloudfuze.deltatracker.dto.ServerReadinessDto.computeReadinessStatus(combination.getStatus(), openEscalations));
         dto.setDeltaInitiatedAt(combination.getDeltaInitiatedAt());
         dto.setDeltaInitiatedBy(combination.getDeltaInitiatedBy());

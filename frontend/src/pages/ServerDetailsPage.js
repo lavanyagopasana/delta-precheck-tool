@@ -95,12 +95,20 @@ export default function ServerDetailsPage() {
                 <span className="detail-fact-value">{comboReadiness.totalPairs}</span>
               </div>
               <div className="detail-fact">
-                <span className="detail-fact-label">Open tickets</span>
+                <span className="detail-fact-label">Tickets</span>
+                {/* Total (open + resolved), not just open -- a resolved ticket shouldn't just
+                    vanish from this number. Still tints red when at least one is open, since
+                    that's the "needs attention" signal, not the raw total. */}
                 <span
                   className="detail-fact-value"
                   style={{ color: comboReadiness.openEscalationCount > 0 ? "var(--color-red)" : undefined }}
+                  title={
+                    comboReadiness.openEscalationCount > 0
+                      ? `${comboReadiness.openEscalationCount} open`
+                      : "None open"
+                  }
                 >
-                  {comboReadiness.openEscalationCount}
+                  {comboReadiness.totalTicketCount}
                 </span>
               </div>
               {comboReadiness.migrationManagerName && (
