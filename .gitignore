@@ -1,4 +1,9 @@
-backend/application.properties
+# NOTE: backend/src/main/resources/application.properties is deliberately NOT ignored. It is the
+# app's real configuration and the repo does not build without it. This line used to read
+# "backend/application.properties", which matches no file that has ever existed here -- it implied a
+# protection that was not in force. Every secret-shaped value in that file MUST stay a ${ENV_VAR:default}
+# placeholder; the moment a literal password or API token is pasted in, it gets committed. Put real
+# credentials in the environment, never in that file.
 .env
 .env.local
 
