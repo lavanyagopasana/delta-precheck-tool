@@ -64,6 +64,7 @@ Frontend settings are build-time env vars (Create React App) in `frontend/.env.l
 | `REACT_APP_AZURE_TENANT_ID` | — | same value as backend's `AZURE_TENANT_ID` |
 | `REACT_APP_AZURE_REDIRECT_URI` | `http://localhost:3000` | your deployed frontend URL — must also be registered as a redirect URI on the Azure app registration |
 | `REACT_APP_ALLOWED_EMAIL_DOMAIN` | `cloudfuze.com` | as needed |
+| `REACT_APP_HOTJAR_SITE_ID` | *(blank)* | Hotjar Site ID (digits only) enabling session recording; blank disables it. Leave blank locally so your own sessions aren't recorded. Baked in at build time, so a container needs `docker build --build-arg REACT_APP_HOTJAR_SITE_ID=...` — setting it with `docker run -e` does nothing |
 
 ## Run the backend
 

@@ -117,7 +117,15 @@ export default function DataTable({
                     onClick={onRowClick ? () => onRowClick(row) : undefined}
                   >
                     {columns.map((col) => (
-                      <td key={col.key}>{col.render ? col.render(row) : row[col.key]}</td>
+                      // `sensitive` marks a column whose values must not appear in a Hotjar session
+                      // recording -- customer mailbox addresses and paths, specifically. Hotjar
+                      // replaces the contents of a data-hj-suppress element with a placeholder before
+                      // the DOM ever leaves the browser, so the value is never sent, not merely hidden
+                      // on playback. Put here rather than on each call site so every table gets the
+                      // same lever; see analytics/hotjar.js.
+                      <td key={col.key} data-hj-suppress={col.sensitive ? "" : undefined}>
+                        {col.render ? col.render(row) : row[col.key]}
+                      </td>
                     ))}
                   </tr>
                 );

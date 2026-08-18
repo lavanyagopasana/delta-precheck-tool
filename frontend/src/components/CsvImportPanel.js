@@ -116,7 +116,15 @@ export default function CsvImportPanel({ title, columns, sampleRow, onUpload, on
             These rows already existed exactly as-is, so they were not added again. Everything else in
             the file was imported.
           </p>
-          <ul style={{ margin: 0, paddingLeft: 18, maxHeight: 320, overflowY: "auto" }}>
+          {/* Suppressed from Hotjar recordings: each entry is "Row N: <sourceEmail> -> <destinationEmail>
+              already exists (skipped)" (WorkspacePairService.recordDuplicate), so this list carries the
+              same customer mailbox addresses the pairs table masks. Without this the suppression on the
+              table is defeated by the import flow that produced it. errors[] above is deliberately NOT
+              suppressed -- those strings carry row numbers and column names, never cell values. */}
+          <ul
+            style={{ margin: 0, paddingLeft: 18, maxHeight: 320, overflowY: "auto" }}
+            data-hj-suppress=""
+          >
             {result.duplicates.map((d, i) => (
               <li key={i} style={{ fontSize: 13, marginBottom: 4 }}>{d}</li>
             ))}
