@@ -85,7 +85,7 @@ thinking about it first.
   `.gitignore` now says plainly why the file is tracked.
   The invariant that replaces it: **every secret-shaped value in that file stays a
   `${ENV_VAR:default}` placeholder.** As of 2026-08-18 all three (`spring.datasource.password`,
-  `spring.mail.password`, `jira.api-token`) do. Paste a literal password or API token in and it is
+  `spring.mail.password`, `ticketing.api-token`) do. Paste a literal password or API token in and it is
   committed and pushed with the next change — there is no ignore rule standing between you and that.
   Real credentials belong in the environment.
 - Uploaded evidence files (`backend/uploads/`) and DB backups (`db_backups/`) are already

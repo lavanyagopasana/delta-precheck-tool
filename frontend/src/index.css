@@ -665,7 +665,7 @@ tbody td .btn {
   background: var(--color-red-soft);
 }
 
-/* Truncates long free-text (e.g. a Jira issue summary) to 2 lines with an ellipsis instead of
+/* Truncates long free-text (e.g. a ticket summary) to 2 lines with an ellipsis instead of
    wrapping to 4-5 lines and making the whole table row look ungainly -- full text stays available
    via the element's title attribute. */
 .text-clamp-2 {

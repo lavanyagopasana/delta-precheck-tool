@@ -2,6 +2,67 @@
 
 Why things are the way they are. Newest first.
 
+## 2026-08-18 — Replaced Jira with Neutara Ticketing for ticket lookup
+
+Swapped the external ticket system behind "Log a Ticket" from Jira Cloud to the in-house
+**Neutara Technologies Ticketing** (`https://neutaraticketing.cftools.live`) at the user's request.
+
+**The swap was contained to one class** because `JiraService` was the only thing that ever spoke to
+Jira — everything downstream consumed a provider-neutral six-field DTO. That held up: the work was
+`JiraService` → `TicketLookupService`, `JiraIssueDto` → `ExternalTicketDto`, `jira.*` → `ticketing.*`
+config, and copy changes. No controller, repository, or schema change.
+
+**What actually differs from Jira, verified against the live API before writing any code:**
+
+- **Auth is a single bearer token** (`Authorization: Bearer nta_…`), not Jira's `email:api-token`
+  HTTP Basic pair. The token resolves to a user by itself (`GET /api/auth/me` returns the person), so
+  **`JIRA_EMAIL` has no successor and was dropped** rather than kept as a setting nothing reads. An
+  email was supplied for this integration; it is genuinely not needed.
+- **Endpoint is `GET /api/issues/{key}`**, not `/rest/api/2/issue/{key}`. It accepts *either* the
+  canonical key (`L1BOAR-15335`) *or* the shorter `cfKey` alias (`CF-29519`) and returns the same
+  issue — so we store whichever key the API echoes back, keeping the alias out of the saved link.
+- **Browse links are `{base}/issues/{key}`**, not `{base}/browse/{key}`.
+- **Resolution is read off `status.category == "done"` and NEVER off `resolvedAt`.** This is the
+  trap worth remembering: `resolvedAt` exists on every issue and was `null` on **all 50** sampled,
+  *including all 35 sitting in a `Resolved`/`done` status. Trusting it would have left every resolved
+  ticket showing OPEN here forever — silently, since nothing would error. Note also that the API is
+  inconsistent about the separator on the in-progress value (`in-progress` on most issues,
+  `in_progress` on others); only `done` matters, and that one is consistent.
+- **Timestamps are plain ISO-8601 UTC** (`2026-08-18T13:16:00.604Z`), so `OffsetDateTime.parse`
+  handles them directly. Jira's colon-less numeric offset needed a hand-built formatter; this doesn't.
+
+**`/api/*` returns a "Dev mock: unhandled …" 501 for unrecognized routes**, whose hint text mentions
+a Jira API server on `localhost:4000`. That is a red herring — it is just the deployment's catch-all
+handler. `/api/issues`, `/api/auth/me`, and `/api/users` are real and serve real data. Don't conclude
+from a 501 on some other path that the integration isn't wired up.
+
+**Deliberately NOT renamed: the `jira_key`/`jira_summary`/`jira_reporter`/`jira_created_at` columns
+and the matching `jiraKey`/… JSON fields on `TicketDto`.** `ddl-auto=update` cannot rename a column —
+it would add empty new ones and orphan every existing ticket's snapshot — and those names are also
+the wire contract the frontend and `snapshots/tickets-list.json` already use. Renaming needs a
+hand-written `ALTER` plus a coordinated frontend/snapshot change; it buys nothing functionally and is
+a deliberate follow-up, not an oversight. The comment on the entity fields says so in place.
+
+**No SSRF-blocklist change was needed.** `UrlValidationService` rejects hosts resolving to
+private/loopback/link-local addresses, which would have broken "Validate link" for an internally-hosted
+tracker. `neutaraticketing.cftools.live` resolves to the public `208.70.248.68`, so it passes. If the
+tracker ever moves behind a VPN-only or private address, that check is what will break first.
+
+**Verified end-to-end against the live API**, not just compiled: a resolved ticket maps to
+`resolved=true`, an in-progress one to `false`, the `CF-…` alias resolves to the canonical key and
+link, a pasted URL has its key extracted, and an unknown key produces a clean 404 rather than a 502.
+Backend 198 tests and frontend 53 tests both green, including the endpoint characterization snapshot
+(unchanged, confirming the API contract did not move).
+
+**Secret-handling side effect, and it was urgent.** `backend/application.properties` (untracked,
+loaded by Spring at *higher* precedence than the classpath copy) held a **literal live Jira API token
+and the literal SMTP password**, and was **not** gitignored — the 2026-08-18 `.gitignore` cleanup had
+removed that path as dead, correctly at the time, but the file has since been created for real. One
+`git add -A` would have published both. The path is now ignored again with a comment explaining that
+it exists *specifically* to hold real secrets, versus the tracked copy which keeps only
+`${ENV_VAR:default}` placeholders. **The exposed Jira token still needs revoking** — it was readable
+in the working tree for the life of that file.
+
 ## 2026-08-10 — Migrated from MySQL to PostgreSQL
 
 Swapped the database engine at the user's explicit request. Checked first whether this was safe to

@@ -73,9 +73,8 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
 
-      JIRA_BASE_URL: ${JIRA_BASE_URL:-}
-      JIRA_EMAIL: ${JIRA_EMAIL:-}
-      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
+      TICKETING_BASE_URL: ${TICKETING_BASE_URL:-https://neutaraticketing.cftools.live}
+      TICKETING_API_TOKEN: ${TICKETING_API_TOKEN:-}
     volumes:
       # THE line this whole file existed to provide. Named volume, so it survives every redeploy,
       # image rebuild, and container recreation. Back it up with the database, not separately --

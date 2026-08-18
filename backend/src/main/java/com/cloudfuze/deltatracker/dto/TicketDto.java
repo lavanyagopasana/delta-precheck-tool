@@ -25,7 +25,9 @@ public class TicketDto {
     private String createdBy;
     private LocalDateTime createdAt;
     private TicketStatus status;
-    // Read-only snapshot fetched from Jira at logging time -- see JiraService/Ticket entity.
+    // Read-only snapshot fetched from the ticketing system at logging time -- see
+    // TicketLookupService/Ticket entity. Still named jira* because these are the wire/column names
+    // clients and the database already use; see the Ticket entity for why renaming them was deferred.
     private String jiraKey;
     private String jiraSummary;
     private String jiraReporter;

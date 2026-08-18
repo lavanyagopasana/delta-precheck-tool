@@ -4,7 +4,7 @@ The whole stack is Docker. Database, backend, frontend, and the TLS-terminating 
 from one file, and every setting that used to be a manual edit on the server is now a tracked file.
 
 ```bash
-cp .env.example .env      # fill in POSTGRES_PASSWORD, HOTJAR_SITE_ID, Jira token
+cp .env.example .env      # fill in POSTGRES_PASSWORD, HOTJAR_SITE_ID, TICKETING_API_TOKEN
 docker compose up -d --build
 ```
 

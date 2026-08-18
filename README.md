@@ -50,9 +50,8 @@ by environment variable — nothing needs editing for local dev, the defaults be
 | Auto-provision domain | `AZURE_AUTO_PROVISION_DOMAIN` | `cloudfuze.com` | as needed |
 | SMTP host/port/username | `SMTP_HOST`/`SMTP_PORT`/`SMTP_USERNAME` | Office 365 relay defaults | as needed |
 | SMTP password | `SMTP_PASSWORD` | *(blank — sending disabled)* | real SMTP password (secret) |
-| Jira site URL | `JIRA_BASE_URL` | *(blank — ticket lookup disabled)* | e.g. `https://yourcompany.atlassian.net` |
-| Jira account email | `JIRA_EMAIL` | *(blank)* | the email of the account that owns the API token below |
-| Jira API token | `JIRA_API_TOKEN` | *(blank)* | generate at https://id.atlassian.com/manage-profile/security/api-tokens (secret) |
+| Ticketing site URL | `TICKETING_BASE_URL` | `https://neutaraticketing.cftools.live` | leave as-is |
+| Ticketing API token | `TICKETING_API_TOKEN` | *(blank — ticket lookup disabled)* | a `nta_…` bearer token from your ticketing profile (secret) |
 
 Frontend settings are build-time env vars (Create React App) in `frontend/.env.local` — copy
 `frontend/.env.example` to get started:
@@ -72,7 +71,7 @@ The whole stack -- Postgres, backend, frontend, and the TLS-terminating proxy --
 `docker-compose.yml`:
 
 ```bash
-cp .env.example .env      # fill in POSTGRES_PASSWORD, HOTJAR_SITE_ID, Jira token
+cp .env.example .env      # fill in POSTGRES_PASSWORD, HOTJAR_SITE_ID, TICKETING_API_TOKEN
 docker compose up -d --build
 ```
 

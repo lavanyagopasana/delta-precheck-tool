@@ -8,12 +8,12 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 /**
- * A tracked ticket (e.g. a Jira issue) raised against a specific workspace combination -- a server
+ * A tracked ticket (a Neutara Ticketing issue) raised against a specific workspace combination -- a server
  * can have several combinations, each migrated independently, so a ticket about one combination's
  * migration shouldn't show up against every other combination on the same server. Deliberately
  * minimal otherwise: the source of truth for details lives in the external ticket system, so beyond
- * the Jira snapshot fields below we only store a link plus the bare tracking state (open vs
- * resolved) needed to surface it on the dashboard and NavBar badge.
+ * the snapshot fields below we only store a link plus the bare tracking state (open vs resolved)
+ * needed to surface it on the dashboard and NavBar badge.
  */
 @Entity
 @Table(name = "tickets", indexes = {
@@ -58,9 +58,16 @@ public class Ticket {
     @Column(nullable = false)
     private TicketStatus status = TicketStatus.OPEN;
 
-    // Read-only snapshot of what Jira reported at logging time (see JiraService) -- not live-synced,
-    // so if the Jira issue changes afterward these don't follow automatically. Nullable: tickets
-    // logged before this field existed, or logged while Jira lookup was unavailable, won't have it.
+    // Read-only snapshot of what the ticketing system reported at logging time (see
+    // TicketLookupService) -- not live-synced, so if the issue changes afterward these don't follow
+    // automatically until syncOpenTicketsFromTracker's poll notices. Nullable: tickets logged before
+    // this field existed, or logged while lookup was unavailable, won't have it.
+    //
+    // Named jira* for a now-retired provider (Jira was replaced by Neutara on 2026-08-18) and
+    // deliberately NOT renamed: ddl-auto=update cannot rename a column, it would add empty new ones
+    // and silently orphan every existing ticket's snapshot. These names are also the JSON field names
+    // TicketDto already exposes to the frontend. Renaming means a hand-written ALTER plus a
+    // coordinated frontend/snapshot change -- worth doing deliberately, not as a side effect.
     @Column(name = "jira_key")
     private String jiraKey;
 
