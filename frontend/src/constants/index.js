@@ -2,13 +2,22 @@
 // attachment limit was declared identically in the tickets page and PreCheckPanel) can't drift
 // out of sync. Values are unchanged from their previous inline definitions.
 
-// Max size for an evidence/attachment upload, in megabytes. Mirrors the backend multipart cap
-// (spring.servlet.multipart.max-file-size=1GB) AND the proxy's client_max_body_size. All three have
-// to agree; if this one is the smallest, the extra headroom the others allow is unreachable.
+// Max size for an evidence/attachment upload, in megabytes. THREE limits must agree or the largest
+// is a fiction:
+//   1. this constant
+//   2. spring.servlet.multipart.max-file-size in application.properties
+//   3. client_max_body_size on whatever proxy terminates TLS and routes /api
+// Raise one without the others and uploads fail at whichever is smallest, with an error that gets
+// less useful the further out the rejection happens.
 //
-// Checked client-side purely so the user finds out in a second instead of after pushing 1GB up a
-// slow link only to be rejected. It is not a security control -- the backend limit is.
-export const MAX_EVIDENCE_FILE_SIZE_MB = 1024;
+// 25MB, not the 1GB this was briefly set to: evidence in practice is screenshots (1-5MB), and 1GB
+// meant a limit nothing enforced end-to-end plus real OutOfMemoryError exposure under concurrency.
+// 25MB is roughly 5x the largest screenshot anyone attaches and still small enough that the proxy
+// and Tomcat settings around it stay conservative.
+//
+// Checked client-side purely so the user finds out in a second instead of after pushing the file up
+// a slow link only to be rejected. It is not a security control -- the backend limit is.
+export const MAX_EVIDENCE_FILE_SIZE_MB = 25;
 
 // Human-readable form of the limit above. 1024MB is technically accurate and reads badly in a
 // sentence like "larger than the 1024MB attachment limit", so the UI says "1GB".
