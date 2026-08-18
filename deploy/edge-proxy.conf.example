@@ -44,14 +44,15 @@ server {
     # error. The app limit has since been raised to 1GB, which widens that gap to 1000x until this
     # line is applied.
     #
-    # This MUST stay >= spring.servlet.multipart.max-file-size (now 1GB, raised so a full screen
-    # recording of a Delta run can be attached). If you raise the Spring limit, raise this too, or the
-    # app's limit silently becomes a fiction again.
+    # This MUST stay >= spring.servlet.multipart.max-file-size, which is 25MB. If you change the
+    # Spring limit, change this too, or the app's limit silently becomes a fiction again.
     #
-    # At 1GB the timeouts below matter as much as the size: a slow link can take many minutes and the
-    # nginx defaults (60s) will kill the upload midway with no useful error.
+    # 25MB, not the 1GB this file briefly specified: evidence in practice is screenshots (1-5MB), and
+    # a 1GB ceiling bought nothing while exposing the backend to real OutOfMemoryError risk under
+    # concurrency. Even at 25MB this line is still required -- nginx's 1m default rejects an ordinary
+    # screenshot, so there is no "images only" case where the default is survivable.
     # =============================================================================================
-    client_max_body_size 1g;
+    client_max_body_size 25m;
 
     # ---------------------------------------------------------------------------------------------
     # BUG-003 (Medium) — the deployed CSP was permissive enough to be near-inert.

@@ -4,6 +4,7 @@ import { getAccessToken } from "../auth/getAccessToken";
 // Backend origin resolves at runtime (deploy-time file first, then build-time env, then this page's
 // own origin) so a bundle built anywhere works anywhere -- see config/runtimeConfig.js.
 import { BACKEND_BASE } from "../config/runtimeConfig";
+import { MAX_EVIDENCE_FILE_SIZE_LABEL } from "../constants";
 
 const API_BASE = `${BACKEND_BASE}/api`;
 
@@ -15,6 +16,50 @@ client.interceptors.request.use(async (config) => {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
+});
+
+// Every error the app surfaces comes from GlobalExceptionHandler as
+// {timestamp,status,error,message}, and the UI reads err.response.data.message. A rejection that
+// happens BEFORE the request reaches Spring does not follow that shape: a reverse proxy answers
+// with its own HTML error page, so the UI finds no message and shows nothing useful. That is not
+// hypothetical -- measured on the deployed site 2026-08-12, an evidence upload over the proxy's
+// client_max_body_size returned a raw nginx "413 Request Entity Too Large" HTML page and the
+// upload appeared to fail for no stated reason.
+//
+// This normalises those cases into the same shape the rest of the app already handles, so a
+// misconfigured proxy produces an error that names itself instead of a mystery.
+client.interceptors.response.use(undefined, (error) => {
+  const response = error.response;
+  if (!response) return Promise.reject(error);
+
+  const body = response.data;
+  const isJsonEnvelope = body && typeof body === "object" && typeof body.message === "string";
+  if (isJsonEnvelope) return Promise.reject(error);
+
+  if (response.status === 413) {
+    response.data = {
+      status: 413,
+      error: "Payload Too Large",
+      message:
+        `That file is larger than the server accepts (limit ${MAX_EVIDENCE_FILE_SIZE_LABEL}). ` +
+        `If the file is under that, a proxy in front of the app is rejecting it first and its ` +
+        `client_max_body_size needs raising to match.`,
+    };
+    return Promise.reject(error);
+  }
+
+  // Any other non-JSON error body means something upstream of the app answered -- a gateway,
+  // a load balancer, a proxy returning its own page. Say so rather than rendering nothing.
+  if (typeof body === "string" || body == null) {
+    response.data = {
+      status: response.status,
+      error: response.statusText || "Request failed",
+      message:
+        `The server returned ${response.status} without an application error. This usually means a ` +
+        `proxy or gateway answered instead of the app.`,
+    };
+  }
+  return Promise.reject(error);
 });
 
 export const FILE_BASE = BACKEND_BASE;
