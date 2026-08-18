@@ -1,0 +1,403 @@
+# CI/CD for delta-precheck-tool.
+#
+# One file rather than two on purpose: the deploy job declares `needs` on the three test jobs, so
+# GitHub itself guarantees nothing reaches the server unless the full suite passed on that exact
+# commit. Split across two workflow files, the link would have to be a `workflow_run` trigger --
+# which resolves the workflow definition from the default branch rather than from the commit being
+# deployed, and is a well-known way to end up shipping a deploy that skipped its own tests.
+#
+# Nothing ran these suites automatically before this file existed, so a red X here is the first
+# automated signal this project has ever had. Treat it as real rather than as noise to re-run.
+
+name: CI/CD
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Also deploy to production after tests pass"
+        type: boolean
+        default: false
+
+# A superseded test run is just wasted minutes; a superseded *deploy* is dangerous, so the deploy
+# job overrides this with its own non-cancelling concurrency group below.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend-tests:
+    name: Backend tests (JUnit + H2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No Maven wrapper exists in this repo (there is no backend/mvnw), so the runner's own Maven
+      # is used. If a wrapper is ever added, switch this to ./mvnw so CI and local builds pin the
+      # same Maven version instead of drifting apart silently.
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+
+      # Tests run against H2 via backend/src/test/resources/application-test.properties -- never a
+      # real Postgres, and never the shared dev database (.claude/rules/testing-standard.md). That
+      # is why this job needs no database service container.
+      - name: mvn test
+        working-directory: backend
+        run: mvn -B -ntp test
+
+      # EndpointCharacterizationTest STRICT-compares endpoint JSON against committed goldens under
+      # src/test/resources/snapshots/. A failure reading "Unexpected: <field>" is not flaky -- it
+      # means a DTO gained a field. The fix is to regenerate the snapshot locally and review the
+      # diff (CLAUDE.md), and having the reports attached to the run is what makes that diagnosable
+      # without reproducing the whole build locally first.
+      - name: Upload surefire reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: backend/target/surefire-reports/
+          if-no-files-found: ignore
+
+  frontend-tests:
+    name: Frontend tests (Jest + RTL)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci
+
+      # CI=true is what makes react-scripts test exit instead of entering watch mode. Without it
+      # this step hangs until the job timeout rather than failing, which reads as an infra problem
+      # instead of a missing flag.
+      - name: Run tests
+        working-directory: frontend
+        env:
+          CI: 'true'
+        run: npx react-scripts test --watchAll=false
+
+  docker-build:
+    name: Docker images build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      # Build-only, no push. This job exists to catch the class of failure the test jobs cannot see:
+      # a Dockerfile that no longer builds, or a frontend build arg added to docker-compose.yml
+      # without a matching ARG in frontend/Dockerfile -- which has already shipped a bundle with
+      # clientId:"" once (see frontend/Dockerfile's own comment on that incident).
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      # Built with the real Entra ID identifiers rather than blanks, deliberately. Neither value is
+      # a secret (both ship inside client-side JavaScript), and a blank AZURE_CLIENT_ID is this
+      # project's known silently-open footgun -- so a build that proves the wiring carries a real
+      # value is worth more than one that bakes in empty strings and passes anyway.
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          build-args: |
+            REACT_APP_AZURE_CLIENT_ID=a55e053f-bfe9-4b4a-8b74-362649f82cf0
+            REACT_APP_AZURE_TENANT_ID=66d8848d-26b6-4147-8124-127624d7b3a6
+            REACT_APP_API_BASE=
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  deploy:
+    name: Deploy to production
+    needs: [backend-tests, frontend-tests, docker-build]
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.deploy)
+    runs-on: ubuntu-latest
+
+    # Add required reviewers (or a deployment branch rule) to this environment under repo
+    # Settings -> Environments to make every production deploy wait on a human click.
+    environment:
+      name: production
+      url: ${{ vars.DEPLOY_HEALTH_BASE || 'https://deltaprechecks.cftools.live' }}
+
+    # cancel-in-progress is FALSE here, unlike the workflow-level group above. Cancelling a deploy
+    # part-way through `docker compose up` leaves the stack half-recreated with no record of which
+    # half, which is materially worse than letting two deploys queue.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+
+    steps:
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_SSH_KEY:-}" ] || [ -z "${DEPLOY_HOST:-}" ]; then
+            echo "::error::DEPLOY_SSH_KEY and DEPLOY_HOST are not set. See deploy/CI-CD.md for setup."
+            exit 1
+          fi
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # Pinning the host key via a secret is what makes this connection genuinely authenticated.
+          # ssh-keyscan is trust-on-first-use: it accepts whatever answers at that address, so a
+          # man-in-the-middle on the first connection is undetectable. It stays as a fallback so a
+          # half-configured repo fails loudly at the deploy rather than at the SSH handshake, but it
+          # warns every time -- set DEPLOY_KNOWN_HOSTS (`ssh-keyscan -p <port> <host>`, run from a
+          # machine you trust) to close it.
+          if [ -n "${DEPLOY_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::DEPLOY_KNOWN_HOSTS not set - falling back to ssh-keyscan (trust-on-first-use)."
+            ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" > ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Preflight (refuse to deploy into a state that would break the site)
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'deploy' }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/delta-precheck-tool' }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" "DEPLOY_PATH='$DEPLOY_PATH' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$DEPLOY_PATH" || { echo "::error::$DEPLOY_PATH does not exist on the server"; exit 1; }
+
+          command -v docker >/dev/null || { echo "::error::docker is not on PATH for this user"; exit 1; }
+          docker compose version >/dev/null 2>&1 || { echo "::error::docker compose v2 is unavailable"; exit 1; }
+          docker info >/dev/null 2>&1 || { echo "::error::this user cannot reach the docker daemon"; exit 1; }
+
+          # .env is gitignored and holds POSTGRES_PASSWORD and TICKETING_API_TOKEN, so CI can never
+          # supply it. Compose interpolates a missing variable to an empty string instead of
+          # failing, and a blank AZURE_CLIENT_ID brings the backend up FULLY OPEN. An absent .env is
+          # therefore a hard stop, not a warning.
+          [ -f .env ] || { echo "::error::.env is missing in $DEPLOY_PATH - copy .env.example and fill it in"; exit 1; }
+
+          git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+            || { echo "::error::$DEPLOY_PATH is not a git checkout; this pipeline deploys by git"; exit 1; }
+
+          # THE guard this project actually needs. The compose file live on the server was written
+          # by hand there and is untracked, while the repo now ships its own at the same path.
+          # `git reset --hard` overwrites an untracked file that exists in the target commit WITHOUT
+          # complaining, so an unguarded deploy would silently swap the server's
+          # 127.0.0.1:8532/8533 mappings for a proxy container that binds :80 and :443 -- and
+          # immediately loses a fight with host nginx over 443. deploy/DEPLOY.md documents that
+          # transition as a one-time manual cutover. Refuse to automate it.
+          if [ -f docker-compose.yml ] && ! git ls-files --error-unmatch docker-compose.yml >/dev/null 2>&1; then
+            echo "::error::docker-compose.yml here is untracked (hand-written on the server), but the"
+            echo "::error::incoming commit tracks one at the same path. Deploying would overwrite it and"
+            echo "::error::start a proxy container that collides with host nginx on :443."
+            echo "::error::Work through the cutover in deploy/DEPLOY.md by hand, then re-run this deploy."
+            exit 1
+          fi
+
+          # A tracked file edited directly on the server means somebody hotfixed in place. Reporting
+          # it and stopping is better than discarding their change without telling anyone.
+          if ! git diff --quiet HEAD -- .; then
+            echo "::error::tracked files are modified on the server:"
+            git diff --name-only HEAD -- . | sed 's/^/::error::  /'
+            echo "::error::Commit or discard them there, then re-run this deploy."
+            exit 1
+          fi
+          echo "Preflight OK on $(hostname) at $DEPLOY_PATH"
+          REMOTE
+
+      - name: Back up the database before anything changes
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'deploy' }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/delta-precheck-tool' }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" "DEPLOY_PATH='$DEPLOY_PATH' SHA='$SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+
+          # This runs before the checkout, not after, and that ordering is the whole point. The
+          # schema is Hibernate ddl-auto=update: the new code alters the live database on startup
+          # with no migration file and no down-migration. The rollback step can restore the previous
+          # code but cannot restore the previous schema, so old code would then run against a shape
+          # it never saw. This dump is the only thing that makes that state recoverable.
+
+          # Read the two values out of .env rather than sourcing it. `. ./.env` would execute the
+          # file, and it holds POSTGRES_PASSWORD and TICKETING_API_TOKEN -- a value containing a
+          # backtick or $(...) would run as a command.
+          PGUSER="$(sed -n 's/^POSTGRES_USER=//p' .env | tail -1 | tr -d '\042\047')"
+          PGDB="$(sed -n 's/^POSTGRES_DB=//p' .env | tail -1 | tr -d '\042\047')"
+          if [ -z "$PGUSER" ] || [ -z "$PGDB" ]; then
+            echo "::error::POSTGRES_USER / POSTGRES_DB not found in .env - cannot take a backup"
+            exit 1
+          fi
+
+          # The live compose file calls the database service `postgres`; the repo's calls it `db`.
+          # Both names are checked so this step works either side of the cutover rather than only
+          # after it.
+          SVC=""
+          for candidate in db postgres; do
+            if docker compose ps --services --filter status=running 2>/dev/null | grep -qx "$candidate"; then
+              SVC="$candidate"; break
+            fi
+          done
+          if [ -z "$SVC" ]; then
+            echo "::warning::no running database service (tried 'db' and 'postgres') - skipping backup."
+            echo "::warning::Expected on a first deploy, when there is no data to lose. Not expected otherwise."
+            exit 0
+          fi
+
+          mkdir -p db_backups   # gitignored, so `git reset --hard` below leaves it alone
+          STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+          OUT="db_backups/pre-deploy-${STAMP}-${SHA:0:8}.sql.gz"
+
+          echo "Dumping database '$PGDB' from service '$SVC' to $OUT"
+          # -T because there is no TTY on a CI runner. Without it docker refuses to run.
+          docker compose exec -T "$SVC" pg_dump -U "$PGUSER" "$PGDB" | gzip > "$OUT"
+
+          # A dump that silently produced nothing is worse than no dump at all, because it looks
+          # like protection that is not there. Verify rather than trust the exit code: pg_dump's
+          # status is masked by the pipe into gzip.
+          gzip -t "$OUT" || { echo "::error::backup is not a valid gzip file"; rm -f "$OUT"; exit 1; }
+          if ! gzip -dc "$OUT" | head -20 | grep -q "PostgreSQL database dump"; then
+            echo "::error::backup does not look like a pg_dump - refusing to deploy behind it"
+            rm -f "$OUT"; exit 1
+          fi
+          echo "Backup OK: $(du -h "$OUT" | cut -f1) at $OUT"
+
+          # Keep the ten most recent. These are uncompressed-schema-plus-data dumps of a tracker
+          # database, not large, but unbounded growth on a production disk is its own outage.
+          ls -1t db_backups/pre-deploy-*.sql.gz 2>/dev/null | tail -n +11 | xargs -r rm -f
+          echo "Retained: $(ls -1 db_backups/pre-deploy-*.sql.gz 2>/dev/null | wc -l) backup(s)"
+          REMOTE
+
+      - name: Deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'deploy' }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/delta-precheck-tool' }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" "DEPLOY_PATH='$DEPLOY_PATH' SHA='$SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+
+          # Recorded before anything changes, so the rollback step has a revision to return to.
+          PREV="$(git rev-parse HEAD)"
+          echo "$PREV" > .deploy-previous-sha
+          echo "Previous revision: $PREV"
+
+          # Checking out the exact SHA that passed tests, not a branch tip. `git pull` would take
+          # whatever landed on main in the minutes since -- untested code, deployed under the label
+          # of a green run.
+          git fetch --quiet origin "$SHA" || git fetch --quiet origin
+          git reset --hard "$SHA"
+          echo "Now at: $(git log -1 --oneline)"
+
+          # --build because this compose file builds from local context; there is no registry in
+          # this setup. --remove-orphans clears containers left by a previous compose file whose
+          # service names differ (the live file calls the database `postgres`, the repo calls it
+          # `db`); without it the old container keeps running and holding its volume.
+          docker compose up -d --build --remove-orphans
+          docker compose ps
+          REMOTE
+
+      - name: Health check
+        env:
+          BASE: ${{ vars.DEPLOY_HEALTH_BASE || 'https://deltaprechecks.cftools.live' }}
+        run: |
+          set -euo pipefail
+          echo "Probing $BASE"
+          FRONT=000
+          API=000
+
+          # Spring needs a moment after the container reports as running, so a single immediate curl
+          # reports a false failure. Ten tries at six seconds covers a cold JVM start comfortably.
+          for i in $(seq 1 10); do
+            FRONT=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$BASE/" || echo 000)
+            API=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$BASE/api/me" || echo 000)
+            echo "attempt $i: frontend=$FRONT api/me=$API"
+            if [ "$FRONT" = "200" ] && [ "$API" != "000" ]; then
+              break
+            fi
+            sleep 6
+          done
+
+          [ "$FRONT" = "200" ] || { echo "::error::frontend did not return 200 (got $FRONT)"; exit 1; }
+
+          # 401 is the PASS here and 200 is the alarm. An unauthenticated /api/me answering 200 means
+          # AZURE_CLIENT_ID resolved blank, every /api route became permitAll, and the backend is
+          # serving the entire app with no authentication at all -- a state in which it starts
+          # cleanly and every page renders, so nothing else catches it. That has already been a real
+          # incident on this project once (.claude/rules/security-rules.md).
+          if [ "$API" = "200" ]; then
+            echo "::error::/api/me returned 200 unauthenticated - the backend is running FULLY OPEN."
+            echo "::error::AZURE_CLIENT_ID is blank in the server's .env. Failing so this rolls back."
+            exit 1
+          fi
+          [ "$API" = "401" ] || echo "::warning::/api/me returned $API (401 expected). Worth a look."
+          echo "Health check passed: frontend 200, /api/me $API (authentication enforced)."
+
+      - name: Roll back on failure
+        if: failure()
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'deploy' }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/delta-precheck-tool' }}
+        run: |
+          set -euo pipefail
+          # Best-effort by design: if the failure happened in Configure SSH or Preflight then nothing
+          # on the server changed, so this reports no work to do rather than a second failure.
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" "DEPLOY_PATH='$DEPLOY_PATH' bash -s" <<'REMOTE' || true
+          set -uo pipefail
+          cd "$DEPLOY_PATH" 2>/dev/null || exit 0
+          echo "--- container state at failure ---"
+          docker compose ps || true
+          echo "--- last 80 log lines ---"
+          docker compose logs --tail=80 || true
+          [ -f .deploy-previous-sha ] || { echo "nothing was deployed, no rollback needed"; exit 0; }
+          PREV="$(cat .deploy-previous-sha)"
+          if [ "$PREV" = "$(git rev-parse HEAD)" ]; then
+            echo "already at $PREV, no rollback needed"
+            exit 0
+          fi
+          echo "Rolling back to $PREV"
+          git reset --hard "$PREV"
+          docker compose up -d --build --remove-orphans
+          docker compose ps
+          REMOTE
+          echo "::error::Deploy failed. A rollback was attempted - see the container state and logs above."
