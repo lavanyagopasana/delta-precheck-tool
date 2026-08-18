@@ -80,6 +80,10 @@ function resolve(runtimeKey, buildTimeValue, { treatLoopbackAsUnset = false } = 
 export const AZURE_CLIENT_ID = resolve("azureClientId", process.env.REACT_APP_AZURE_CLIENT_ID);
 export const AZURE_TENANT_ID = resolve("azureTenantId", process.env.REACT_APP_AZURE_TENANT_ID);
 
+// Blank means Hotjar is off, which is the default everywhere. Resolved with the loopback check off:
+// it is an identifier, not a URL, so "does this point at localhost" is meaningless for it.
+export const HOTJAR_SITE_ID = resolve("hotjarSiteId", process.env.REACT_APP_HOTJAR_SITE_ID);
+
 export const AZURE_REDIRECT_URI =
   resolve("azureRedirectUri", process.env.REACT_APP_AZURE_REDIRECT_URI, {
     treatLoopbackAsUnset: true,

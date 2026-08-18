@@ -7,6 +7,7 @@ import { ConfirmProvider } from "./components/ConfirmDialog";
 import { AUTH_CONFIGURED, ALLOWED_EMAIL_DOMAIN } from "./auth/authConfig";
 import { CurrentUserContext } from "./auth/CurrentUserContext";
 import { getCurrentUser } from "./api/client";
+import { identifyHotjarUser } from "./analytics/hotjar";
 
 // Route components are code-split: each becomes its own lazily-loaded chunk so the initial bundle
 // only carries the shell (NavBar, providers) plus whichever route the user actually lands on.
@@ -98,6 +99,13 @@ function AccessGate({ children }) {
     checkAccess();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [domainOk]);
+
+  // Attribute the session once /api/me has resolved -- this is the first point where both email and
+  // role are known. Deliberately not gated on me.allowed: a denied user's session is exactly the one
+  // worth seeing, since it means somebody was granted a role that never reached the app.
+  useEffect(() => {
+    if (me?.email) identifyHotjarUser(me);
+  }, [me]);
 
   if (!domainOk) {
     return (

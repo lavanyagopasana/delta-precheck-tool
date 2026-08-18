@@ -100,6 +100,11 @@ export default function AttachmentPreview({ filePath, fileName, caption, variant
               }
         }
         title={displayName}
+        // Suppressed from Hotjar recordings: evidence is uploaded by engineers straight from customer
+        // tenants, so both the file name and an image thumbnail routinely carry customer identifiers.
+        // Applied to the whole chip rather than just the name so the thumbnail goes with it. Covers
+        // every evidence render site, since PreCheckPanel and DeltaHistoryPanel both come through here.
+        data-hj-suppress=""
       >
         {showThumb ? (
           <img
@@ -171,6 +176,10 @@ export default function AttachmentPreview({ filePath, fileName, caption, variant
         >
           <div
             onClick={(e) => e.stopPropagation()}
+            // Same reason as the chip, and more so: the open preview renders the evidence file itself
+            // (a screenshot of a customer tenant, a CSV of their mailboxes), which is the single most
+            // sensitive thing this app puts on screen.
+            data-hj-suppress=""
             style={{
               background: "var(--color-surface)",
               borderRadius: 10,

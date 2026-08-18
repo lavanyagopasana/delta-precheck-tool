@@ -31,4 +31,18 @@ window.__APP_CONFIG__ = {
   // app registration without rebuilding.
   azureClientId: "",
   azureTenantId: "",
+
+  // Hotjar Site ID (digits only, e.g. "3847291") -- found in Hotjar under Settings -> Sites &
+  // Organizations, or as `hjid` in the tracking snippet Hotjar shows you. Not a secret: it ships
+  // inside client-side JavaScript that any visitor can read, which is why it belongs here.
+  //
+  // Normally left "" -- the deployed value comes from REACT_APP_HOTJAR_SITE_ID, passed to
+  // `docker build --build-arg` (see frontend/Dockerfile). Blank here and blank there means Hotjar is
+  // fully off: no script requested, no session recorded, which is the state on developer machines.
+  //
+  // Set it here only to override a build: because runtime wins over build-time, writing an ID in this
+  // file on the server turns recording on for a bundle built without one, and writing "" cannot turn
+  // it off (a blank runtime value falls through to the baked-in build value). To switch recording OFF
+  // for a build that has it baked in, rebuild without the build-arg.
+  hotjarSiteId: "",
 };

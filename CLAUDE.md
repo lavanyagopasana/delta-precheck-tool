@@ -205,6 +205,7 @@ frontend/src/
 | (frontend) `REACT_APP_AZURE_TENANT_ID` | — | Set in `frontend/.env.local`, same value as backend's `AZURE_TENANT_ID` |
 | (frontend) `REACT_APP_ALLOWED_EMAIL_DOMAIN` | *(blank)* | |
 | (frontend) `REACT_APP_API_BASE` | `http://localhost:8081` | Backend origin, no `/api` suffix, no trailing slash — set for a deployed backend |
+| (frontend) `REACT_APP_HOTJAR_SITE_ID` | *(blank)* | Hotjar Site ID, digits only (site `DeltaPrechecks`). Blank disables Hotjar entirely — no script requested, which is the intended state locally. Baked into the bundle at build time like every `REACT_APP_*`, so the image needs `--build-arg REACT_APP_HOTJAR_SITE_ID=...` (the `ARG` is declared in `frontend/Dockerfile`); `docker run -e` is silently ignored. `hotjarSiteId` in `frontend/public/runtime-config.js` stays blank and exists only as a post-build override to turn recording ON for a bundle built without it. See `frontend/src/analytics/hotjar.js` |
 
 ## Common Commands
 

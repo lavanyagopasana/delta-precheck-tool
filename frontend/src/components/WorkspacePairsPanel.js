@@ -311,17 +311,28 @@ export default function WorkspacePairsPanel({
               // columns and every pair's paths are null. Rendering them anyway gave two columns of em
               // dashes that read as missing data rather than "not applicable", and contradicted the
               // two-column format shown under CSV format. Same predicate as the CSV shapes use.
+              // Every column here is marked sensitive: these are the CUSTOMER's end-user mailboxes and
+              // folder paths, imported from their CSV, not CloudFuze staff. Session recording is on for
+              // internal-usage visibility, and CloudFuze does not own the consent to ship a customer's
+              // mailbox list to a third party as a side effect of that. Filtering and sorting still
+              // work normally -- suppression only affects what Hotjar captures. See DataTable's
+              // `sensitive` handling and analytics/hotjar.js.
               columns={
                 usesTwoColumnCsv(data.productType)
                   ? [
-                      { key: "sourceEmail", label: "Source Email" },
-                      { key: "destinationEmail", label: "Destination Email" },
+                      { key: "sourceEmail", label: "Source Email", sensitive: true },
+                      { key: "destinationEmail", label: "Destination Email", sensitive: true },
                     ]
                   : [
-                      { key: "sourceEmail", label: "Source Email" },
-                      { key: "sourcePath", label: "Source Path", render: (p) => p.sourcePath || "-" },
-                      { key: "destinationEmail", label: "Destination Email" },
-                      { key: "destinationPath", label: "Destination Path", render: (p) => p.destinationPath || "-" },
+                      { key: "sourceEmail", label: "Source Email", sensitive: true },
+                      { key: "sourcePath", label: "Source Path", sensitive: true, render: (p) => p.sourcePath || "-" },
+                      { key: "destinationEmail", label: "Destination Email", sensitive: true },
+                      {
+                        key: "destinationPath",
+                        label: "Destination Path",
+                        sensitive: true,
+                        render: (p) => p.destinationPath || "-",
+                      },
                     ]
               }
             />
