@@ -29,25 +29,41 @@ ls /etc/letsencrypt/live/deltaprechecks.cftools.live/fullchain.pem
 The proxy mounts `/etc/letsencrypt` read-only and will refuse to start without this. Certbot keeps
 owning renewal; the container only reads.
 
-### 2. Move any existing uploads onto the volume
+### 2. Confirm the existing volumes are the ones this file will use
 
-Skip only if you are certain no evidence has ever been uploaded. If the backend previously ran
-without a mounted volume, its files are inside the old container and will be lost when it is
-removed.
+**No data migration is needed, and that is on purpose.** `docker-compose.yml` declares
+`delta_pg_data` and `delta_backend_uploads` — the same names the hand-written compose file on the
+server has been using all along. The stack therefore attaches to the database and uploads you
+already have.
+
+That is a constraint, not a coincidence, and this step exists to verify it rather than assume it:
+
+```bash
+docker volume ls | grep delta
+```
+
+Expect `delta-precheck-tool_delta_pg_data` and `delta-precheck-tool_delta_backend_uploads`. Compose
+prefixes every volume with the project name, and `docker-compose.yml` pins that name (`name:
+delta-precheck-tool`) rather than letting it be inferred from the directory — so these resolve the
+same way no matter where the checkout sits on disk, and moving or renaming the folder no longer
+points the stack at a different, empty database.
+
+**If either name is missing, stop.** A name mismatch does not fail and does not warn: compose
+creates a new empty volume, Postgres initialises a fresh database, Hibernate builds every table from
+the entities, `AdminBootstrap` seeds the first admin into what looks like a brand-new install, and
+the site comes up with no projects, no servers, and no `DeltaCycle` history. The real data is still
+there in the old volume, unreferenced — recoverable, but only if somebody notices before work gets
+entered into the empty one. See the comment in `docker-compose.yml`'s `volumes:` block.
+
+The one case that *does* need a copy is a backend that previously ran with **no** mounted volume at
+all: its uploads are inside the container and vanish when it is removed.
 
 ```bash
 docker cp <old-backend-container>:/data/uploads/. ./uploads-backup/
-```
-
-Restore them after step 5:
-
-```bash
-docker run --rm -v delta-precheck-tool_backend-uploads:/dest \
+# then, after step 5:
+docker run --rm -v delta-precheck-tool_delta_backend_uploads:/dest \
   -v "$PWD/uploads-backup":/src alpine sh -c "cp -a /src/. /dest/"
 ```
-
-Check the volume name first with `docker volume ls` — compose prefixes it with the project
-directory name.
 
 ### 3. Validate the proxy config BEFORE freeing the ports
 
@@ -144,12 +160,12 @@ Two volumes hold everything that cannot be rebuilt from git:
 ```bash
 docker compose exec db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backup-$(date +%F).sql
 
-docker run --rm -v delta-precheck-tool_backend-uploads:/src -v "$PWD":/dest \
+docker run --rm -v delta-precheck-tool_delta_backend_uploads:/src -v "$PWD":/dest \
   alpine tar czf /dest/uploads-$(date +%F).tar.gz -C /src .
 ```
 
 **Back both up together.** Postgres holds only the path to each evidence file; the bytes live in
-`backend-uploads`. A database restored against a wiped uploads volume gives you pre-checks whose
+`delta_backend_uploads`. A database restored against a wiped uploads volume gives you pre-checks whose
 attachments 404, with no way to tell which were lost.
 
 ## Rolling back

@@ -1,6 +1,6 @@
 # Full production stack: database, backend, frontend, and the TLS-terminating proxy.
 #
-# backend/Dockerfile has referenced "docker-compose.yml's backend-uploads volume" since it was
+# backend/Dockerfile has referenced "docker-compose.yml's uploads volume" since it was
 # written, but no such file existed. That is not a cosmetic gap: without the volume declared below,
 # every uploaded evidence file lives only inside the backend container and is destroyed the moment
 # it is recreated -- which a redeploy does. The evidence_file_path rows in Postgres survive, so the
@@ -20,6 +20,18 @@
 # Read deploy/DEPLOY.md before the first run. Switching from a host nginx to this needs a cutover,
 # not just a start.
 
+# Pinned, not inferred. Compose otherwise derives the project name from the directory it is run
+# from, and the project name is the prefix on every volume -- so a checkout at a path ending in
+# anything other than "delta-precheck-tool" would resolve delta_pg_data to a DIFFERENT volume than
+# the one production data lives in, with the silent-empty-database consequence described in the
+# volumes: block at the bottom of this file. Pinning it here makes the volume names independent of
+# where the repo happens to sit on disk.
+#
+# It also bounds what a deploy can touch. This server runs other applications under Docker; every
+# `docker compose` command in deploy/CI-CD.md's pipeline is scoped to this project name, so it can
+# start, stop, rebuild and remove orphans here without reaching another app's containers.
+name: delta-precheck-tool
+
 services:
   db:
     image: postgres:16-alpine
@@ -29,7 +41,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - delta_pg_data:/var/lib/postgresql/data
     # Deliberately no `ports:` -- the database is reachable only from the compose network. Exposing
     # 5432 on the host would put it on the public internet on most cloud images.
     healthcheck:
@@ -79,7 +91,7 @@ services:
       # THE line this whole file existed to provide. Named volume, so it survives every redeploy,
       # image rebuild, and container recreation. Back it up with the database, not separately --
       # only the path is in Postgres, the bytes are here.
-      - backend-uploads:/data/uploads
+      - delta_backend_uploads:/data/uploads
 
   frontend:
     build:
@@ -124,6 +136,21 @@ services:
       - certbot-webroot:/var/www/certbot
 
 volumes:
-  postgres-data:
-  backend-uploads:
+  # These two names are NOT free to rename, and are deliberately not the tidier postgres-data /
+  # backend-uploads they started as. They match the volumes the production server has been writing
+  # to since before this file existed (declared in the compose file that was hand-written on the
+  # box), which compose resolves as delta-precheck-tool_delta_pg_data and
+  # delta-precheck-tool_delta_backend_uploads.
+  #
+  # Rename either one and `docker compose up` does not migrate anything or warn -- it creates a new
+  # empty volume, Postgres initialises a fresh database, Hibernate creates every table via
+  # ddl-auto=update, AdminBootstrap sees an empty app_users and seeds the first admin, and the site
+  # comes up looking cleanly wiped: no projects, no servers, no DeltaCycle decline history. The real
+  # data is still on disk in the old volume, unreferenced, and `--remove-orphans` will not touch it
+  # (it removes orphaned containers, not volumes) -- but nothing surfaces the problem, and any work
+  # entered in that state splits the history across two volumes.
+  delta_pg_data:
+  delta_backend_uploads:
+  # No matching constraint here: the proxy container is new, so this volume has no prior data and
+  # its name was never pinned by anything.
   certbot-webroot:
