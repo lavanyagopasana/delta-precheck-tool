@@ -139,7 +139,12 @@ signing in with the auto-provision domain (default `cloudfuze.com`) is silently 
   pre-check/sign-off, manually-created escalations, the real CSV column aliases, current env var
   list). If it and the entities/services (`.claude/memory/domain-knowledge.md`) ever disagree
   again, trust the code — but as of this rewrite there's no known discrepancy.
-- **No tests exist.** Don't assume a testing pattern is already established; `.claude/rules/testing-standard.md` defines the target standard for new code.
+- **Tests exist and are the pattern to copy** — backend 22 files / 166 `@Test` methods, frontend 7
+  files / 53 tests (frontend counts verified 2026-08-18 by running the suite; backend counted from
+  source, not re-run). This bullet previously read "No tests exist", which contradicted the Tech
+  Stack section two screens above it and was wrong for long enough to be worth calling out. Look at
+  a neighbouring test before writing a new one; `.claude/rules/testing-standard.md` covers the areas
+  still uncovered.
 - **This is a real git repo**, pushed to `github.com/lavanyagopasana/delta-precheck-tool` (`main`
   branch) — normal git workflows apply.
 - **CORS origins are env-driven** (`SecurityConfig.java`, `app.allowed-origins`/`APP_ALLOWED_ORIGINS`)
