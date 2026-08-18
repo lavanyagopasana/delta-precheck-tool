@@ -66,6 +66,23 @@ Frontend settings are build-time env vars (Create React App) in `frontend/.env.l
 | `REACT_APP_ALLOWED_EMAIL_DOMAIN` | `cloudfuze.com` | as needed |
 | `REACT_APP_HOTJAR_SITE_ID` | *(blank)* | Hotjar Site ID (digits only) enabling session recording; blank disables it. Leave blank locally so your own sessions aren't recorded. Baked in at build time, so a container needs `docker build --build-arg REACT_APP_HOTJAR_SITE_ID=...` — setting it with `docker run -e` does nothing |
 
+## Deploy (Docker)
+
+The whole stack -- Postgres, backend, frontend, and the TLS-terminating proxy -- runs from
+`docker-compose.yml`:
+
+```bash
+cp .env.example .env      # fill in POSTGRES_PASSWORD, HOTJAR_SITE_ID, Jira token
+docker compose up -d --build
+```
+
+**Read [`deploy/DEPLOY.md`](deploy/DEPLOY.md) before the first run on a server that currently has a
+host nginx.** Moving TLS into the proxy container is a cutover, and certbot has to switch to webroot
+renewal once the container holds port 80.
+
+Everything that used to be a manual edit on the server -- `client_max_body_size`, the CSP, HTTP/2,
+rate limiting -- now lives in `deploy/proxy/default.conf.template` and is version-controlled.
+
 ## Run the backend
 
 ```bash
