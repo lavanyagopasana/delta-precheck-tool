@@ -78,13 +78,16 @@ thinking about it first.
   attribution — always compare case-insensitively (`.claude/rules/code-style.md`). A
   case-sensitivity bug here is a security bug (it could let someone bypass an "only the person who
   started this pre-check can submit it" check).
-- **`.gitignore` currently lists `backend/application.properties`, but the real file lives at
-  `backend/src/main/resources/application.properties`** — the ignore rule doesn't actually match
-  it. Today the file only contains non-sensitive local defaults (`root`/`root` DB credentials,
-  a placeholder SMTP username), but if real credentials are ever hardcoded there instead of left
-  as env-var defaults, they would **not** be excluded from git once this becomes a real repository.
-  Fix the `.gitignore` path (or better, never put real secrets in that file at all) before that
-  becomes a live risk.
+- **`backend/src/main/resources/application.properties` is tracked, on purpose, and always will be.**
+  It is the app's real configuration and nothing builds without it. `.gitignore` used to list
+  `backend/application.properties`, a path that matches no file that has ever existed here, which
+  advertised a protection that was not in force. That dead line is gone as of 2026-08-18 and the
+  `.gitignore` now says plainly why the file is tracked.
+  The invariant that replaces it: **every secret-shaped value in that file stays a
+  `${ENV_VAR:default}` placeholder.** As of 2026-08-18 all three (`spring.datasource.password`,
+  `spring.mail.password`, `jira.api-token`) do. Paste a literal password or API token in and it is
+  committed and pushed with the next change — there is no ignore rule standing between you and that.
+  Real credentials belong in the environment.
 - Uploaded evidence files (`backend/uploads/`) and DB backups (`db_backups/`) are already
   gitignored — keep it that way; these can contain customer data.
 
