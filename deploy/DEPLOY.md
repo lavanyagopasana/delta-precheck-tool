@@ -8,17 +8,35 @@ cp .env.example .env      # fill in POSTGRES_PASSWORD, HOTJAR_SITE_ID, TICKETING
 docker compose up -d --build
 ```
 
-That is the whole routine deploy. The rest of this file is the one-time cutover from the host
-nginx, and the things that will bite you if nobody wrote them down.
+That is the whole routine deploy, and in practice you should not be running it by hand at all --
+`deploy/CI-CD.md` covers the pipeline that does it, including the `.env` merge and a database backup.
+
+**The TLS-terminating proxy container does not start by default.** It sits behind a compose profile,
+so the stack comes up as database + backend + frontend on `127.0.0.1:8533` and `127.0.0.1:8532`, with
+the nginx installed on the host continuing to terminate TLS in front of them -- exactly how production
+has always run. That makes a deploy a like-for-like container swap with no fight over port 443.
+
+Enabling the containerised edge is an opt-in cutover, documented below. It is worth doing eventually
+-- it is what turns `client_max_body_size`, the CSP and the security headers into version-controlled
+files instead of hand-edits on a host with no record of who changed what -- but it needs a downtime
+window, so it is a decision rather than a side effect.
 
 ---
 
-## First time only: cutting over from the host nginx
+## Optional: cutting over from the host nginx to the proxy container
 
-Until now an nginx installed directly on the server terminated TLS and routed `/api`. The proxy
-container replaces it. Both want port 443, so this is a cutover, not a start.
+The nginx installed directly on the server terminates TLS and routes `/api` today, and nothing in the
+deploy pipeline changes that. This section is how you hand that job to the `proxy` container instead.
+Both want port 443, so it is a cutover, not a start, and the container only ever starts when you pass
+its profile:
 
-**Do this in a window where a few minutes of downtime is acceptable.**
+```bash
+docker compose --profile proxy up -d
+```
+
+**Not a prerequisite for deploying.** Skip this whole section and the pipeline works. Do it when you
+want the edge configuration under version control, in a window where a few minutes of downtime is
+acceptable.
 
 ### 1. Confirm the certificate exists where the container expects it
 
@@ -92,10 +110,13 @@ whichever loses stays down.
 ### 5. Bring the stack up
 
 ```bash
-docker compose up -d --build
+docker compose --profile proxy up -d --build
 docker compose ps
 docker compose logs -f proxy
 ```
+
+Note the `--profile proxy`. Without it the proxy container is not created at all, and you will have
+stopped the host nginx without starting anything to replace it.
 
 ### 6. Verify before walking away
 

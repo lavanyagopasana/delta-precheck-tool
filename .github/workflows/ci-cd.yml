@@ -217,19 +217,21 @@ jobs:
           git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
             || { echo "::error::$DEPLOY_PATH is not a git checkout; this pipeline deploys by git"; exit 1; }
 
-          # THE guard this project actually needs. The compose file live on the server was written
-          # by hand there and is untracked, while the repo now ships its own at the same path.
-          # `git reset --hard` overwrites an untracked file that exists in the target commit WITHOUT
-          # complaining, so an unguarded deploy would silently swap the server's
-          # 127.0.0.1:8532/8533 mappings for a proxy container that binds :80 and :443 -- and
-          # immediately loses a fight with host nginx over 443. deploy/DEPLOY.md documents that
-          # transition as a one-time manual cutover. Refuse to automate it.
+          # The compose file live on the server was hand-written there and is untracked, while the
+          # repo ships its own at the same path. `git reset --hard` overwrites an untracked file
+          # present in the target commit WITHOUT complaining, so this used to be a hard refusal: the
+          # tracked file started a proxy container binding :80 and :443, which does not take over
+          # from the host nginx holding those ports -- it loses a race against it.
+          #
+          # That is no longer true. The proxy service now sits behind a compose profile the deploy
+          # never passes, and the tracked file publishes the same 127.0.0.1:8532/8533 mappings the
+          # server's own file does. Replacing it is therefore a like-for-like swap, so the Deploy
+          # step below does it as a one-time migration -- keeping a timestamped copy first -- instead
+          # of requiring somebody with shell access to move it aside by hand.
           if [ -f docker-compose.yml ] && ! git ls-files --error-unmatch docker-compose.yml >/dev/null 2>&1; then
-            echo "::error::docker-compose.yml here is untracked (hand-written on the server), but the"
-            echo "::error::incoming commit tracks one at the same path. Deploying would overwrite it and"
-            echo "::error::start a proxy container that collides with host nginx on :443."
-            echo "::error::Work through the cutover in deploy/DEPLOY.md by hand, then re-run this deploy."
-            exit 1
+            echo "::warning::docker-compose.yml here is untracked (hand-written on the server)."
+            echo "::warning::The Deploy step will back it up and replace it with the tracked version."
+            echo "::warning::Expected exactly once. Seeing this on a later deploy means something is rewriting it."
           fi
 
           # A tracked file edited directly on the server means somebody hotfixed in place. Reporting
@@ -343,16 +345,16 @@ jobs:
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID || vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
           AZURE_ALLOWED_EMAIL_DOMAIN: ${{ vars.AZURE_ALLOWED_EMAIL_DOMAIN }}
           AZURE_REQUIRE_ALLOWLIST: ${{ vars.AZURE_REQUIRE_ALLOWLIST }}
           AZURE_AUTO_PROVISION_DOMAIN: ${{ vars.AZURE_AUTO_PROVISION_DOMAIN }}
-          APP_FIRST_ADMIN_EMAIL: ${{ vars.APP_FIRST_ADMIN_EMAIL }}
+          APP_FIRST_ADMIN_EMAIL: ${{ secrets.APP_FIRST_ADMIN_EMAIL || vars.APP_FIRST_ADMIN_EMAIL }}
           HOTJAR_SITE_ID: ${{ vars.HOTJAR_SITE_ID }}
           SMTP_HOST: ${{ vars.SMTP_HOST }}
           SMTP_PORT: ${{ vars.SMTP_PORT }}
-          SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME || vars.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           TICKETING_BASE_URL: ${{ vars.TICKETING_BASE_URL }}
           TICKETING_API_TOKEN: ${{ secrets.TICKETING_API_TOKEN }}
@@ -474,6 +476,16 @@ jobs:
           echo "$PREV" > .deploy-previous-sha
           echo "Previous revision: $PREV"
 
+          # If the compose file here is untracked, this is the one-time migration from the
+          # hand-written file to the tracked one. Keep a timestamped copy: it is the only record of
+          # what production was actually running, and it is about to be overwritten.
+          MIGRATE_FROM=""
+          if [ -f docker-compose.yml ] && ! git ls-files --error-unmatch docker-compose.yml >/dev/null 2>&1; then
+            MIGRATE_FROM="docker-compose.yml.pre-ci-$(date -u +%Y%m%dT%H%M%SZ)"
+            cp -p docker-compose.yml "$MIGRATE_FROM"
+            echo "One-time migration: previous compose file kept as $MIGRATE_FROM"
+          fi
+
           # Checking out the exact SHA that passed tests, not a branch tip. `git pull` would take
           # whatever landed on main in the minutes since -- untested code, deployed under the label
           # of a green run.
@@ -481,11 +493,27 @@ jobs:
           git reset --hard "$SHA"
           echo "Now at: $(git log -1 --oneline)"
 
-          # --build because this compose file builds from local context; there is no registry in
-          # this setup. --remove-orphans clears containers left by a previous compose file whose
-          # service names differ (the live file calls the database `postgres`, the repo calls it
-          # `db`); without it the old container keeps running and holding its volume.
-          docker compose up -d --build --remove-orphans
+          # Build BEFORE stopping anything. The frontend image runs a full `npm run build`, so
+          # building as part of `up` would hold the site down for the length of the build rather than
+          # the length of a container swap. The old stack keeps serving traffic throughout this.
+          docker compose build
+
+          # Only on the migration run: stop the old stack using the OLD file, so its containers
+          # release the loopback ports and their container_names before the new ones claim them.
+          # Relying on `up --remove-orphans` to do this implicitly means relying on convergence
+          # ordering that is not documented -- and a port still held by a container that has not gone
+          # away yet is a failed deploy. `down` without -v leaves every volume untouched.
+          if [ -n "$MIGRATE_FROM" ]; then
+            echo "Stopping the previous stack defined by $MIGRATE_FROM"
+            docker compose -f "$MIGRATE_FROM" down --remove-orphans || true
+          fi
+
+          # Images are already built, so this is just the container swap. --remove-orphans clears
+          # containers left by a compose file whose service names differ (the old file calls the
+          # database `postgres`, the repo calls it `db`); without it the old one keeps running and
+          # holding its volume. The proxy service is behind a profile that is deliberately NOT passed
+          # here, so this can never bind :80/:443 or collide with the host nginx.
+          docker compose up -d --remove-orphans
           docker compose ps
           REMOTE
 

@@ -36,3 +36,9 @@ db_backups/
 CLAUDE.local.md
 .gstack/
 PR_DESCRIPTION.md
+
+# Timestamped copies of the compose file the deploy replaces on its one-time migration (see
+# .github/workflows/ci-cd.yml). Never commit one: the hand-written file it preserves carries the real
+# Entra ID pair in its frontend build args, and committing it would put those straight back into a
+# public repository.
+docker-compose.yml.pre-ci-*
