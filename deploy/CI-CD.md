@@ -30,53 +30,72 @@ Three ways to trigger one, in order of convenience:
 Dispatching *without* ticking the box runs the three test jobs and skips the deploy — a way to get a
 full test run on demand.
 
-Read this whole file before the first deploy. **Two things on the server must change first**, and
-neither is something CI can do for you.
+Read this whole file before the first deploy.
 
 ---
 
-## Before the first deploy: two blockers
+## Before the first deploy
 
-### 1. The server's `docker-compose.yml` is not the repo's
+### The server's `docker-compose.yml` is replaced automatically, once
 
-The file at `/opt/delta-precheck-tool/docker-compose.yml` was written by hand on the server. `main`
-has never contained a `docker-compose.yml` at all — the one in this repo arrives with the
-`feat/docker-compose-deploy` branch. They differ in ways that would take the site down:
+The file at `/opt/delta-precheck-tool/docker-compose.yml` was written by hand on the server and is
+untracked; the repo ships its own at the same path. `git reset --hard` overwrites an untracked file
+present in the target commit without saying so, which used to make this a hard stop -- the tracked
+file started a `proxy` container binding `:80` and `:443`, and that does not take over from the host
+nginx holding those ports, it loses a race against it.
 
-| | Server (live today) | This repo |
+**That is no longer the case.** The proxy service now sits behind a compose profile the deploy never
+passes, and the tracked file publishes the same `127.0.0.1:8532` / `127.0.0.1:8533` mappings the
+server's own file does. So the swap is like-for-like, and the deploy performs it itself:
+
+1. Copies the existing file to `docker-compose.yml.pre-ci-<timestamp>` -- the only record of what
+   production was actually running, and gitignored so it can never be committed back (it carries the
+   real Entra ID pair in its frontend build args).
+2. Checks out the tracked version.
+3. Runs `docker compose build` **while the old stack is still serving traffic**, so the site is not
+   down for the length of a full `npm run build`.
+4. Runs `docker compose down` against the **old** file, so its containers release the loopback ports
+   and their `container_name`s before the new ones claim them. Volumes are untouched.
+5. Runs `docker compose up -d` from the already-built images -- a container swap, roughly the time
+   Spring takes to start.
+
+No shell access needed. It happens on the first deploy and is a no-op on every one after.
+
+The differences it resolves:
+
+| | Server (hand-written) | This repo |
 |---|---|---|
 | Database service | `postgres` | `db` |
-| Host ports | `127.0.0.1:8532` / `8533`, fronted by host nginx | `proxy` container binds **`80:80` and `443:443`** |
-| TLS termination | nginx installed on the host | the `proxy` container |
+| Host ports | `127.0.0.1:8532` / `8533` | **the same** |
+| TLS termination | nginx on the host | **still nginx on the host** — the proxy container is opt-in |
 | Ticketing env | `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN` | `TICKETING_BASE_URL` / `TICKETING_API_TOKEN` |
 | Frontend args | hardcoded, no Hotjar, source maps shipped | from `.env`, `+HOTJAR_SITE_ID`, `GENERATE_SOURCEMAP=false` |
-| Volumes | `delta_pg_data`, `delta_backend_uploads` | **the same two names** — matched deliberately, see below |
+| Entra ID env | not passed at all — the backend used the baked-in defaults | passed from `.env`, since those defaults are now placeholders |
+| Volumes | `delta_pg_data`, `delta_backend_uploads` | **the same two names**, matched deliberately |
 
-The volume names used to differ, and that was the most dangerous line in this table. The repo's
-compose declared `postgres-data`/`backend-uploads` — names that do not exist on the server — so
-`docker compose up` would have created two empty volumes, Postgres would have initialised a fresh
-database, and the site would have come up looking cleanly wiped while the real data sat unreferenced
-in the old volumes. The repo now declares `delta_pg_data` and `delta_backend_uploads` to match what
-production already writes to, so there is nothing to migrate. Do not "tidy" those names; the
-`volumes:` block in `docker-compose.yml` explains why at length.
+The volume names are the line that mattered most. They used to differ: the repo declared
+`postgres-data`/`backend-uploads`, names that exist nowhere on the server, so `docker compose up`
+would have created two empty volumes, Postgres would have initialised a fresh database, and the site
+would have come up looking cleanly wiped while the real data sat unreferenced in the old volumes. Do
+not "tidy" those names; the `volumes:` block in `docker-compose.yml` explains why at length.
 
-`git reset --hard` **overwrites an untracked file that exists in the target commit without saying
-so**. So an unguarded deploy would replace the server's compose file, then start a proxy container
-that loses a fight with host nginx over port 443.
-
-The pipeline's preflight step refuses to run while that untracked file is there. Clear it by working
-through the cutover in [DEPLOY.md](DEPLOY.md) by hand — that is a deliberate few minutes of downtime,
-which is exactly why it is not automated.
-
-### 2. `.env` on the server still has the Jira variables
+### The server's `.env` still has the Jira variables
 
 Commit `78906d6` replaced Jira with Neutara ticketing. The backend now reads `TICKETING_BASE_URL`
 and `TICKETING_API_TOKEN`; `JIRA_*` is read by nothing. Blank `ticketing.api-token` disables ticket
 lookup and logs a warning rather than failing, so this will not crash — ticket lookup will just
 quietly stop working.
 
-Compare the server's `.env` against [`.env.example`](../.env.example) and fill in
-`POSTGRES_PASSWORD`, `TICKETING_API_TOKEN`, and `APP_DOMAIN` before deploying.
+Nothing to do by hand: with `MANAGE_ENV` on, set `ENV_REMOVE_KEYS` to
+`JIRA_BASE_URL,JIRA_EMAIL,JIRA_API_TOKEN` and the deploy removes them, while
+`TICKETING_API_TOKEN` from Secrets is merged in. Clear `ENV_REMOVE_KEYS` afterwards.
+
+Also note what the server's `.env` has **never** needed and now does: the hand-written compose file
+did not pass `AZURE_CLIENT_ID` or `AZURE_TENANT_ID` to the backend at all, because
+`application.properties` carried the real values as defaults. Those defaults are placeholders now, so
+both must reach the container -- put them in Secrets and the merge step writes them into `.env`. If
+they end up blank the backend runs **fully unauthenticated**; the merge step's validation and the
+health check each catch that independently and the deploy rolls back.
 
 ---
 

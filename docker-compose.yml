@@ -92,6 +92,15 @@ services:
       # image rebuild, and container recreation. Back it up with the database, not separately --
       # only the path is in Postgres, the bytes are here.
       - delta_backend_uploads:/data/uploads
+    ports:
+      # Bound to LOOPBACK, not 0.0.0.0. The host nginx that terminates TLS proxies /api here, and
+      # nothing else should reach the backend: published on 0.0.0.0 this would be the API, without
+      # TLS, on the public internet. The 127.0.0.1 prefix is the only thing preventing that, and
+      # Docker publishes to all interfaces if you omit it.
+      #
+      # These mappings exist because the proxy container is opt-in (see its profile below). With the
+      # containerised edge enabled they become redundant -- harmless, but you can drop them then.
+      - "127.0.0.1:8533:8081"
 
   frontend:
     build:
@@ -108,12 +117,34 @@ services:
         # Blank disables Hotjar entirely: no script requested, no session recorded.
         REACT_APP_HOTJAR_SITE_ID: ${HOTJAR_SITE_ID:-}
         # Left empty on purpose. The bundle then resolves the API from the page's own origin, which
-        # is correct because the proxy routes /api to the backend on that same origin.
+        # is correct either way: host nginx and the proxy container both serve the SPA and route /api
+        # from the same hostname.
         REACT_APP_API_BASE: ""
     restart: unless-stopped
+    ports:
+      # Loopback only, same reasoning as the backend: host nginx proxies to this, and the container
+      # serves plain HTTP. Published on 0.0.0.0 it would answer on the public internet without TLS,
+      # bypassing the certificate and every security header the edge adds.
+      - "127.0.0.1:8532:80"
 
+  # OPT-IN, and that is the whole point of the profile. Production terminates TLS with an nginx
+  # installed on the host, which already holds :80 and :443. A proxy container that binds those ports
+  # unconditionally does not "take over" from it -- it loses a race against it, and whichever side
+  # loses stays down. So this service starts only when asked for:
+  #
+  #   docker compose --profile proxy up -d      # containerised edge (after the DEPLOY.md cutover)
+  #   docker compose up -d                      # everything except the proxy (what deploys today)
+  #
+  # The deploy pipeline never passes --profile, so an automated deploy cannot start this container and
+  # cannot collide with host nginx. Turning it on is a deliberate cutover with a downtime window, not
+  # something a deploy should do on its own -- see deploy/DEPLOY.md.
+  #
+  # Everything this service exists for (client_max_body_size, the CSP, the security headers, HTTP/2)
+  # is still worth having as version-controlled config rather than hand-edits on the host. This
+  # defers that, it does not abandon it.
   proxy:
     image: nginx:1.27-alpine
+    profiles: [proxy]
     restart: unless-stopped
     depends_on:
       - backend
