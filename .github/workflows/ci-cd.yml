@@ -345,16 +345,16 @@ jobs:
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID || vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
           AZURE_ALLOWED_EMAIL_DOMAIN: ${{ vars.AZURE_ALLOWED_EMAIL_DOMAIN }}
           AZURE_REQUIRE_ALLOWLIST: ${{ vars.AZURE_REQUIRE_ALLOWLIST }}
           AZURE_AUTO_PROVISION_DOMAIN: ${{ vars.AZURE_AUTO_PROVISION_DOMAIN }}
-          APP_FIRST_ADMIN_EMAIL: ${{ vars.APP_FIRST_ADMIN_EMAIL }}
+          APP_FIRST_ADMIN_EMAIL: ${{ secrets.APP_FIRST_ADMIN_EMAIL || vars.APP_FIRST_ADMIN_EMAIL }}
           HOTJAR_SITE_ID: ${{ vars.HOTJAR_SITE_ID }}
           SMTP_HOST: ${{ vars.SMTP_HOST }}
           SMTP_PORT: ${{ vars.SMTP_PORT }}
-          SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME || vars.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           TICKETING_BASE_URL: ${{ vars.TICKETING_BASE_URL }}
           TICKETING_API_TOKEN: ${{ secrets.TICKETING_API_TOKEN }}

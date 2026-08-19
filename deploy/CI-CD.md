@@ -131,6 +131,34 @@ And under the **Variables** tab:
 |---|---|---|
 | `DEPLOY_HEALTH_BASE` | `https://deltaprechecks.cftools.live` | Public base URL the health check probes. The real hostname, not a placeholder — deliberately: it is the address every user types into a browser, so hiding it in a public file buys nothing, and it works as a default so the health check needs no extra variable |
 
+### Secrets vs Variables: workflow logs are public
+
+**On a public repository, workflow logs are readable by anyone.** GitHub renders each step's `env:`
+block into the log, and the two stores behave differently there:
+
+| Store | In the repo? | In a public log? |
+|---|---|---|
+| Secret | no | masked as `***` |
+| Variable | no | **plain text** |
+
+So the choice is not about the repository — neither is in it. It is about what a stranger reads in a
+build log. Anything identifying belongs in **Secrets**, whatever the "is it really a credential?"
+answer is: a value that is not a credential can still be something you would rather not publish.
+
+These four are read as `${{ secrets.X || vars.X }}`, so either store works and Secrets wins when both
+are set. Put them in **Secrets**:
+
+| Name | Why not a Variable |
+|---|---|
+| `APP_FIRST_ADMIN_EMAIL` | a named individual's address, in a log anyone can open |
+| `AZURE_CLIENT_ID` | not a credential — it ships in the JavaScript bundle — but no reason to also name the tenant in a public log |
+| `AZURE_TENANT_ID` | same |
+| `SMTP_USERNAME` | a real mailbox address |
+
+Fine as **Variables**, because nothing identifying appears: `MANAGE_ENV`, `ENV_REMOVE_KEYS`,
+`APP_DOMAIN` (the address every user types into a browser), `HOTJAR_SITE_ID`, `TICKETING_BASE_URL`,
+`AZURE_REQUIRE_ALLOWLIST`, `AZURE_AUTO_PROVISION_DOMAIN`, `POSTGRES_DB`, `POSTGRES_USER`.
+
 ### Why `DEPLOY_USER` is a variable and the rest are secrets
 
 **Workflow logs on a public repository are publicly readable.** Anything stored as a *secret* is
