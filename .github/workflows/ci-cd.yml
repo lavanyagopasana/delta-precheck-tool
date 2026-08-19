@@ -8,6 +8,10 @@
 #
 # Nothing ran these suites automatically before this file existed, so a red X here is the first
 # automated signal this project has ever had. Treat it as real rather than as noise to re-run.
+#
+# TESTS are automatic; DEPLOYS are not. Every push and PR runs the three test jobs. Nothing ever
+# deploys on a push -- not even to main. The deploy job runs only on an explicit manual trigger, so
+# a merge is never also a production restart. See the comment on that job.
 
 name: CI/CD
 
@@ -18,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       deploy:
-        description: "Also deploy to production after tests pass"
+        description: "Also deploy to production after tests pass (leave off for a test-only run)"
         type: boolean
         default: false
 
@@ -130,9 +134,16 @@ jobs:
   deploy:
     name: Deploy to production
     needs: [backend-tests, frontend-tests, docker-build]
-    if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' && inputs.deploy)
+    # Manual only, deliberately. A push to main runs the three test jobs and stops there -- it does
+    # NOT deploy. Continuous deployment on every merge is the usual default, but it is the wrong
+    # default here: this stack rebuilds images on the server and takes the site through a container
+    # recreation, so a docs typo merged at 6pm would restart production. Deploying is a decision
+    # somebody makes, not a side effect of merging.
+    #
+    # Trigger it with the /deploy skill (.claude/commands/deploy.md), or from the Actions tab:
+    # Run workflow -> tick "Also deploy to production after tests pass". The tests still run first
+    # either way; `needs` below is what enforces that.
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy
     runs-on: ubuntu-latest
 
     # Add required reviewers (or a deployment branch rule) to this environment under repo

@@ -7,11 +7,28 @@
 | `backend-tests` | every PR and push to `main` | `mvn -B -ntp test` — the JUnit suite against H2 |
 | `frontend-tests` | every PR and push to `main` | `react-scripts test` — Jest + React Testing Library |
 | `docker-build` | every PR and push to `main` | both images still build (no push to any registry) |
-| `deploy` | push to `main` **only**, after all three pass | the stack is live and authentication is enforced |
+| `deploy` | **manual trigger only**, after all three pass | the stack is live and authentication is enforced |
 
 The deploy job declares `needs` on the other three, so GitHub itself blocks a deploy whose tests
-failed. It also runs on a manual `workflow_dispatch` with the `deploy` input ticked, which is the
-way to re-run a deploy without pushing an empty commit.
+failed.
+
+**Tests are automatic; deploys are not.** Nothing deploys on a push or a merge — not even to `main`.
+Continuous deployment on every merge is the usual default and it is the wrong default here: this
+stack rebuilds images on the server and takes the site through a container recreation, so a docs typo
+merged at 6pm would restart production. Deploying is a decision somebody makes.
+
+Three ways to trigger one, in order of convenience:
+
+1. **`/deploy`** in Claude Code — the project skill at `.claude/commands/deploy.md`. It shows you
+   what is about to deploy, warns about unpushed commits, dispatches the workflow, watches the run,
+   and diagnoses a failure against the known modes rather than just reporting red. Needs the `gh`
+   CLI (`gh auth login`).
+2. **The Actions tab** — <https://github.com/lavanyagopasana/delta-precheck-tool/actions/workflows/ci-cd.yml>
+   → **Run workflow** → tick *Also deploy to production after tests pass*. No CLI needed.
+3. **`gh workflow run ci-cd.yml --ref main -f deploy=true`**
+
+Dispatching *without* ticking the box runs the three test jobs and skips the deploy — a way to get a
+full test run on demand.
 
 Read this whole file before the first deploy. **Two things on the server must change first**, and
 neither is something CI can do for you.
