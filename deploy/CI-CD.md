@@ -88,7 +88,7 @@ Settings → Secrets and variables → Actions → **Secrets** tab.
 |---|---|---|---|
 | `DEPLOY_HOST` | **yes** | — | The server's public address. Left out of this file deliberately — see the note below |
 | `DEPLOY_SSH_KEY` | **yes** | — | The full **private** key, `-----BEGIN` line through `-----END` line inclusive, with its trailing newline |
-| `DEPLOY_USER` | no | `deploy` | Must be able to run `docker compose` without a password prompt |
+| ~~`DEPLOY_USER`~~ | — | — | **Moved to the Variables tab** — see the note below |
 | `DEPLOY_PORT` | no | `22` | |
 | `DEPLOY_PATH` | no | `/opt/delta-precheck-tool` | Must already be a git checkout with a filled-in `.env` |
 | `DEPLOY_KNOWN_HOSTS` | no, but recommended | falls back to `ssh-keyscan` | See the warning below |
@@ -111,6 +111,23 @@ And under the **Variables** tab:
 | Variable | Default if unset | Notes |
 |---|---|---|
 | `DEPLOY_HEALTH_BASE` | `https://deltaprechecks.cftools.live` | Public base URL the health check probes. The real hostname, not a placeholder — deliberately: it is the address every user types into a browser, so hiding it in a public file buys nothing, and it works as a default so the health check needs no extra variable |
+
+### Why `DEPLOY_USER` is a variable and the rest are secrets
+
+**Workflow logs on a public repository are publicly readable.** Anything stored as a *secret* is
+masked as `***` in those logs; anything stored as a *variable* appears in plain text. Neither is in
+the repository itself, so the choice is purely about what shows up in a build log a stranger can
+open.
+
+`DEPLOY_HOST`, `DEPLOY_PORT` and `DEPLOY_PATH` stay **secrets** for that reason. A public log reading
+"ssh to <address> on <port> as <user> in <path>" is a complete target description.
+
+`DEPLOY_USER` is a **variable** because masking it backfired. Its value is the word `deploy`, and
+GitHub masks every occurrence of a secret's value anywhere in the output — so `deploy/DEPLOY.md`
+rendered as `***/DEPLOY.md`, "re-run this deploy" as "re-run this ***", and even the step title
+"refuse to deploy into a state that would break the site" as "refuse to *** into a state...". A
+deploy pipeline whose failure messages are unreadable is worse than one that names a generic
+username. If you ever set it to something identifying, move it back to Secrets.
 
 ### Why `DEPLOY_KNOWN_HOSTS` is worth setting
 
