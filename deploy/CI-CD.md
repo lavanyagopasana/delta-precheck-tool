@@ -125,9 +125,19 @@ Paste the entire output (all lines) as the secret.
 ## Managing `.env` from GitHub instead of on the server
 
 By default the pipeline leaves the server's `.env` alone — it must already exist, and you edit it by
-logging in. Set a repository **variable** `MANAGE_ENV` to `true` and that changes: the deploy renders
-`.env` from GitHub Settings on every run and installs it before bringing the stack up. Configuration
-is then edited in the browser, and nothing about routine config changes requires a shell.
+logging in. Set a repository **variable** `MANAGE_ENV` to `true` and the deploy starts applying
+values from GitHub Settings, so routine config changes need no shell.
+
+**It merges, it does not replace.** The `.env` on this server was written by the infrastructure team,
+and this step does not take ownership of the whole file. It starts from what is already there,
+applies only the keys GitHub actually defines, and leaves everything else exactly as it was —
+including their comments and any key this template has never heard of. So you can adopt it
+incrementally: a new key goes into Settings alone, and nothing already on the server has to be
+migrated first.
+
+The consequence of merging is that **an unset variable means "leave it alone", not "delete it"** — it
+has to, or turning `MANAGE_ENV` on with three keys configured would wipe the other fourteen. Deleting
+is therefore explicit, via `ENV_REMOVE_KEYS`.
 
 Add these under **Settings ▸ Secrets and variables ▸ Actions**. Non-secret values go in the
 **Variables** tab so they stay readable; only real credentials go in **Secrets**.
@@ -135,6 +145,7 @@ Add these under **Settings ▸ Secrets and variables ▸ Actions**. Non-secret v
 | Variables tab | Required | Example |
 |---|---|---|
 | `MANAGE_ENV` | to enable this at all | `true` |
+| `ENV_REMOVE_KEYS` | only to delete something | `JIRA_BASE_URL,JIRA_EMAIL,JIRA_API_TOKEN` |
 | `APP_DOMAIN` | **yes** | `deltaprechecks.cftools.live` |
 | `POSTGRES_DB` | **yes** | `delta_migration_tracker` |
 | `POSTGRES_USER` | **yes** | `deltaapp` |
@@ -171,21 +182,45 @@ grep '^POSTGRES_PASSWORD=' /opt/delta-precheck-tool/.env
 (If you genuinely want to change the database password, that is a `ALTER USER` inside the running
 Postgres container followed by updating the secret — not a `.env` edit.)
 
+### Undoing a mistake
+
+**A wrong value** — edit it in Settings and deploy again. The new value overwrites the old one; there
+is nothing to clean up.
+
+**A key added by mistake** — say you typo'd `TICKETNG_API_TOKEN` and it is now sitting in the
+server's `.env`. Set `ENV_REMOVE_KEYS` to that name and deploy:
+
+```
+ENV_REMOVE_KEYS = TICKETNG_API_TOKEN
+```
+
+Removals run before overrides, so a key can be removed and re-added in the same run. Listing a key
+that isn't there logs a warning rather than failing. Once the key is gone, clear `ENV_REMOVE_KEYS`
+again — leaving it set just means the removal is re-attempted (harmlessly) on every deploy.
+
+Worth knowing: **a stray key is inert.** Compose only reads the variables `docker-compose.yml`
+actually references, so a misspelled one is never passed to any container. It is clutter, not a
+malfunction — which is why removal is a tidy-up rather than an emergency.
+
+**Something worse** — every version of the file is on the server as `.env.bak-<timestamp>` (last
+five kept). `cp .env.bak-20260819T101500Z .env` and redeploy.
+
 ### What this step does and does not do
 
-- Required values are checked **before** anything is written, on both the runner and the server, and
-  a missing one fails the deploy. `AZURE_CLIENT_ID` is checked twice over: blank means
-  `SecurityConfig` treats auth as unconfigured and every `/api` route becomes `permitAll`, with no
-  error and no failed startup.
-- The rendered file is sent over **stdin**, not as a command argument — arguments are visible in
-  `ps` to every user on that host while the command runs, and this file holds the database password.
-- The previous `.env` is kept as `.env.bak-<timestamp>` (last five) whenever the content changes.
-  GitHub will not show you a secret again after you save it, so a copy on disk is the way back from
-  a wrong value.
-- **Hand edits on the server are reverted at the next deploy.** That is the intent — one source of
-  truth — but it is a behaviour change worth telling anyone else with server access about.
+- Required values are validated on the **merged result**, not on what GitHub supplied — in merge mode
+  a required key is allowed to come from the file the infra team already wrote. A missing or blank
+  one fails the deploy and the merged file is discarded, so the server keeps its working `.env`.
+- `AZURE_CLIENT_ID` gets a dedicated check because blank is the dangerous case: `SecurityConfig`
+  then treats auth as unconfigured and every `/api` route becomes `permitAll`, with no error and no
+  failed startup.
+- Values are sent over **stdin**, not as command arguments — arguments are visible in `ps` to every
+  user on that host while the command runs, and these include the database password.
+- The merge is delete-then-append rather than an in-place `sed` substitution, because the replacement
+  text would otherwise be interpreted by `sed` and these values are passwords and URLs full of `/`
+  and `&`.
 - The database backup runs **before** this step, using the old `.env`, so a wrong value in Settings
   cannot break the dump you would need to recover with.
+- Re-running with the same settings is a no-op — it reports `.env unchanged` and writes nothing.
 - Only key *names* are echoed to the build log, never values.
 
 Leave `MANAGE_ENV` unset and none of this happens; the step is skipped and the server's existing
