@@ -50,9 +50,8 @@ by environment variable — nothing needs editing for local dev, the defaults be
 | Auto-provision domain | `AZURE_AUTO_PROVISION_DOMAIN` | `cloudfuze.com` | as needed |
 | SMTP host/port/username | `SMTP_HOST`/`SMTP_PORT`/`SMTP_USERNAME` | Office 365 relay defaults | as needed |
 | SMTP password | `SMTP_PASSWORD` | *(blank — sending disabled)* | real SMTP password (secret) |
-| Jira site URL | `JIRA_BASE_URL` | *(blank — ticket lookup disabled)* | e.g. `https://yourcompany.atlassian.net` |
-| Jira account email | `JIRA_EMAIL` | *(blank)* | the email of the account that owns the API token below |
-| Jira API token | `JIRA_API_TOKEN` | *(blank)* | generate at https://id.atlassian.com/manage-profile/security/api-tokens (secret) |
+| Ticketing site URL | `TICKETING_BASE_URL` | `https://neutaraticketing.cftools.live` | leave as-is |
+| Ticketing API token | `TICKETING_API_TOKEN` | *(blank — ticket lookup disabled)* | a `nta_…` bearer token from your ticketing profile (secret) |
 
 Frontend settings are build-time env vars (Create React App) in `frontend/.env.local` — copy
 `frontend/.env.example` to get started:
@@ -65,6 +64,23 @@ Frontend settings are build-time env vars (Create React App) in `frontend/.env.l
 | `REACT_APP_AZURE_REDIRECT_URI` | `http://localhost:3000` | your deployed frontend URL — must also be registered as a redirect URI on the Azure app registration |
 | `REACT_APP_ALLOWED_EMAIL_DOMAIN` | `cloudfuze.com` | as needed |
 | `REACT_APP_HOTJAR_SITE_ID` | *(blank)* | Hotjar Site ID (digits only) enabling session recording; blank disables it. Leave blank locally so your own sessions aren't recorded. Baked in at build time, so a container needs `docker build --build-arg REACT_APP_HOTJAR_SITE_ID=...` — setting it with `docker run -e` does nothing |
+
+## Deploy (Docker)
+
+The whole stack -- Postgres, backend, frontend, and the TLS-terminating proxy -- runs from
+`docker-compose.yml`:
+
+```bash
+cp .env.example .env      # fill in POSTGRES_PASSWORD, HOTJAR_SITE_ID, TICKETING_API_TOKEN
+docker compose up -d --build
+```
+
+**Read [`deploy/DEPLOY.md`](deploy/DEPLOY.md) before the first run on a server that currently has a
+host nginx.** Moving TLS into the proxy container is a cutover, and certbot has to switch to webroot
+renewal once the container holds port 80.
+
+Everything that used to be a manual edit on the server -- `client_max_body_size`, the CSP, HTTP/2,
+rate limiting -- now lives in `deploy/proxy/default.conf.template` and is version-controlled.
 
 ## Run the backend
 

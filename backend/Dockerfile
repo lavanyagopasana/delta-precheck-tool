@@ -13,7 +13,7 @@ FROM eclipse-temurin:21-jre-alpine AS runtime
 WORKDIR /app
 COPY --from=build /build/target/delta-migration-tracker.jar app.jar
 
-# Evidence uploads MUST land on a mounted volume -- see docker-compose.yml's backend-uploads
+# Evidence uploads MUST land on a mounted volume -- see docker-compose.yml's delta_backend_uploads
 # volume and APP_UPLOAD_DIR below. Anything written to the container's own filesystem instead is
 # lost the moment this container is recreated (redeploy, restart, image update).
 ENV APP_UPLOAD_DIR=/data/uploads

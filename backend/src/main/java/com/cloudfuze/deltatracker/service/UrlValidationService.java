@@ -17,7 +17,7 @@ import java.util.Locale;
 
 /**
  * Server-side reachability probe for a ticket URL. This has to run on the backend (not the browser)
- * because ticket systems like Jira don't send CORS headers, so a frontend fetch of the link can't
+ * because ticket systems generally don't send CORS headers, so a frontend fetch of the link can't
  * read the response. Deliberately NOT {@code @Transactional} -- it does blocking network I/O and must
  * never hold a DB connection while doing so.
  *

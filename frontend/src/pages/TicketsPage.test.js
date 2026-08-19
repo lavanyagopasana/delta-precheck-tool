@@ -76,7 +76,7 @@ describe("TicketsPage", () => {
     expect(submit).toBeEnabled();
     await userEvent.click(submit);
 
-    await waitFor(() => expect(modal.getByRole("button", { name: /fetching from jira/i })).toBeDisabled());
+    await waitFor(() => expect(modal.getByRole("button", { name: /fetching ticket/i })).toBeDisabled());
     expect(client.createTicket).toHaveBeenCalledWith(
       expect.objectContaining({
         combinationId: 21,
@@ -89,8 +89,8 @@ describe("TicketsPage", () => {
     expect(await screen.findByText("Ticket logged.")).toBeInTheDocument();
   });
 
-  test("form shows an error message when the Jira fetch fails", async () => {
-    client.createTicket.mockRejectedValue({ response: { data: { message: "No Jira ticket found for \"PROJ-123\"." } } });
+  test("form shows an error message when the ticket fetch fails", async () => {
+    client.createTicket.mockRejectedValue({ response: { data: { message: "No ticket found for \"PROJ-123\"." } } });
 
     renderPage();
     await screen.findByText("Ticket Tracker");
@@ -105,6 +105,6 @@ describe("TicketsPage", () => {
     await userEvent.click(modal.getByRole("button", { name: "Log Ticket" }));
 
     // The message is surfaced in both the inline hint and a toast -- assert at least one.
-    expect((await screen.findAllByText("No Jira ticket found for \"PROJ-123\".")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("No ticket found for \"PROJ-123\".")).length).toBeGreaterThan(0);
   });
 });

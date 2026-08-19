@@ -1,0 +1,108 @@
+# TLS-terminating proxy for the Delta Pre-Check Tool.
+#
+# This replaces the nginx that was installed directly on the host. Everything here used to be a
+# manual edit on a server with no record of who changed what, which is how the 1m upload limit went
+# unnoticed for months while the app advertised 20MB.
+#
+# ${APP_DOMAIN} is substituted at container start by the nginx image's own entrypoint. Only that one
+# variable is substituted (NGINX_ENVSUBST_FILTER in docker-compose.yml) -- nginx's runtime variables
+# like $host and $remote_addr must survive untouched.
+#
+# This file is included from inside nginx's http{} block, which is why limit_req_zone below is legal
+# here rather than needing a separate top-level config.
+
+# 20r/s per IP is generous for an internal tool with a handful of users. Sign-in is delegated to
+# Entra ID so there is no password to brute-force, but each rejected request still costs
+# JWT-validation CPU and nothing previously stood between the backend and a request flood.
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=20r/s;
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${APP_DOMAIN};
+
+    # Certbot's HTTP-01 challenge. This container holds port 80, so certbot can no longer use
+    # --standalone; it must write challenges into the shared certbot-webroot volume and this block
+    # serves them. Without it, renewal fails silently and the certificate expires in 90 days.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${APP_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${APP_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${APP_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # Must stay >= spring.servlet.multipart.max-file-size (25MB). nginx's default is 1m and rejects
+    # an ordinary screenshot: measured on the deployed site 2026-08-12, 1000KB passed and 1024KB got
+    # a raw nginx 413 HTML page that the frontend could not even parse. Raising the app's limit
+    # without raising this one makes the app's limit a fiction.
+    client_max_body_size 25m;
+
+    # CSP tightened from what the host nginx served. The old policy allowed script-src from any
+    # https: origin plus 'unsafe-eval', which is close to no policy at all for an app that gates
+    # migration approvals.
+    #
+    # 'unsafe-inline' on script-src is KEPT deliberately: react-scripts emits an inline bootstrap,
+    # and removing it needs a nonce, which is a larger change than belongs in this file.
+    #
+    # connect-src is the one directive that can lock everyone out. MSAL talks to
+    # login.microsoftonline.com for the token exchange, and Hotjar posts session data to its own
+    # hosts. A missing entry here fails only at runtime, never at nginx -t, so RE-TEST A REAL SIGN-IN
+    # after changing it.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' blob: https://static.hotjar.com https://script.hotjar.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com https://script.hotjar.com; connect-src 'self' https://login.microsoftonline.com https://login.windows.net https://*.hotjar.com https://*.hotjar.io wss://*.hotjar.com; frame-src https://vars.hotjar.com; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'" always;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    # Deliberately NO X-Frame-Options here. Spring Security already sends DENY on /api responses, and
+    # two conflicting values (DENY from Spring, SAMEORIGIN from the edge) is what the old setup sent.
+    # Browsers handle a duplicated header inconsistently and some drop the protection entirely.
+    # frame-ancestors 'none' in the CSP above supersedes it in every browser that matters.
+
+    location /api/ {
+        limit_req zone=api_limit burst=40 nodelay;
+        limit_req_status 429;
+
+        proxy_pass http://backend:8081;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Evidence uploads can be slow on a poor connection. nginx's 60s defaults would cut a
+        # legitimate upload off mid-body with an error the user cannot act on.
+        proxy_request_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        client_body_timeout 300s;
+    }
+
+    # Evidence attachments. Same backend. This path is deliberately permitAll in SecurityConfig --
+    # filenames are unguessable UUIDs, which is what stands in for auth here.
+    location /uploads/ {
+        proxy_pass http://backend:8081;
+        proxy_set_header Host            $host;
+        proxy_set_header X-Real-IP       $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location / {
+        proxy_pass http://frontend:80;
+        proxy_set_header Host            $host;
+        proxy_set_header X-Real-IP       $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}

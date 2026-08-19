@@ -1,0 +1,156 @@
+# Full production stack: database, backend, frontend, and the TLS-terminating proxy.
+#
+# backend/Dockerfile has referenced "docker-compose.yml's uploads volume" since it was
+# written, but no such file existed. That is not a cosmetic gap: without the volume declared below,
+# every uploaded evidence file lives only inside the backend container and is destroyed the moment
+# it is recreated -- which a redeploy does. The evidence_file_path rows in Postgres survive, so the
+# app would show pre-checks with an attached filename whose link 404s, and nothing detects it.
+#
+# The proxy is in here rather than installed on the host so that client_max_body_size, the CSP, and
+# the rest of the edge configuration are version-controlled files instead of manual edits on a
+# server with no record of who changed what. deploy/edge-proxy.conf.example documents five findings
+# from the 2026-08-12 QA pass that could only be fixed at the edge; deploy/proxy/default.conf.template
+# is where they are now actually fixed.
+#
+# Every value comes from a .env file beside this one. Copy .env.example to .env and fill it in.
+# .env is gitignored -- it holds the database password.
+#
+#   docker compose up -d --build
+#
+# Read deploy/DEPLOY.md before the first run. Switching from a host nginx to this needs a cutover,
+# not just a start.
+
+# Pinned, not inferred. Compose otherwise derives the project name from the directory it is run
+# from, and the project name is the prefix on every volume -- so a checkout at a path ending in
+# anything other than "delta-precheck-tool" would resolve delta_pg_data to a DIFFERENT volume than
+# the one production data lives in, with the silent-empty-database consequence described in the
+# volumes: block at the bottom of this file. Pinning it here makes the volume names independent of
+# where the repo happens to sit on disk.
+#
+# It also bounds what a deploy can touch. This server runs other applications under Docker; every
+# `docker compose` command in deploy/CI-CD.md's pipeline is scoped to this project name, so it can
+# start, stop, rebuild and remove orphans here without reaching another app's containers.
+name: delta-precheck-tool
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - delta_pg_data:/var/lib/postgresql/data
+    # Deliberately no `ports:` -- the database is reachable only from the compose network. Exposing
+    # 5432 on the host would put it on the public internet on most cloud images.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        # Spring fails fast on an unreachable database, and a plain `depends_on` only waits for the
+        # container to exist, not for Postgres to accept connections. Without the health condition
+        # the backend loses the startup race roughly every time on a cold boot.
+        condition: service_healthy
+    environment:
+      # `db` is the compose service name, resolved on the internal network. Postgres has no
+      # createDatabaseIfNotExist equivalent, but the official image creates POSTGRES_DB on first
+      # start, so the database exists before Spring ever connects.
+      DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID}
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID}
+      AZURE_ALLOWED_EMAIL_DOMAIN: ${AZURE_ALLOWED_EMAIL_DOMAIN:-}
+      AZURE_REQUIRE_ALLOWLIST: ${AZURE_REQUIRE_ALLOWLIST:-true}
+      AZURE_AUTO_PROVISION_DOMAIN: ${AZURE_AUTO_PROVISION_DOMAIN:-cloudfuze.com}
+      APP_FIRST_ADMIN_EMAIL: ${APP_FIRST_ADMIN_EMAIL}
+
+      # Same origin as the frontend now that the proxy fronts both, so CORS never comes into play.
+      # Set anyway so a future split origin fails visibly rather than silently.
+      APP_ALLOWED_ORIGINS: https://${APP_DOMAIN}
+      APP_FRONTEND_URL: https://${APP_DOMAIN}
+
+      SMTP_HOST: ${SMTP_HOST:-smtp.office365.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+
+      TICKETING_BASE_URL: ${TICKETING_BASE_URL:-https://neutaraticketing.cftools.live}
+      TICKETING_API_TOKEN: ${TICKETING_API_TOKEN:-}
+    volumes:
+      # THE line this whole file existed to provide. Named volume, so it survives every redeploy,
+      # image rebuild, and container recreation. Back it up with the database, not separately --
+      # only the path is in Postgres, the bytes are here.
+      - delta_backend_uploads:/data/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+      # react-scripts reads REACT_APP_* only from the environment of the `npm run build` process
+      # itself. These MUST be build args; setting them as `environment:` here would be silently
+      # ignored and the bundle would ship blank. A missing ARG in frontend/Dockerfile is exactly how
+      # a deploy once shipped clientId:"".
+      args:
+        REACT_APP_AZURE_CLIENT_ID: ${AZURE_CLIENT_ID}
+        REACT_APP_AZURE_TENANT_ID: ${AZURE_TENANT_ID}
+        REACT_APP_AZURE_REDIRECT_URI: https://${APP_DOMAIN}
+        REACT_APP_ALLOWED_EMAIL_DOMAIN: ${AZURE_ALLOWED_EMAIL_DOMAIN:-}
+        # Blank disables Hotjar entirely: no script requested, no session recorded.
+        REACT_APP_HOTJAR_SITE_ID: ${HOTJAR_SITE_ID:-}
+        # Left empty on purpose. The bundle then resolves the API from the page's own origin, which
+        # is correct because the proxy routes /api to the backend on that same origin.
+        REACT_APP_API_BASE: ""
+    restart: unless-stopped
+
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      # Without this filter, envsubst would also eat nginx's own runtime variables ($host,
+      # $remote_addr, $proxy_add_x_forwarded_for) and rewrite them to empty strings, breaking
+      # every proxy header. Restricting substitution to APP_DOMAIN is what makes templating safe.
+      NGINX_ENVSUBST_FILTER: "APP_DOMAIN"
+    volumes:
+      - ./deploy/proxy/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      # Certificates stay owned by certbot on the host; the container only reads them. Renewal keeps
+      # working as it does today, but see deploy/DEPLOY.md -- certbot must use webroot mode now that
+      # this container holds port 80, and needs a hook to reload nginx after each renewal.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - certbot-webroot:/var/www/certbot
+
+volumes:
+  # These two names are NOT free to rename, and are deliberately not the tidier postgres-data /
+  # backend-uploads they started as. They match the volumes the production server has been writing
+  # to since before this file existed (declared in the compose file that was hand-written on the
+  # box), which compose resolves as delta-precheck-tool_delta_pg_data and
+  # delta-precheck-tool_delta_backend_uploads.
+  #
+  # Rename either one and `docker compose up` does not migrate anything or warn -- it creates a new
+  # empty volume, Postgres initialises a fresh database, Hibernate creates every table via
+  # ddl-auto=update, AdminBootstrap sees an empty app_users and seeds the first admin, and the site
+  # comes up looking cleanly wiped: no projects, no servers, no DeltaCycle decline history. The real
+  # data is still on disk in the old volume, unreferenced, and `--remove-orphans` will not touch it
+  # (it removes orphaned containers, not volumes) -- but nothing surfaces the problem, and any work
+  # entered in that state splits the history across two volumes.
+  delta_pg_data:
+  delta_backend_uploads:
+  # No matching constraint here: the proxy container is new, so this volume has no prior data and
+  # its name was never pinned by anything.
+  certbot-webroot:

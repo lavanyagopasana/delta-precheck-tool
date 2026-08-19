@@ -7,6 +7,16 @@
 .env
 .env.local
 
+# Real, filled-in local backend config. Spring loads ./application.properties (i.e. this path, when
+# the app is run from backend/) at HIGHER precedence than the classpath copy, so this is where a
+# developer's real credentials actually end up. It is ignored precisely BECAUSE it holds literal
+# secrets -- that is the division of labour with the tracked
+# backend/src/main/resources/application.properties above, which must only ever hold
+# ${ENV_VAR:default} placeholders. Do not "clean this up" by deleting the line again: unlike the
+# 2026-08-18 removal noted above (which dropped a line matching no file), this file DOES exist and
+# DOES contain live tokens.
+backend/application.properties
+
 # Build output
 backend/target/
 frontend/build/

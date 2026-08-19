@@ -33,7 +33,7 @@ const EMPTY_CREATE_FORM = {
 // there's more than one dropdown in a row.
 const FIELD_LABEL_STYLE = { display: "block", fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 6 };
 
-// The two ways to log a ticket (Jira number vs. plain link) are mutually exclusive, so they're
+// The two ways to log a ticket (ticket number vs. plain link) are mutually exclusive, so they're
 // visually two separate panels rather than a flat stack of inputs -- whichever one you're not using
 // dims via LogTicketForm's opacity override, making the "only one applies" rule visible, not just
 // enforced by a disabled attribute.
@@ -52,7 +52,7 @@ const SOURCE_HINT_STYLE = { fontSize: 12, color: "var(--color-text-faint)", marg
 const isLikelyUrl = (value) => /^https?:\/\/.+/i.test(value.trim());
 
 // Editing an already-logged ticket still works the old way (raw URL + status) -- only *logging a new*
-// ticket was replaced by the ticket-number-fetches-from-Jira flow below.
+// ticket was replaced by the ticket-number-fetches-from-the-tracker flow below.
 function EditTicketForm({ existing, existingTicketUrls, onCreated }) {
   const [form, setForm] = useState({ ticketUrl: existing.ticketUrl || "", status: existing.status || "OPEN" });
   const [saving, setSaving] = useState(false);
@@ -170,10 +170,10 @@ function EditTicketForm({ existing, existingTicketUrls, onCreated }) {
   );
 }
 
-// Logging a new ticket: Project + Server still need picking (Jira has no idea which of our internal
+// Logging a new ticket: Project + Server still need picking (the tracker has no idea which of our internal
 // servers a ticket is about), then a single field takes either a bare ticket number ("PROJ-123") or
 // a full link to it -- either way, status, reporter, summary, and the canonical link are fetched
-// from Jira on submit (see JiraService.fetchIssue, which extracts the key from a pasted URL the same
+// from the tracker on submit (see TicketLookupService.fetchIssue, which extracts the key from a pasted URL the same
 // way it uses a bare key).
 function LogTicketForm({ projects, servers, onCreated }) {
   const currentUser = useCurrentUser();
@@ -229,7 +229,7 @@ function LogTicketForm({ projects, servers, onCreated }) {
       setForm(EMPTY_CREATE_FORM);
       onCreated();
     } catch (err) {
-      const msg = apiErrorMessage(err, "Could not fetch that ticket from Jira.");
+      const msg = apiErrorMessage(err, "Could not fetch that ticket from the ticketing system.");
       setError(msg);
       showToast(msg, "error");
     } finally {
@@ -319,14 +319,14 @@ function LogTicketForm({ projects, servers, onCreated }) {
         <input
           id="ticket-number"
           type="text"
-          placeholder="PROJ-123 or https://your-tracker.example.com/browse/PROJ-123"
+          placeholder="L1BOAR-15335 or https://neutaraticketing.cftools.live/issues/L1BOAR-15335"
           value={form.ticketNumber}
           onChange={set("ticketNumber")}
           style={{ width: "100%" }}
         />
         <div style={SOURCE_HINT_STYLE}>
-          Either works -- status, reporter, summary, and the canonical link are pulled from Jira
-          automatically once you submit.
+          Either works -- status, reporter, summary, and the canonical link are pulled from the
+          ticketing system automatically once you submit.
         </div>
       </div>
 
@@ -339,7 +339,7 @@ function LogTicketForm({ projects, servers, onCreated }) {
           </span>
         )}
         <button className="btn" type="submit" disabled={!canSubmit || saving}>
-          {saving ? "Fetching from Jira..." : "Log Ticket"}
+          {saving ? "Fetching ticket..." : "Log Ticket"}
         </button>
       </div>
     </form>

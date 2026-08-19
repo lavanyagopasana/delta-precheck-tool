@@ -1,6 +1,6 @@
 package com.cloudfuze.deltatracker.service;
 
-import com.cloudfuze.deltatracker.dto.JiraIssueDto;
+import com.cloudfuze.deltatracker.dto.ExternalTicketDto;
 import com.cloudfuze.deltatracker.dto.TicketCreateRequest;
 import com.cloudfuze.deltatracker.dto.TicketDto;
 import com.cloudfuze.deltatracker.dto.TicketUpdateRequest;
@@ -35,16 +35,16 @@ public class TicketService {
 
     private final TicketRepository ticketRepository;
     private final WorkspaceCombinationRepository workspaceCombinationRepository;
-    private final JiraService jiraService;
+    private final TicketLookupService ticketLookupService;
     // Used only by create() to open one explicit transaction around just the DB work, after the
-    // (session-free) Jira fetch -- see the comment on create() for why.
+    // (session-free) tracker fetch -- see the comment on create() for why.
     private final TransactionTemplate transactionTemplate;
 
     public TicketService(TicketRepository ticketRepository, WorkspaceCombinationRepository workspaceCombinationRepository,
-                          JiraService jiraService, PlatformTransactionManager transactionManager) {
+                          TicketLookupService ticketLookupService, PlatformTransactionManager transactionManager) {
         this.ticketRepository = ticketRepository;
         this.workspaceCombinationRepository = workspaceCombinationRepository;
-        this.jiraService = jiraService;
+        this.ticketLookupService = ticketLookupService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -61,20 +61,20 @@ public class TicketService {
     }
 
     // Deliberately NOT transactional at the method level (overrides the class-level default):
-    // jiraService.fetchIssue() does blocking network I/O against an external system, and this
+    // ticketLookupService.fetchIssue() does blocking network I/O against an external system, and this
     // class's own Hikari config comment already calls out holding a DB connection open across a
     // slow external call as the exact footgun to avoid. Everything that actually touches the
     // database -- including TicketDto.fromEntity's lazy combination.getServer().getProject() lookup
     // -- has to happen inside ONE transaction/session together, though, or it throws
     // LazyInitializationException once that session closes; TransactionTemplate opens that single
-    // explicit transaction just for the DB portion, after the Jira call has already finished.
+    // explicit transaction just for the DB portion, after the tracker call has already finished.
     //
-    // request.getTicketNumber() accepts either a bare key ("PROJ-123") or a full Jira URL containing
-    // one -- JiraService.fetchIssue extracts the key either way, so this method doesn't need to know
-    // or care which shape was typed in.
+    // request.getTicketNumber() accepts either a bare key ("L1BOAR-15335") or a full ticket URL
+    // containing one -- TicketLookupService.fetchIssue extracts the key either way, so this method
+    // doesn't need to know or care which shape was typed in.
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public TicketDto create(TicketCreateRequest request) {
-        JiraIssueDto issue = jiraService.fetchIssue(request.getTicketNumber());
+        ExternalTicketDto issue = ticketLookupService.fetchIssue(request.getTicketNumber());
 
         return transactionTemplate.execute(status -> {
             WorkspaceCombination combination = findCombinationOrThrow(request.getCombinationId());
@@ -97,39 +97,39 @@ public class TicketService {
                 .orElseThrow(() -> new ResourceNotFoundException("Combination not found: " + combinationId));
     }
 
-    // Keeps an OPEN ticket in sync with Jira without anyone having to notice the change over there
-    // first. Runs every 15 minutes; only re-checks tickets that are still OPEN and actually came from
-    // Jira (jiraKey set) -- a manually logged plain URL has no ticket number to poll, and a ticket we
-    // already marked RESOLVED doesn't need re-checking. Deliberately NOT transactional at the method
-    // level (same reasoning as create()): each ticket's Jira fetch is a slow external call, and this
+    // Keeps an OPEN ticket in sync with the tracker without anyone having to notice the change over
+    // there first. Runs every 15 minutes; only re-checks tickets that are still OPEN and actually came
+    // from the tracker (jiraKey set) -- a manually logged plain URL has no ticket number to poll, and a
+    // ticket we already marked RESOLVED doesn't need re-checking. Deliberately NOT transactional at the
+    // method level (same reasoning as create()): each fetch is a slow external call, and this
     // runs one per open ticket in a loop -- wrapping the whole loop in one transaction would hold a
-    // DB connection open for the entire batch's worth of Jira round-trips. Each ticket's own
+    // DB connection open for the entire batch's worth of tracker round-trips. Each ticket's own
     // read-modify-save is small enough that Spring Data's own per-call transactional proxy on
     // findByStatusAndJiraKeyIsNotNull/save is sufficient without an explicit TransactionTemplate.
-    // One ticket's Jira error (e.g. it was deleted from Jira) is logged and skipped rather than
+    // One ticket's error (e.g. it was deleted from the tracker) is logged and skipped rather than
     // aborting the rest of the batch.
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @Scheduled(fixedDelay = 15, initialDelay = 15, timeUnit = TimeUnit.MINUTES)
-    public void syncOpenTicketsFromJira() {
-        List<Ticket> openJiraTickets = ticketRepository.findByStatusAndJiraKeyIsNotNull(TicketStatus.OPEN);
-        if (openJiraTickets.isEmpty()) {
+    public void syncOpenTicketsFromTracker() {
+        List<Ticket> openTrackedTickets = ticketRepository.findByStatusAndJiraKeyIsNotNull(TicketStatus.OPEN);
+        if (openTrackedTickets.isEmpty()) {
             return;
         }
         int resolvedCount = 0;
-        for (Ticket ticket : openJiraTickets) {
+        for (Ticket ticket : openTrackedTickets) {
             try {
-                JiraIssueDto issue = jiraService.fetchIssue(ticket.getJiraKey());
+                ExternalTicketDto issue = ticketLookupService.fetchIssue(ticket.getJiraKey());
                 if (issue.isResolved()) {
                     ticket.setStatus(TicketStatus.RESOLVED);
                     ticketRepository.save(ticket);
                     resolvedCount++;
                 }
             } catch (Exception e) {
-                log.warn("Could not sync ticket {} ({}) from Jira: {}", ticket.getId(), ticket.getJiraKey(), e.toString());
+                log.warn("Could not sync ticket {} ({}) from the ticketing system: {}", ticket.getId(), ticket.getJiraKey(), e.toString());
             }
         }
         if (resolvedCount > 0) {
-            log.info("Jira sync: {} of {} open ticket(s) are now resolved.", resolvedCount, openJiraTickets.size());
+            log.info("Ticket sync: {} of {} open ticket(s) are now resolved.", resolvedCount, openTrackedTickets.size());
         }
     }
 

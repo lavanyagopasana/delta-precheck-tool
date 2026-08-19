@@ -1,6 +1,6 @@
 package com.cloudfuze.deltatracker.service;
 
-import com.cloudfuze.deltatracker.dto.JiraIssueDto;
+import com.cloudfuze.deltatracker.dto.ExternalTicketDto;
 import com.cloudfuze.deltatracker.dto.TicketCreateRequest;
 import com.cloudfuze.deltatracker.dto.TicketDto;
 import com.cloudfuze.deltatracker.dto.TicketUpdateRequest;
@@ -39,9 +39,10 @@ import static org.mockito.Mockito.when;
  *
  * <p>Tickets are scoped to a WorkspaceCombination now, not a Server directly -- a server can have
  * several combinations, each migrated independently (see the per-combination migration in
- * decisions.md). Creating a ticket also fetches its status/summary/reporter from Jira
- * (JiraService) instead of taking a raw URL/status -- see JiraServiceTest for the fetch itself;
- * here JiraService is mocked to isolate TicketService's own orchestration.
+ * decisions.md). Creating a ticket also fetches its status/summary/reporter from the
+ * ticketing system (TicketLookupService) instead of taking a raw URL/status -- see
+ * TicketLookupServiceTest for the fetch itself; here TicketLookupService is mocked to isolate
+ * TicketService's own orchestration.
  *
  * <p>{@code transactionManager} is a plain unstubbed mock: {@code create()}'s TransactionTemplate
  * calls {@code getTransaction()}/{@code commit()} on it, which no-op on a mock, so the callback
@@ -58,7 +59,7 @@ class TicketServiceTest {
     private WorkspaceCombinationRepository workspaceCombinationRepository;
 
     @Mock
-    private JiraService jiraService;
+    private TicketLookupService ticketLookupService;
 
     @Mock
     private PlatformTransactionManager transactionManager;
@@ -69,7 +70,7 @@ class TicketServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new TicketService(ticketRepository, workspaceCombinationRepository, jiraService, transactionManager);
+        service = new TicketService(ticketRepository, workspaceCombinationRepository, ticketLookupService, transactionManager);
         Project project = new Project("Alpha", "eng@cloudfuze.com", "mgr@cloudfuze.com", null);
         Server server = new Server("SRV-1");
         server.setId(1L);
@@ -79,15 +80,15 @@ class TicketServiceTest {
     }
 
     private Ticket ticket(String createdBy, TicketStatus status) {
-        Ticket t = new Ticket(combination, "https://jira.example.com/T-1", createdBy);
+        Ticket t = new Ticket(combination, "https://tickets.example.com/T-1", createdBy);
         t.setId(10L);
         t.setStatus(status);
         t.setCreatedAt(LocalDateTime.of(2026, 1, 1, 9, 0));
         return t;
     }
 
-    private JiraIssueDto issue(String url, boolean resolved) {
-        JiraIssueDto issue = new JiraIssueDto();
+    private ExternalTicketDto issue(String url, boolean resolved) {
+        ExternalTicketDto issue = new ExternalTicketDto();
         issue.setKey("PROJ-1");
         issue.setUrl(url);
         issue.setSummary("Something broke");
@@ -98,19 +99,19 @@ class TicketServiceTest {
     }
 
     @Test
-    void createFetchesFromJiraAndSaves() {
+    void createFetchesFromTrackerAndSaves() {
         TicketCreateRequest req = new TicketCreateRequest();
         req.setCombinationId(1L);
         req.setTicketNumber("PROJ-1");
         req.setCreatedBy("eng@cloudfuze.com");
-        when(jiraService.fetchIssue("PROJ-1")).thenReturn(issue("https://jira.example.com/T-9", false));
+        when(ticketLookupService.fetchIssue("PROJ-1")).thenReturn(issue("https://tickets.example.com/T-9", false));
         when(workspaceCombinationRepository.findById(1L)).thenReturn(Optional.of(combination));
-        when(ticketRepository.existsByTicketUrlIgnoreCase("https://jira.example.com/T-9")).thenReturn(false);
+        when(ticketRepository.existsByTicketUrlIgnoreCase("https://tickets.example.com/T-9")).thenReturn(false);
         when(ticketRepository.save(any(Ticket.class))).thenAnswer(inv -> inv.getArgument(0));
 
         TicketDto dto = service.create(req);
 
-        assertThat(dto.getTicketUrl()).isEqualTo("https://jira.example.com/T-9");
+        assertThat(dto.getTicketUrl()).isEqualTo("https://tickets.example.com/T-9");
         assertThat(dto.getStatus()).isEqualTo(TicketStatus.OPEN);
         assertThat(dto.getCombinationId()).isEqualTo(1L);
         assertThat(dto.getJiraKey()).isEqualTo("PROJ-1");
@@ -118,12 +119,12 @@ class TicketServiceTest {
     }
 
     @Test
-    void createMapsResolvedJiraStatusCategoryToResolved() {
+    void createMapsResolvedStatusCategoryToResolved() {
         TicketCreateRequest req = new TicketCreateRequest();
         req.setCombinationId(1L);
         req.setTicketNumber("PROJ-2");
         req.setCreatedBy("eng@cloudfuze.com");
-        when(jiraService.fetchIssue("PROJ-2")).thenReturn(issue("https://jira.example.com/T-2", true));
+        when(ticketLookupService.fetchIssue("PROJ-2")).thenReturn(issue("https://tickets.example.com/T-2", true));
         when(workspaceCombinationRepository.findById(1L)).thenReturn(Optional.of(combination));
         when(ticketRepository.save(any(Ticket.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -138,7 +139,7 @@ class TicketServiceTest {
         req.setCombinationId(99L);
         req.setTicketNumber("PROJ-3");
         req.setCreatedBy("eng@cloudfuze.com");
-        when(jiraService.fetchIssue("PROJ-3")).thenReturn(issue("https://jira.example.com/T-3", false));
+        when(ticketLookupService.fetchIssue("PROJ-3")).thenReturn(issue("https://tickets.example.com/T-3", false));
         when(workspaceCombinationRepository.findById(99L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.create(req)).isInstanceOf(ResourceNotFoundException.class);
@@ -151,9 +152,9 @@ class TicketServiceTest {
         req.setCombinationId(1L);
         req.setTicketNumber("PROJ-4");
         req.setCreatedBy("eng@cloudfuze.com");
-        when(jiraService.fetchIssue("PROJ-4")).thenReturn(issue("https://jira.example.com/T-dup", false));
+        when(ticketLookupService.fetchIssue("PROJ-4")).thenReturn(issue("https://tickets.example.com/T-dup", false));
         when(workspaceCombinationRepository.findById(1L)).thenReturn(Optional.of(combination));
-        when(ticketRepository.existsByTicketUrlIgnoreCase("https://jira.example.com/T-dup")).thenReturn(true);
+        when(ticketRepository.existsByTicketUrlIgnoreCase("https://tickets.example.com/T-dup")).thenReturn(true);
 
         assertThatThrownBy(() -> service.create(req))
                 .isInstanceOf(ApiException.class)
@@ -166,7 +167,7 @@ class TicketServiceTest {
         // A Dev Lead can SEE every ticket, but editing/deleting is admin-only -> 403, not applied.
         when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticket("eng@cloudfuze.com", TicketStatus.OPEN)));
         TicketUpdateRequest req = new TicketUpdateRequest();
-        req.setTicketUrl("https://jira.example.com/T-1");
+        req.setTicketUrl("https://tickets.example.com/T-1");
         req.setStatus(TicketStatus.RESOLVED);
 
         assertThatThrownBy(() -> service.update(10L, req, "dev@cloudfuze.com", AppUserRole.DEV_LEAD))
@@ -181,7 +182,7 @@ class TicketServiceTest {
         // it's admin-only. The creator themselves must be rejected just like anyone else non-admin.
         when(ticketRepository.findById(10L)).thenReturn(Optional.of(ticket("eng@cloudfuze.com", TicketStatus.OPEN)));
         TicketUpdateRequest req = new TicketUpdateRequest();
-        req.setTicketUrl("https://jira.example.com/T-1");
+        req.setTicketUrl("https://tickets.example.com/T-1");
         req.setStatus(TicketStatus.RESOLVED);
 
         assertThatThrownBy(() -> service.update(10L, req, "eng@cloudfuze.com", AppUserRole.MIGRATION_ENGINEER))
@@ -206,7 +207,7 @@ class TicketServiceTest {
         when(ticketRepository.findById(10L)).thenReturn(Optional.of(existing));
         when(ticketRepository.save(any(Ticket.class))).thenAnswer(inv -> inv.getArgument(0));
         TicketUpdateRequest req = new TicketUpdateRequest();
-        req.setTicketUrl("https://jira.example.com/T-1"); // same URL, different case handled by service
+        req.setTicketUrl("https://tickets.example.com/T-1"); // same URL, different case handled by service
         req.setStatus(TicketStatus.RESOLVED);
 
         TicketDto dto = service.update(10L, req, "admin@cloudfuze.com", AppUserRole.ADMIN);
@@ -220,9 +221,9 @@ class TicketServiceTest {
     void updateRejectsCollidingWithDifferentTicketUrl() {
         Ticket existing = ticket("eng@cloudfuze.com", TicketStatus.OPEN);
         when(ticketRepository.findById(10L)).thenReturn(Optional.of(existing));
-        when(ticketRepository.existsByTicketUrlIgnoreCase("https://jira.example.com/T-OTHER")).thenReturn(true);
+        when(ticketRepository.existsByTicketUrlIgnoreCase("https://tickets.example.com/T-OTHER")).thenReturn(true);
         TicketUpdateRequest req = new TicketUpdateRequest();
-        req.setTicketUrl("https://jira.example.com/T-OTHER");
+        req.setTicketUrl("https://tickets.example.com/T-OTHER");
         req.setStatus(TicketStatus.OPEN);
 
         assertThatThrownBy(() -> service.update(10L, req, "admin@cloudfuze.com", AppUserRole.ADMIN))
@@ -291,49 +292,49 @@ class TicketServiceTest {
         assertThat(service.countOpenForCombination(1L)).isEqualTo(1L);
     }
 
-    // ---- syncOpenTicketsFromJira: the scheduled poll that closes the loop when a ticket is
-    // resolved in Jira after we logged it, without anyone here having to notice first. ----
+    // ---- syncOpenTicketsFromTracker: the scheduled poll that closes the loop when a ticket is
+    // resolved in the tracker after we logged it, without anyone here having to notice first. ----
 
-    private Ticket openJiraTicket(String jiraKey) {
+    private Ticket openTrackedTicket(String jiraKey) {
         Ticket t = ticket("eng@cloudfuze.com", TicketStatus.OPEN);
         t.setJiraKey(jiraKey);
         return t;
     }
 
     @Test
-    void syncMarksTicketResolvedWhenJiraSaysDone() {
-        Ticket t = openJiraTicket("PROJ-1");
+    void syncMarksTicketResolvedWhenTrackerSaysDone() {
+        Ticket t = openTrackedTicket("PROJ-1");
         when(ticketRepository.findByStatusAndJiraKeyIsNotNull(TicketStatus.OPEN)).thenReturn(List.of(t));
-        when(jiraService.fetchIssue("PROJ-1")).thenReturn(issue(t.getTicketUrl(), true));
+        when(ticketLookupService.fetchIssue("PROJ-1")).thenReturn(issue(t.getTicketUrl(), true));
 
-        service.syncOpenTicketsFromJira();
+        service.syncOpenTicketsFromTracker();
 
         assertThat(t.getStatus()).isEqualTo(TicketStatus.RESOLVED);
         verify(ticketRepository).save(t);
     }
 
     @Test
-    void syncLeavesTicketOpenWhenJiraStillInProgress() {
-        Ticket t = openJiraTicket("PROJ-2");
+    void syncLeavesTicketOpenWhenTrackerStillInProgress() {
+        Ticket t = openTrackedTicket("PROJ-2");
         when(ticketRepository.findByStatusAndJiraKeyIsNotNull(TicketStatus.OPEN)).thenReturn(List.of(t));
-        when(jiraService.fetchIssue("PROJ-2")).thenReturn(issue(t.getTicketUrl(), false));
+        when(ticketLookupService.fetchIssue("PROJ-2")).thenReturn(issue(t.getTicketUrl(), false));
 
-        service.syncOpenTicketsFromJira();
+        service.syncOpenTicketsFromTracker();
 
         assertThat(t.getStatus()).isEqualTo(TicketStatus.OPEN);
         verify(ticketRepository, never()).save(any());
     }
 
     @Test
-    void syncSkipsTicketOnJiraErrorWithoutAbortingTheBatch() {
-        Ticket broken = openJiraTicket("PROJ-3");
-        Ticket healthy = openJiraTicket("PROJ-4");
+    void syncSkipsTicketOnLookupErrorWithoutAbortingTheBatch() {
+        Ticket broken = openTrackedTicket("PROJ-3");
+        Ticket healthy = openTrackedTicket("PROJ-4");
         when(ticketRepository.findByStatusAndJiraKeyIsNotNull(TicketStatus.OPEN))
                 .thenReturn(List.of(broken, healthy));
-        when(jiraService.fetchIssue("PROJ-3")).thenThrow(new RuntimeException("Jira unreachable"));
-        when(jiraService.fetchIssue("PROJ-4")).thenReturn(issue(healthy.getTicketUrl(), true));
+        when(ticketLookupService.fetchIssue("PROJ-3")).thenThrow(new RuntimeException("tracker unreachable"));
+        when(ticketLookupService.fetchIssue("PROJ-4")).thenReturn(issue(healthy.getTicketUrl(), true));
 
-        service.syncOpenTicketsFromJira();
+        service.syncOpenTicketsFromTracker();
 
         assertThat(broken.getStatus()).isEqualTo(TicketStatus.OPEN);
         assertThat(healthy.getStatus()).isEqualTo(TicketStatus.RESOLVED);
@@ -342,12 +343,12 @@ class TicketServiceTest {
     }
 
     @Test
-    void syncDoesNothingWhenNoOpenJiraTicketsExist() {
+    void syncDoesNothingWhenNoOpenTrackedTicketsExist() {
         when(ticketRepository.findByStatusAndJiraKeyIsNotNull(TicketStatus.OPEN)).thenReturn(List.of());
 
-        service.syncOpenTicketsFromJira();
+        service.syncOpenTicketsFromTracker();
 
-        verify(jiraService, never()).fetchIssue(any());
+        verify(ticketLookupService, never()).fetchIssue(any());
         verify(ticketRepository, never()).save(any());
     }
 }
