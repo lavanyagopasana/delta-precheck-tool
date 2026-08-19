@@ -194,7 +194,7 @@ jobs:
       - name: Preflight (refuse to deploy into a state that would break the site)
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'deploy' }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER || 'deploy' }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/delta-precheck-tool' }}
         run: |
@@ -246,7 +246,7 @@ jobs:
       - name: Back up the database before anything changes
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'deploy' }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER || 'deploy' }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/delta-precheck-tool' }}
           SHA: ${{ github.sha }}
@@ -330,7 +330,7 @@ jobs:
         if: vars.MANAGE_ENV == 'true'
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'deploy' }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER || 'deploy' }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/delta-precheck-tool' }}
           # Comma or space separated key NAMES to delete from the server's .env -- a key added by
@@ -458,7 +458,7 @@ jobs:
       - name: Deploy
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'deploy' }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER || 'deploy' }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/delta-precheck-tool' }}
           SHA: ${{ github.sha }}
@@ -529,7 +529,7 @@ jobs:
         if: failure()
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'deploy' }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER || 'deploy' }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/delta-precheck-tool' }}
         run: |
