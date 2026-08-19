@@ -94,16 +94,23 @@ Settings → Secrets and variables → Actions → **Secrets** tab.
 | `DEPLOY_KNOWN_HOSTS` | no, but recommended | falls back to `ssh-keyscan` | See the warning below |
 
 **This repository is public.** The host address, SSH port, and deploy username are therefore kept in
-secrets and out of this file — not because any of them is a credential (the IP is already
-discoverable: `deltaprechecks.cftools.live` resolves to it), but because writing "SSH to *this*
+secrets and out of this file — not because any of them is a credential (the server's IP is already
+discoverable, since the app's own public hostname resolves to it), but because writing "SSH to *this*
 address on *this* port as *this* user" into a world-readable file hands over a complete target
 description for free. The values live in the secrets above; look them up there.
+
+The same reasoning is why the example values below are placeholders rather than the real ones. The
+Entra ID client and tenant IDs are genuinely not secrets — they are compiled into the JavaScript
+bundle and served to every visitor, so anyone can read them off the sign-in redirect — but there is
+no reason for a public file to hand over the tenant to aim at, and an individual's email address in a
+public repo is scraped for spam and names the ADMIN account of a tool holding customer migration
+data. Get the real values from GitHub Settings or the app registration.
 
 And under the **Variables** tab:
 
 | Variable | Default if unset | Notes |
 |---|---|---|
-| `DEPLOY_HEALTH_BASE` | `https://deltaprechecks.cftools.live` | Public base URL the health check probes |
+| `DEPLOY_HEALTH_BASE` | `https://deltaprechecks.cftools.live` | Public base URL the health check probes. The real hostname, not a placeholder — deliberately: it is the address every user types into a browser, so hiding it in a public file buys nothing, and it works as a default so the health check needs no extra variable |
 
 ### Why `DEPLOY_KNOWN_HOSTS` is worth setting
 
@@ -146,15 +153,15 @@ Add these under **Settings ▸ Secrets and variables ▸ Actions**. Non-secret v
 |---|---|---|
 | `MANAGE_ENV` | to enable this at all | `true` |
 | `ENV_REMOVE_KEYS` | only to delete something | `JIRA_BASE_URL,JIRA_EMAIL,JIRA_API_TOKEN` |
-| `APP_DOMAIN` | **yes** | `deltaprechecks.cftools.live` |
+| `APP_DOMAIN` | **yes** | `your-app.example.com` |
 | `POSTGRES_DB` | **yes** | `delta_migration_tracker` |
 | `POSTGRES_USER` | **yes** | `deltaapp` |
-| `AZURE_CLIENT_ID` | **yes** | `a55e053f-bfe9-4b4a-8b74-362649f82cf0` |
-| `AZURE_TENANT_ID` | **yes** | `66d8848d-26b6-4147-8124-127624d7b3a6` |
-| `APP_FIRST_ADMIN_EMAIL` | **yes** | `lavanya.gopasana@cloudfuze.com` |
+| `AZURE_CLIENT_ID` | **yes** | `00000000-0000-0000-0000-000000000000` |
+| `AZURE_TENANT_ID` | **yes** | `00000000-0000-0000-0000-000000000000` |
+| `APP_FIRST_ADMIN_EMAIL` | **yes** | `first.admin@yourdomain.com` |
 | `AZURE_ALLOWED_EMAIL_DOMAIN` | no | blank |
 | `AZURE_REQUIRE_ALLOWLIST` | no | defaults `true` |
-| `AZURE_AUTO_PROVISION_DOMAIN` | no | defaults `cloudfuze.com` |
+| `AZURE_AUTO_PROVISION_DOMAIN` | no | defaults `yourdomain.com` |
 | `HOTJAR_SITE_ID` | no | blank disables Hotjar |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` | no | default to Office 365 relay |
 | `TICKETING_BASE_URL` | no | defaults to the Neutara URL |

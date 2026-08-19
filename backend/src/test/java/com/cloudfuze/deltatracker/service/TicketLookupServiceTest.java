@@ -44,9 +44,9 @@ class TicketLookupServiceTest {
               "id": "pg_202ntz5b7z",
               "key": "L1BOAR-15335",
               "cfKey": "CF-29519",
-              "summary": "Auto Initializer for kohl servers",
+              "summary": "Auto Initializer for acme servers",
               "status": {"id": "status_qa_inprogress", "name": "In Progress", "category": "%s"},
-              "reporter": {"email": "bhagyashri.deokar@cloudfuze.com", "displayName": "%s"},
+              "reporter": {"email": "reporter@example.com", "displayName": "%s"},
               "resolvedAt": null,
               "createdAt": "2026-08-18T13:16:00.604Z"
             }
@@ -99,7 +99,7 @@ class TicketLookupServiceTest {
         ExternalTicketDto dto = service.fetchIssue("L1BOAR-15335");
 
         assertThat(dto.getKey()).isEqualTo("L1BOAR-15335");
-        assertThat(dto.getSummary()).isEqualTo("Auto Initializer for kohl servers");
+        assertThat(dto.getSummary()).isEqualTo("Auto Initializer for acme servers");
         assertThat(dto.getReporterDisplayName()).isEqualTo("Bhagyashri Deokar");
         assertThat(dto.getCreatedAt()).isEqualTo(LocalDateTime.of(2026, 8, 18, 13, 16, 0, 604_000_000));
         assertThat(dto.isResolved()).isFalse();

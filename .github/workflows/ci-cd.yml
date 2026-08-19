@@ -115,18 +115,19 @@ jobs:
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
 
-      # Built with the real Entra ID identifiers rather than blanks, deliberately. Neither value is
-      # a secret (both ship inside client-side JavaScript), and a blank AZURE_CLIENT_ID is this
-      # project's known silently-open footgun -- so a build that proves the wiring carries a real
-      # value is worth more than one that bakes in empty strings and passes anyway.
+      # Placeholder GUIDs, but deliberately NON-BLANK. What this build proves is that every
+      # --build-arg has a matching ARG in frontend/Dockerfile and reaches `npm run build`; a value
+      # that arrives as an empty string proves nothing, and empty is exactly how a bundle shipped
+      # with clientId:"" once. The image is never pushed or deployed, so the real identifiers would
+      # add nothing here beyond putting them in a public file.
       - name: Build frontend image
         uses: docker/build-push-action@v6
         with:
           context: ./frontend
           push: false
           build-args: |
-            REACT_APP_AZURE_CLIENT_ID=a55e053f-bfe9-4b4a-8b74-362649f82cf0
-            REACT_APP_AZURE_TENANT_ID=66d8848d-26b6-4147-8124-127624d7b3a6
+            REACT_APP_AZURE_CLIENT_ID=00000000-0000-0000-0000-000000000000
+            REACT_APP_AZURE_TENANT_ID=00000000-0000-0000-0000-000000000000
             REACT_APP_API_BASE=
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
