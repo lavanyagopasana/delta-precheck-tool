@@ -61,7 +61,7 @@ describe("when no site ID is configured", () => {
   it("sends no identify call", () => {
     const { identifyHotjarUser } = loadWith();
 
-    expect(identifyHotjarUser({ email: "lavanya.gopasana@cloudfuze.com", role: "ADMIN" })).toBe(false);
+    expect(identifyHotjarUser({ email: "admin.user@cloudfuze.com", role: "ADMIN" })).toBe(false);
   });
 });
 

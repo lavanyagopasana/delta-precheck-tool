@@ -38,7 +38,7 @@ by environment variable — nothing needs editing for local dev, the defaults be
 |---|---|---|---|
 | JDBC URL | `DB_URL` | `jdbc:postgresql://localhost:5432/delta_migration_tracker` | your real DB host/name |
 | Listen port | `SERVER_PORT` (or `PORT`) | `8081` | as needed — a PaaS-injected `PORT` is honoured automatically |
-| First admin seeded on an empty DB | `APP_FIRST_ADMIN_EMAIL` | `lavanya.gopasana@cloudfuze.com` | the admin who should own Manage Access in *that* environment |
+| First admin seeded on an empty DB | `APP_FIRST_ADMIN_EMAIL` | `first.admin@yourdomain.com` (placeholder) | **set this** — the admin who should own Manage Access in *that* environment |
 | DB username | `DB_USERNAME` | `postgres` | real DB user |
 | DB password | `DB_PASSWORD` | `postgres` | real DB password (secret) |
 | CORS allowlist for `/api/**` | `APP_ALLOWED_ORIGINS` | `http://localhost:3000` | your deployed frontend origin (comma-separate for more than one) |
