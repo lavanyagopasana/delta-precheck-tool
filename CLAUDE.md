@@ -57,7 +57,7 @@ Inside any Claude Code session, run `/gstack-upgrade`.
   `createDatabaseIfNotExist` equivalent — the target database must exist before first connect (see
   the `DB_URL` row below).
 - **Frontend**: React 18 (Create React App / `react-scripts` 5), `react-router-dom` 6, `axios`, `@azure/msal-browser` + `@azure/msal-react`
-- **Auth**: Microsoft Entra ID (Azure AD), single-tenant app registration (client ID + tenant ID are baked into `application.properties` as defaults — see Environment Variables). The frontend deliberately sends the **ID token** (not an access token) as the bearer credential — see `frontend/src/auth/getAccessToken.js` for why. Auth can still be disabled entirely by explicitly overriding `AZURE_CLIENT_ID` to blank (the backend then runs fully open, `permitAll`, no login screen) — but that's no longer the default state.
+- **Auth**: Microsoft Entra ID (Azure AD), single-tenant app registration (client ID + tenant ID come from the environment — `application.properties` holds only placeholders, see Environment Variables). The frontend deliberately sends the **ID token** (not an access token) as the bearer credential — see `frontend/src/auth/getAccessToken.js` for why. Auth can still be disabled entirely by explicitly overriding `AZURE_CLIENT_ID` to blank (the backend then runs fully open, `permitAll`, no login screen) — but that's no longer the default state.
 - **File storage**: local filesystem (`backend/uploads`), served at `/uploads/**`
 - **Email**: SMTP via Spring Mail, defaults to Office 365's relay (`smtp.office365.com`)
 - **Tests**: a real suite exists on both sides — **backend 22 files / 156 tests** (`mvn -o test`, JUnit 5 + Mockito + `@SpringBootTest`, H2 via `application-test.properties`) and **frontend 4 files / 26 tests** (`CI=true npx react-scripts test --watchAll=false`, Jest + React Testing Library). Both were green as of 2026-08-12. Note the characterization gate: `EndpointCharacterizationTest` STRICT-compares endpoint JSON against committed golden files in `backend/src/test/resources/snapshots/`. When you intentionally add a DTO field, that test fails with `Unexpected: <field>` — delete the affected snapshot, re-run to regenerate the baseline (it fails loudly the first time by design), **review the diff to confirm it's purely additive**, then re-run to lock it in.
@@ -114,13 +114,24 @@ signing in with the auto-provision domain (default `cloudfuze.com`) is silently 
 
 ## Critical Constraints
 
-- **`AZURE_CLIENT_ID`/`AZURE_TENANT_ID` are baked into `application.properties` as defaults** —
-  client ID `a55e053f-bfe9-4b4a-8b74-362649f82cf0`, tenant ID
-  `66d8848d-26b6-4147-8124-127624d7b3a6`. This is the "Delta Migration Readiness Tracker"
-  registration, single-tenant ("Accounts in this organizational directory only —
-  cloudfuze.com"), SPA platform, delegated scopes only, no client secret. Confirmed working
-  end-to-end against the deployed site on 2026-08-12 (the sign-in redirect carries exactly this
-  pair and `/api/me` returns a populated `email`/`role`).
+- **`AZURE_CLIENT_ID`/`AZURE_TENANT_ID` come from the environment, not from this repository.** The
+  real pair lives in `.env` on the server, and in GitHub Settings → Variables when `MANAGE_ENV` is
+  on. `application.properties` holds all-zero GUID placeholders. The registration they identify is
+  "Delta Migration Readiness Tracker", single-tenant ("Accounts in this organizational directory
+  only — cloudfuze.com"), SPA platform, delegated scopes only, no client secret. Confirmed working
+  end-to-end against the deployed site on 2026-08-12.
+  - **The real values were committed here from 2026-08-11 to 2026-08-19 and were then removed**,
+    because this repository is public. Neither is a credential — both are compiled into the
+    JavaScript bundle and served to every visitor, and the thing guarding sign-in is Microsoft's own
+    password/MFA check — but a public file naming the tenant to aim at buys nothing. They remain in
+    git history; removing them from there would mean rewriting it. **Don't paste them back in.**
+  - **The placeholders are all-zero GUIDs, not blank, and that matters.** `SecurityConfig` reads
+    `@Value("${azure.client-id:}")` with its own *empty* fallback, so deleting the property lines
+    would not fail loudly — it would resolve to blank, `authConfigured()` would return false, and
+    every `/api/**` route would become `permitAll`. A non-blank placeholder keeps auth enabled, so a
+    deployment that forgets the variable rejects every token instead of admitting everyone.
+  - Consequence: running locally without `AZURE_CLIENT_ID` set no longer lets you sign in. Set the
+    variable, or set it explicitly blank to run open on purpose.
   - **Do NOT reintroduce client ID `4145c1b2-a596-4d84-bede-6e2ca276c9c7` / tenant ID
     `807d6772-847c-40e2-9bec-e2c930b3a42e`.** This file previously recorded that pair as "confirmed
     with the team" — it is **wrong** and can never work for `@cloudfuze.com` accounts. It belongs to
@@ -194,12 +205,12 @@ frontend/src/
 | Variable | Default | Notes |
 |---|---|---|
 | `SERVER_PORT` (or `PORT`) | `8081` | Listen port. `PORT` is checked second, so a PaaS that injects it works unchanged |
-| `APP_FIRST_ADMIN_EMAIL` | `lavanya.gopasana@cloudfuze.com` | The single `ADMIN` row `AdminBootstrap` seeds **only** into a completely empty `app_users` table. Set this per deployment; blank skips seeding (and logs a warning, since nobody can then sign in) |
+| `APP_FIRST_ADMIN_EMAIL` | `first.admin@yourdomain.com` (placeholder) | The single `ADMIN` row `AdminBootstrap` seeds **only** into a completely empty `app_users` table. Set this per deployment; blank skips seeding (and logs a warning, since nobody can then sign in) |
 | `DB_URL` | `jdbc:postgresql://localhost:5432/delta_migration_tracker` | Database must already exist — run `createdb delta_migration_tracker` once; tables/columns are still created automatically |
 | `DB_USERNAME` | `postgres` | |
 | `DB_PASSWORD` | `postgres` | |
-| `AZURE_CLIENT_ID` | `a55e053f-bfe9-4b4a-8b74-362649f82cf0` | Baked in; override only to test a different app registration or to disable auth (set blank) |
-| `AZURE_TENANT_ID` | `66d8848d-26b6-4147-8124-127624d7b3a6` | Single-tenant — only accounts in this Entra ID tenant can authenticate at all |
+| `AZURE_CLIENT_ID` | `00000000-...-000000000000` (placeholder) | **Must be set per environment** — the real value is in `.env`/GitHub Settings, never in this repo. The placeholder keeps auth enabled so a forgotten value fails loudly; setting it blank disables auth entirely |
+| `AZURE_TENANT_ID` | `00000000-...-000000000000` (placeholder) | **Must be set per environment.** Single-tenant — only accounts in that Entra ID tenant can authenticate at all |
 | `AZURE_ALLOWED_EMAIL_DOMAIN` | *(blank)* | Currently unset for testing; set to `cloudfuze.com` to restrict sign-in |
 | `AZURE_REQUIRE_ALLOWLIST` | `true` | Only people added under Manage Access can sign in. Set `false` only for local testing with unregistered accounts |
 | `AZURE_AUTO_PROVISION_DOMAIN` | `cloudfuze.com` | Auto-added as `MIGRATION_ENGINEER` on first sign-in |

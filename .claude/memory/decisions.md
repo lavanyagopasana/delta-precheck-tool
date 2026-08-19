@@ -45,7 +45,7 @@ a deliberate follow-up, not an oversight. The comment on the entity fields says 
 
 **No SSRF-blocklist change was needed.** `UrlValidationService` rejects hosts resolving to
 private/loopback/link-local addresses, which would have broken "Validate link" for an internally-hosted
-tracker. `neutaraticketing.cftools.live` resolves to the public `208.70.248.68`, so it passes. If the
+tracker. `neutaraticketing.cftools.live` resolves to a public address, so it passes. If the
 tracker ever moves behind a VPN-only or private address, that check is what will break first.
 
 **Verified end-to-end against the live API**, not just compiled: a resolved ticket maps to
@@ -111,8 +111,8 @@ was requested or written.
 
 ## 2026-07-30 — Corrected Azure app registration (the 2026-07-27 pair was stale)
 
-The client ID `a55e053f-bfe9-4b4a-8b74-362649f82cf0` / tenant ID
-`66d8848d-26b6-4147-8124-127624d7b3a6` baked in on 2026-07-27 (see entry below) turned out to be
+The client ID / tenant ID pair baked in on 2026-07-27 (the real values now live in
+`.env` and GitHub Settings, not in this public repo) (see entry below) turned out to be
 wrong — a teammate (Abhinav Surattu) confirmed via the Azure Portal that the actual app
 registration for this project, named **"delta migration readiness tracker"**, is client ID
 `4145c1b2-a596-4d84-bede-6e2ca276c9c7`, tenant ID `807d6772-847c-40e2-9bec-e2c930b3a42e`. This was
@@ -124,7 +124,7 @@ corrected pair.
 
 **Known follow-up, not yet resolved:** this tenant's directory name is `filefuze`, and this single
 tenant registration only accepts accounts that exist in that Entra ID directory. A `cloudfuze.com`
-account (e.g. `lavanya.gopasana@cloudfuze.com`) is rejected by Microsoft itself, before this app's
+account (e.g. any `@cloudfuze.com` address) is rejected by Microsoft itself, before this app's
 own auth logic runs, unless that account is first added as an external/guest user in the
 `filefuze` tenant. This is a directory-membership issue to resolve with whoever administers that
 tenant — not something fixable by changing this app's code or config.
@@ -142,8 +142,8 @@ weight without checking whether a file existed at that path. Caught before commi
 path you haven't actually checked the contents of, even if it looks like it doesn't match anything
 obvious.
 
-**New Azure app registration wired in**: client ID `a55e053f-bfe9-4b4a-8b74-362649f82cf0`, tenant
-ID `66d8848d-26b6-4147-8124-127624d7b3a6` — this is now a **single-tenant** registration (previously
+**New Azure app registration wired in** ("Delta Migration Readiness Tracker"; the client and
+tenant IDs live in `.env`/GitHub Settings, not here) — this is now a **single-tenant** registration (previously
 multi-tenant, using the generic `organizations` issuer). Both values are baked into
 `backend/src/main/resources/application.properties` as defaults (not secrets — public OAuth
 identifiers) and into `frontend/.env.local` (gitignored, personal-machine file — update this
