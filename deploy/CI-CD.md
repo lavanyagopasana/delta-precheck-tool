@@ -105,6 +105,77 @@ Paste the entire output (all lines) as the secret.
 
 ---
 
+## Managing `.env` from GitHub instead of on the server
+
+By default the pipeline leaves the server's `.env` alone — it must already exist, and you edit it by
+logging in. Set a repository **variable** `MANAGE_ENV` to `true` and that changes: the deploy renders
+`.env` from GitHub Settings on every run and installs it before bringing the stack up. Configuration
+is then edited in the browser, and nothing about routine config changes requires a shell.
+
+Add these under **Settings ▸ Secrets and variables ▸ Actions**. Non-secret values go in the
+**Variables** tab so they stay readable; only real credentials go in **Secrets**.
+
+| Variables tab | Required | Example |
+|---|---|---|
+| `MANAGE_ENV` | to enable this at all | `true` |
+| `APP_DOMAIN` | **yes** | `deltaprechecks.cftools.live` |
+| `POSTGRES_DB` | **yes** | `delta_migration_tracker` |
+| `POSTGRES_USER` | **yes** | `deltaapp` |
+| `AZURE_CLIENT_ID` | **yes** | `a55e053f-bfe9-4b4a-8b74-362649f82cf0` |
+| `AZURE_TENANT_ID` | **yes** | `66d8848d-26b6-4147-8124-127624d7b3a6` |
+| `APP_FIRST_ADMIN_EMAIL` | **yes** | `lavanya.gopasana@cloudfuze.com` |
+| `AZURE_ALLOWED_EMAIL_DOMAIN` | no | blank |
+| `AZURE_REQUIRE_ALLOWLIST` | no | defaults `true` |
+| `AZURE_AUTO_PROVISION_DOMAIN` | no | defaults `cloudfuze.com` |
+| `HOTJAR_SITE_ID` | no | blank disables Hotjar |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` | no | default to Office 365 relay |
+| `TICKETING_BASE_URL` | no | defaults to the Neutara URL |
+
+| Secrets tab | Required | Notes |
+|---|---|---|
+| `POSTGRES_PASSWORD` | **yes** | read the warning below before setting this |
+| `TICKETING_API_TOKEN` | no | blank disables ticket lookup, with a warning |
+| `SMTP_PASSWORD` | no | blank disables mail, with a warning |
+
+### ⚠️ `POSTGRES_PASSWORD` must be the password the database already has
+
+The Postgres image sets the password **once**, when it initialises an empty data volume. It is
+stored inside `delta_pg_data` from that moment on. Changing `POSTGRES_PASSWORD` afterwards does not
+change the password inside the volume — it only changes what the backend *tries*, so the backend
+then fails to connect and the site is down until the value matches again.
+
+Before switching `MANAGE_ENV` on, read the current value off the server **once** and put exactly
+that into the secret:
+
+```bash
+grep '^POSTGRES_PASSWORD=' /opt/delta-precheck-tool/.env
+```
+
+(If you genuinely want to change the database password, that is a `ALTER USER` inside the running
+Postgres container followed by updating the secret — not a `.env` edit.)
+
+### What this step does and does not do
+
+- Required values are checked **before** anything is written, on both the runner and the server, and
+  a missing one fails the deploy. `AZURE_CLIENT_ID` is checked twice over: blank means
+  `SecurityConfig` treats auth as unconfigured and every `/api` route becomes `permitAll`, with no
+  error and no failed startup.
+- The rendered file is sent over **stdin**, not as a command argument — arguments are visible in
+  `ps` to every user on that host while the command runs, and this file holds the database password.
+- The previous `.env` is kept as `.env.bak-<timestamp>` (last five) whenever the content changes.
+  GitHub will not show you a secret again after you save it, so a copy on disk is the way back from
+  a wrong value.
+- **Hand edits on the server are reverted at the next deploy.** That is the intent — one source of
+  truth — but it is a behaviour change worth telling anyone else with server access about.
+- The database backup runs **before** this step, using the old `.env`, so a wrong value in Settings
+  cannot break the dump you would need to recover with.
+- Only key *names* are echoed to the build log, never values.
+
+Leave `MANAGE_ENV` unset and none of this happens; the step is skipped and the server's existing
+`.env` is used exactly as before.
+
+---
+
 ## The deploy user
 
 CI connects as **`deploy`**, not `root`, and deliberately. This server also runs other applications

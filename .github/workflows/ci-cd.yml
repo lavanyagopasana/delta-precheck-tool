@@ -300,6 +300,116 @@ jobs:
           echo "Retained: $(ls -1 db_backups/pre-deploy-*.sql.gz 2>/dev/null | wc -l) backup(s)"
           REMOTE
 
+      # Opt-in, via a repository variable MANAGE_ENV=true. Without it this step is skipped entirely
+      # and the .env already on the server is used untouched, which is how the pipeline behaved
+      # before this step existed. Turn it on and GitHub becomes the single source of truth for
+      # configuration: every value is edited in Settings, and the file on the server is rewritten
+      # from those values on every deploy. Anything hand-edited on the server is then silently
+      # reverted at the next deploy -- which is the point, but only if everyone knows it.
+      - name: Render .env from GitHub secrets and variables
+        if: vars.MANAGE_ENV == 'true'
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'deploy' }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/delta-precheck-tool' }}
+          # Non-secret settings live in Variables, so they stay readable and editable. Only values
+          # that are genuinely credentials go in Secrets.
+          APP_DOMAIN: ${{ vars.APP_DOMAIN }}
+          POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+          POSTGRES_USER: ${{ vars.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_ALLOWED_EMAIL_DOMAIN: ${{ vars.AZURE_ALLOWED_EMAIL_DOMAIN }}
+          AZURE_REQUIRE_ALLOWLIST: ${{ vars.AZURE_REQUIRE_ALLOWLIST || 'true' }}
+          AZURE_AUTO_PROVISION_DOMAIN: ${{ vars.AZURE_AUTO_PROVISION_DOMAIN || 'cloudfuze.com' }}
+          APP_FIRST_ADMIN_EMAIL: ${{ vars.APP_FIRST_ADMIN_EMAIL }}
+          HOTJAR_SITE_ID: ${{ vars.HOTJAR_SITE_ID }}
+          SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.office365.com' }}
+          SMTP_PORT: ${{ vars.SMTP_PORT || '587' }}
+          SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          TICKETING_BASE_URL: ${{ vars.TICKETING_BASE_URL || 'https://neutaraticketing.cftools.live' }}
+          TICKETING_API_TOKEN: ${{ secrets.TICKETING_API_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Compose interpolates an unset variable to an empty string and carries on. That is the
+          # single most dangerous property of this whole setup: a blank AZURE_CLIENT_ID makes
+          # SecurityConfig treat auth as unconfigured and turns every /api route into permitAll,
+          # with no error and no failed startup. So a missing value fails HERE, loudly, rather than
+          # rendering a file that silently opens the application to the internet.
+          missing=""
+          for v in APP_DOMAIN POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD \
+                   AZURE_CLIENT_ID AZURE_TENANT_ID APP_FIRST_ADMIN_EMAIL; do
+            [ -n "${!v:-}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::MANAGE_ENV is on but these are unset in Settings:$missing"
+            echo "::error::Add them under Settings > Secrets and variables > Actions. See deploy/CI-CD.md."
+            exit 1
+          fi
+
+          # umask before creating the file, not chmod after -- chmod after leaves a window where the
+          # rendered credentials are world-readable on the runner.
+          umask 077
+          {
+            printf 'APP_DOMAIN=%s\n'                  "$APP_DOMAIN"
+            printf 'POSTGRES_DB=%s\n'                 "$POSTGRES_DB"
+            printf 'POSTGRES_USER=%s\n'               "$POSTGRES_USER"
+            printf 'POSTGRES_PASSWORD=%s\n'           "$POSTGRES_PASSWORD"
+            printf 'AZURE_CLIENT_ID=%s\n'             "$AZURE_CLIENT_ID"
+            printf 'AZURE_TENANT_ID=%s\n'             "$AZURE_TENANT_ID"
+            printf 'AZURE_ALLOWED_EMAIL_DOMAIN=%s\n'  "$AZURE_ALLOWED_EMAIL_DOMAIN"
+            printf 'AZURE_REQUIRE_ALLOWLIST=%s\n'     "$AZURE_REQUIRE_ALLOWLIST"
+            printf 'AZURE_AUTO_PROVISION_DOMAIN=%s\n' "$AZURE_AUTO_PROVISION_DOMAIN"
+            printf 'APP_FIRST_ADMIN_EMAIL=%s\n'       "$APP_FIRST_ADMIN_EMAIL"
+            printf 'HOTJAR_SITE_ID=%s\n'              "$HOTJAR_SITE_ID"
+            printf 'SMTP_HOST=%s\n'                   "$SMTP_HOST"
+            printf 'SMTP_PORT=%s\n'                   "$SMTP_PORT"
+            printf 'SMTP_USERNAME=%s\n'               "$SMTP_USERNAME"
+            printf 'SMTP_PASSWORD=%s\n'               "$SMTP_PASSWORD"
+            printf 'TICKETING_BASE_URL=%s\n'          "$TICKETING_BASE_URL"
+            printf 'TICKETING_API_TOKEN=%s\n'         "$TICKETING_API_TOKEN"
+          } > env.rendered
+
+          # Sent over stdin rather than as command arguments. Arguments are visible in `ps` output
+          # to every user on that host for as long as the command runs, and this file contains the
+          # database password and the ticketing token.
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" "cat > '$DEPLOY_PATH/.env.incoming'" < env.rendered
+          rm -f env.rendered
+
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" "DEPLOY_PATH='$DEPLOY_PATH' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+          chmod 600 .env.incoming
+
+          # Re-checked on the server as well as on the runner. The value could have been truncated
+          # in transit, and the consequence of a blank one here is an unauthenticated application.
+          grep -q '^AZURE_CLIENT_ID=.\+' .env.incoming || {
+            echo "::error::rendered .env has a blank AZURE_CLIENT_ID - refusing to install it"
+            rm -f .env.incoming; exit 1
+          }
+
+          # The previous file is kept, not overwritten in place. If a value in Settings is wrong,
+          # the way back is a copy on disk -- GitHub will not show you a secret again once saved.
+          if [ -f .env ] && ! cmp -s .env .env.incoming; then
+            cp -p .env ".env.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+            ls -1t .env.bak-* 2>/dev/null | tail -n +6 | xargs -r rm -f
+            echo ".env changed; previous version kept as .env.bak-*"
+          else
+            echo ".env unchanged"
+          fi
+          mv .env.incoming .env
+          chmod 600 .env
+
+          # Names only. Never the values -- this output goes into a build log.
+          echo "Installed .env with keys: $(grep -oE '^[A-Z_]+' .env | tr '\n' ' ')"
+          REMOTE
+
       - name: Deploy
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
