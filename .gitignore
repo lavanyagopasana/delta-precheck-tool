@@ -42,3 +42,7 @@ PR_DESCRIPTION.md
 # Entra ID pair in its frontend build args, and committing it would put those straight back into a
 # public repository.
 docker-compose.yml.pre-ci-*
+
+# Generated PDFs of the docs/ markdown sources (built via /make-pdf). The .md is the source of
+# truth and is committed; the PDF is a build artifact that would churn on every doc edit.
+docs/*.pdf
