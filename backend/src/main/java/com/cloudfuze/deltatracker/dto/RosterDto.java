@@ -13,6 +13,11 @@ public class RosterDto {
     private List<String> migrationManagers;
     private List<String> engineers;
 
+    // Pools for the per-project Dev Lead / QA Lead pickers. Flat lists with no team scoping: the
+    // same lead usually covers every team, so there is nothing to scope them by.
+    private List<String> devLeads;
+    private List<String> qaLeads;
+
     /**
      * manager email (lowercase) -> engineer emails on that manager's team.
      *

@@ -212,6 +212,9 @@ public class ProjectService {
     public ProjectSummaryDto updateAssignments(Long id, ProjectAssignmentRequest request) {
         Project project = findOrThrow(id);
         project.setEngineerEmails(toSet(request.getEngineerEmails()));
+        // Blank is stored as null so "unassigned" is one value everywhere, not a mix of null and "".
+        project.setDevLeadEmail(blankToNull(request.getDevLeadEmail()));
+        project.setQaLeadEmail(blankToNull(request.getQaLeadEmail()));
         Project saved = projectRepository.save(project);
         return buildSummary(saved, serverRepository.findAll());
     }
@@ -406,6 +409,8 @@ public class ProjectService {
         to.setOpenEscalationCount(from.getOpenEscalationCount());
         to.setMigrationManagers(from.getMigrationManagers());
         to.setMigrationManagerName(from.getMigrationManagerName());
+        to.setDevLeadEmail(from.getDevLeadEmail());
+        to.setQaLeadEmail(from.getQaLeadEmail());
         to.setEngineerEmails(from.getEngineerEmails());
         to.setDevApprovalsDone(from.getDevApprovalsDone());
         to.setDevApprovalsPending(from.getDevApprovalsPending());
@@ -532,6 +537,8 @@ public class ProjectService {
         dto.setOpenEscalationCount(openEscalations);
         dto.setMigrationManagers(migrationManagers);
         dto.setMigrationManagerName(project.getMigrationManagerName());
+        dto.setDevLeadEmail(project.getDevLeadEmail());
+        dto.setQaLeadEmail(project.getQaLeadEmail());
         dto.setEngineerEmails(List.copyOf(project.getEngineerEmails()));
         dto.setDevApprovalsDone(devDone);
         dto.setDevApprovalsPending(devPending);
