@@ -2591,13 +2591,21 @@ input[type="checkbox"]:disabled {
    teams wrap sensibly from a phone to a wide monitor without a media query per breakpoint. */
 .team-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  /* Equal-width tracks. auto-fill + 1fr already sizes columns identically; the cards themselves
+     are what needed pinning -- a two-manager name wraps to two lines and used to make its whole
+     row taller than the others. */
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: 10px;
+  align-items: stretch;
 }
 
 .team-card {
   display: flex;
   flex-direction: column;
+  /* Name block grows, meta row pins to the bottom, so every card ends up the same height whether
+     its name takes one line or two. */
+  justify-content: space-between;
+  min-height: 86px;
   gap: 8px;
   padding: 12px 14px;
   background: var(--color-surface);
@@ -2633,6 +2641,13 @@ input[type="checkbox"]:disabled {
   line-height: 1.3;
   /* Two managers make a long label; wrap it rather than clipping a name in half. */
   overflow-wrap: anywhere;
+}
+
+/* A team with no manager cannot scope anybody's engineer picker, so its state is called out in
+   words rather than left to a colour nobody has a key for. */
+.team-card-tag--warn {
+  background: var(--color-red-soft);
+  color: var(--color-red);
 }
 
 .team-card-meta {

@@ -45,7 +45,10 @@ const roleColor = (role) => ROLE_COLOR[role] || "var(--color-text-muted)";
 // CSV team column and the SQL seed match on.
 const teamDisplayName = (team) => {
   const managers = team.managerEmails || [];
-  if (managers.length === 0) return "Unmanaged team";
+  // No manager -> fall back to the team's own name. Returning a generic "Unmanaged team" here
+  // replaced the one piece of identity the card had, so several such teams were indistinguishable
+  // and you could not tell which one to fix. The missing manager is stated in the meta row instead.
+  if (managers.length === 0) return team.name;
   return `${managers.map(emailLocalPart).join("/")} team`;
 };
 
@@ -420,7 +423,10 @@ export default function AdminUsersPage() {
                     </button>
                   </div>
                   <div className="team-card-meta">
-                    <span className="team-card-tag">{t.name}</span>
+                    {/* The stored name is only worth repeating when it is NOT already the heading,
+                        i.e. when managers named the card. It is what the CSV team column matches. */}
+                    {!unmanaged && <span className="team-card-tag">{t.name}</span>}
+                    {unmanaged && <span className="team-card-tag team-card-tag--warn">no manager yet</span>}
                     <span>
                       {engineers.length} engineer{engineers.length === 1 ? "" : "s"}
                     </span>
@@ -468,12 +474,24 @@ export default function AdminUsersPage() {
             key: "email",
             label: "Email",
             render: (u) => (
-              <>
-                {u.email}
-                {currentUser?.email?.toLowerCase() === u.email.toLowerCase() && (
-                  <span style={{ color: "var(--color-text-faint)", fontSize: 12 }}> (you)</span>
-                )}
-              </>
+              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                <span>
+                  {u.email}
+                  {currentUser?.email?.toLowerCase() === u.email.toLowerCase() && (
+                    <span style={{ color: "var(--color-text-faint)", fontSize: 12 }}> (you)</span>
+                  )}
+                </span>
+                {/* Folded in from what used to be its own "Added" column. A full timestamp needed a
+                    quarter of the table width and wrapped onto three lines to show something nobody
+                    scans for; as a date under the email it costs no width and stays available, with
+                    the exact time on hover. */}
+                <span
+                  style={{ fontSize: 11, color: "var(--color-text-faint)" }}
+                  title={`Added ${new Date(u.addedAt).toLocaleString()}`}
+                >
+                  added {new Date(u.addedAt).toLocaleDateString()}
+                </span>
+              </div>
             ),
           },
           {
@@ -531,11 +549,6 @@ export default function AdminUsersPage() {
                 </select>
               );
             },
-          },
-          {
-            key: "addedAt",
-            label: "Added",
-            render: (u) => new Date(u.addedAt).toLocaleString(),
           },
           {
             key: "actions",
