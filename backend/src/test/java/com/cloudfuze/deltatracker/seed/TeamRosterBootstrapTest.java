@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
@@ -90,6 +91,10 @@ class TeamRosterBootstrapTest {
         assertThat(appUserRepository.count()).isEqualTo(usersBefore);
     }
 
+    // Mutates the seeded roster that the read-only assertions above depend on. The context (and with
+    // it the create-drop H2 database) is rebuilt afterwards so this cannot decide whether another
+    // test passes -- these all share one Spring context and JUnit does not guarantee method order.
+    @DirtiesContext(methodMode = DirtiesContext.MethodMode.AFTER_METHOD)
     @Test
     void aManagerAnAdminAlreadyPlacedByHandIsLeftWhereTheyAre() {
         // The case that makes running this on a live database safe: an admin has already put a
@@ -125,6 +130,10 @@ class TeamRosterBootstrapTest {
         }
     }
 
+    // Mutates the seeded roster that the read-only assertions above depend on. The context (and with
+    // it the create-drop H2 database) is rebuilt afterwards so this cannot decide whether another
+    // test passes -- these all share one Spring context and JUnit does not guarantee method order.
+    @DirtiesContext(methodMode = DirtiesContext.MethodMode.AFTER_METHOD)
     @Test
     void aHandMadeTeamOccupyingTheNameTheSeedWantsIsNeverReused() {
         // The real situation this guards. An admin creates teams through the UI, which auto-numbers
@@ -157,5 +166,41 @@ class TeamRosterBootstrapTest {
                 .extracting(AppUser::getEmail)
                 .containsExactly("squatter.manager@cloudfuze.com");
         assertThat(originalTeamId).isNotNull();
+    }
+
+    // Mutates the seeded roster that the read-only assertions above depend on. The context (and with
+    // it the create-drop H2 database) is rebuilt afterwards so this cannot decide whether another
+    // test passes -- these all share one Spring context and JUnit does not guarantee method order.
+    @DirtiesContext(methodMode = DirtiesContext.MethodMode.AFTER_METHOD)
+    @Test
+    void aHalfFinishedManualTeamGetsItsMissingEngineers() {
+        // The situation after an admin creates a few teams by hand in the deployed app: the team and
+        // its manager exist, some or all engineers do not. Skipping such a group outright left it
+        // half-finished forever and the manager's engineer picker scoping to nobody. The existing
+        // team is reused and topped up instead.
+        Team handMade = teamRepository.save(new Team("Hand made", "an-admin"));
+        AppUser manager = appUserRepository.findByEmailIgnoreCase("harika.velidi@cloudfuze.com").orElseThrow();
+        manager.setTeam(handMade);
+        appUserRepository.save(manager);
+
+        // Detach that team's engineers, as if the admin never added them.
+        List<AppUser> engineers = appUserRepository.findByTeamIdAndRole(
+                teamRepository.findByNameIgnoreCase("Team 1").orElseThrow().getId(),
+                AppUserRole.MIGRATION_ENGINEER);
+        engineers.forEach(e -> e.setTeam(null));
+        appUserRepository.saveAll(engineers);
+        long teamsBefore = teamRepository.count();
+
+        bootstrap.run();
+
+        // No duplicate team, and the manager stays on the one the admin made.
+        assertThat(teamRepository.count()).isEqualTo(teamsBefore);
+        AppUser managerAfter = appUserRepository.findByEmailIgnoreCase("harika.velidi@cloudfuze.com").orElseThrow();
+        assertThat(managerAfter.getTeam().getId()).isEqualTo(handMade.getId());
+
+        // ...and the engineers the file names are now on it.
+        assertThat(appUserRepository.findByTeamIdAndRole(handMade.getId(), AppUserRole.MIGRATION_ENGINEER))
+                .extracting(AppUser::getEmail)
+                .contains("siva.kota@cloudfuze.com", "ravi.hemanth@cloudfuze.com", "meena.lakshmi@cloudfuze.com");
     }
 }

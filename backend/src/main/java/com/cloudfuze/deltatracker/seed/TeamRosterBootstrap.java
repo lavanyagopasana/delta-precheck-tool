@@ -35,11 +35,10 @@ import java.util.Optional;
  * simply lists every engineer everywhere.
  *
  * <p><b>Grouped by MANAGER, not by team name.</b> This is what makes it safe to run against a
- * database an admin has already been editing. For each group in the file, if any of its managers is
- * already on a team, the whole group is skipped -- somebody set that team up by hand and their
- * arrangement wins. Only groups whose managers have no team at all are created. So a half-finished
- * manual setup is completed rather than duplicated or fought with, and matching on the manager
- * rather than the string "Team 4" means a hand-created team under any name is still recognised.
+ * database an admin has already been editing. If a group's manager already has a team, that team IS
+ * this group's team -- it is REUSED and its missing members are added, rather than a duplicate being
+ * created beside it. Matching on the manager rather than on the string "Team 4" is what makes that
+ * work when the admin named their team something else, which the UI's auto-numbering makes likely.
  *
  * <p>Never modifies an ADMIN row, and never moves somebody who already has a team. Runs on every
  * boot and converges: once the roster is in place it does nothing but a handful of reads.
@@ -91,7 +90,7 @@ public class TeamRosterBootstrap implements CommandLineRunner {
 
         int teamsCreated = 0;
         int usersCreated = 0;
-        int skippedGroups = 0;
+        int completedGroups = 0;
 
         for (Map.Entry<String, List<Row>> group : byTeam.entrySet()) {
             List<Row> members = group.getValue();
@@ -103,24 +102,32 @@ public class TeamRosterBootstrap implements CommandLineRunner {
                 continue;
             }
 
-            // If any manager of this group already belongs to a team, an admin has set this up.
-            // Leave it entirely alone rather than second-guessing their arrangement.
-            boolean alreadySetUp = managers.stream().anyMatch(m ->
-                    appUserRepository.findByEmailIgnoreCase(m.email())
-                            .map(u -> u.getTeam() != null)
-                            .orElse(false));
-            if (alreadySetUp) {
-                skippedGroups++;
-                continue;
-            }
+            // Does a manager of this group already have a team? If so that IS this group's team --
+            // an admin built it by hand -- so reuse it rather than creating a second one beside it.
+            Team existingTeam = managers.stream()
+                    .map(m -> appUserRepository.findByEmailIgnoreCase(m.email()).orElse(null))
+                    .filter(u -> u != null && u.getTeam() != null)
+                    .map(AppUser::getTeam)
+                    .findFirst()
+                    .orElse(null);
 
-            // A team NAME already in use does not mean this group's team exists. An admin creating
-            // teams through the UI gets them auto-numbered from whatever is already there, so their
-            // hand-made "Team 1" can easily belong to a different manager entirely. Reusing it by
-            // name would merge two unrelated teams -- this group's manager would silently join
-            // somebody else's. So take the name if it is free, and otherwise allocate a fresh one.
-            Team team = teamRepository.save(new Team(freeTeamName(group.getKey()), "roster-seed"));
-            teamsCreated++;
+            Team team;
+            if (existingTeam != null) {
+                // Reused, not skipped. Skipping the group outright left a half-finished manual setup
+                // half-finished forever: an admin who created the team and its manager but not its
+                // engineers would never get the engineers, and the picker would scope to nobody.
+                // Members who already have a team are still never moved, so their work is intact.
+                team = existingTeam;
+                completedGroups++;
+            } else {
+                // A team NAME already in use does not mean this group's team exists. An admin
+                // creating teams through the UI gets them auto-numbered from whatever is already
+                // there, so their hand-made "Team 1" can easily belong to a different manager.
+                // Reusing it by name would merge two unrelated teams. Take the name if free,
+                // otherwise allocate a fresh one.
+                team = teamRepository.save(new Team(freeTeamName(group.getKey()), "roster-seed"));
+                teamsCreated++;
+            }
 
             for (Row r : members) {
                 Optional<AppUser> existing = appUserRepository.findByEmailIgnoreCase(r.email());
@@ -147,10 +154,11 @@ public class TeamRosterBootstrap implements CommandLineRunner {
         }
 
         if (teamsCreated > 0 || usersCreated > 0) {
-            log.info("Team roster seeded: {} team(s) created, {} user(s) added, {} group(s) already "
-                    + "set up by an admin and left alone.", teamsCreated, usersCreated, skippedGroups);
+            log.info("Team roster seeded: {} team(s) created, {} user(s) added, {} existing team(s) "
+                    + "reused (created by an admin, members topped up).",
+                    teamsCreated, usersCreated, completedGroups);
         } else {
-            log.debug("Team roster already in place ({} group(s) skipped).", skippedGroups);
+            log.debug("Team roster already in place ({} existing team(s) checked).", completedGroups);
         }
     }
 
