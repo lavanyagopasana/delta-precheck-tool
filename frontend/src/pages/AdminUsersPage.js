@@ -22,6 +22,10 @@ const ROLE_OPTIONS = [
 
 const roleLabel = (role) => ROLE_OPTIONS.find((r) => r.value === role)?.label || role;
 
+// The only two roles a team is meaningful for. Mirrors the backend, where Team membership exists to
+// scope a Migration Manager's engineer picker and nothing else.
+const TEAM_ROLES = ["MIGRATION_MANAGER", "MIGRATION_ENGINEER"];
+
 // Consistent accent color per role, reused by the summary strip and the row indicators.
 const ROLE_COLOR = {
   ADMIN: "var(--color-red)",
@@ -359,13 +363,25 @@ export default function AdminUsersPage() {
           A project's engineer picker only offers engineers on that project's Migration Manager's
           team. A team can have more than one manager; both see the same engineers.
         </p>
-        <form onSubmit={handleCreateTeam} style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <input
-            value={newTeamName}
-            onChange={(e) => setNewTeamName(e.target.value)}
-            placeholder="New team name"
-            style={{ flex: "0 1 240px" }}
-          />
+        {/* type="text" is load-bearing, not decoration: index.css styles input[type="text"], and an
+            input with no type attribute does not match that selector -- which is why this box
+            rendered completely unstyled next to the identical-looking one in "Add a user". */}
+        <form
+          onSubmit={handleCreateTeam}
+          style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap", alignItems: "flex-end" }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--color-text-muted)" }}>
+              New team
+            </label>
+            <input
+              type="text"
+              value={newTeamName}
+              onChange={(e) => setNewTeamName(e.target.value)}
+              placeholder="e.g. Team 7"
+              style={{ width: 260 }}
+            />
+          </div>
           <button className="btn" type="submit" disabled={teamSaving || !newTeamName.trim()}>
             {teamSaving ? "Creating..." : "Add team"}
           </button>
@@ -380,34 +396,37 @@ export default function AdminUsersPage() {
             No teams yet. Until a manager is on a team, their projects list every engineer.
           </div>
         ) : (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <div className="team-grid">
             {teams.map((t) => {
               const managers = t.managerEmails || [];
               const engineers = t.engineerEmails || [];
+              const unmanaged = managers.length === 0;
               return (
-                <span
-                  key={t.id}
-                  className="engineer-chip"
-                  style={{ cursor: "default", alignItems: "flex-start", padding: "8px 10px" }}
-                  title={managers.length ? `Managers: ${managers.join(", ")}` : "No manager assigned"}
-                >
-                  <span style={{ display: "flex", flexDirection: "column", gap: 2, textAlign: "left" }}>
-                    {/* Managers lead, because that is what the reader is scanning for. The team name
-                        is kept underneath so it still matches the CSV/team column elsewhere. */}
-                    <strong style={{ fontWeight: 600 }}>{teamDisplayName(t)}</strong>
-                    <span style={{ color: "var(--color-text-faint)", fontSize: 11.5 }}>
-                      {t.name} · {engineers.length} engineer{engineers.length === 1 ? "" : "s"}
-                      {managers.length > 1 ? ` · ${managers.length} managers` : ""}
+                <div key={t.id} className={`team-card${unmanaged ? " team-card--unmanaged" : ""}`}>
+                  <div className="team-card-head">
+                    {/* Managers lead, because that is what a reader scans for. The stored name sits
+                        underneath because it is the string the CSV team column matches on. */}
+                    <span className="team-card-name" title={managers.join(", ")}>
+                      {teamDisplayName(t)}
                     </span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveTeam(t)}
-                    aria-label={`Delete ${t.name}`}
-                  >
-                    <TrashIcon />
-                  </button>
-                </span>
+                    <button
+                      type="button"
+                      className="team-card-delete"
+                      onClick={() => handleRemoveTeam(t)}
+                      aria-label={`Delete ${t.name}`}
+                      title={`Delete ${t.name}`}
+                    >
+                      <TrashIcon />
+                    </button>
+                  </div>
+                  <div className="team-card-meta">
+                    <span className="team-card-tag">{t.name}</span>
+                    <span>
+                      {engineers.length} engineer{engineers.length === 1 ? "" : "s"}
+                    </span>
+                    {managers.length > 1 && <span>{managers.length} managers</span>}
+                  </div>
+                </div>
               );
             })}
           </div>
@@ -483,19 +502,35 @@ export default function AdminUsersPage() {
             filterValue: (u) => u.teamName || "",
             // Editable inline rather than behind the Edit modal: team is the one field an admin
             // changes in bulk while reading down the list, and the modal only handles role.
-            render: (u) => (
-              <select
-                className="engineer-select"
-                value={u.teamId || ""}
-                onChange={(e) => handleAssignTeam(u, e.target.value)}
-                aria-label={`Team for ${u.email}`}
-              >
-                <option value="">No team</option>
-                {teams.map((t) => (
-                  <option key={t.id} value={t.id}>{teamDisplayName(t)} ({t.name})</option>
-                ))}
-              </select>
-            ),
+            render: (u) => {
+              // Teams only decide which engineers a Migration Manager may assign, so they mean
+              // nothing for ADMIN / DEV_LEAD / QA_LEAD -- the same Dev/QA Lead covers every team.
+              // Rendering a live dropdown on those rows invited a change that has no effect, and
+              // read as clutter on every admin row.
+              if (!TEAM_ROLES.includes(u.role)) {
+                return (
+                  <span
+                    style={{ color: "var(--color-text-faint)", fontSize: 12.5 }}
+                    title={`${roleLabel(u.role)}s are not on a team — teams only scope a Migration Manager's engineer list.`}
+                  >
+                    &mdash;
+                  </span>
+                );
+              }
+              return (
+                <select
+                  className="engineer-select"
+                  value={u.teamId || ""}
+                  onChange={(e) => handleAssignTeam(u, e.target.value)}
+                  aria-label={`Team for ${u.email}`}
+                >
+                  <option value="">No team</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>{teamDisplayName(t)} ({t.name})</option>
+                  ))}
+                </select>
+              );
+            },
           },
           {
             key: "addedAt",
