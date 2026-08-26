@@ -170,6 +170,9 @@ export default function AdminUsersPage() {
     try {
       const result = await importUsersCsv(csvFile, csvRole);
       const parts = [`${result.createdCount} added`, `${result.updatedCount} updated`];
+      // Teams the file named that didn't exist yet. Surfaced because a mistyped team cell shows up
+      // here as a team nobody meant to create, which is the moment it is cheapest to notice.
+      if (result.createdTeams?.length) parts.push(`${result.createdTeams.length} team(s) created`);
       if (result.errors?.length) parts.push(`${result.errors.length} skipped`);
       // Deliberately no longer claims a single role ("... as Migration Engineer"): rows can now each
       // carry their own, so naming the default would be wrong for any mixed-role file.
@@ -178,12 +181,16 @@ export default function AdminUsersPage() {
       // Row errors used to vanish -- the modal closed on success and the toast only counted them, so
       // an admin importing 30 people had no way to see WHICH rows were skipped or why. Keep the modal
       // open and show them; only auto-close when every row landed.
+      // loadTeams() as well as load(): the import can now create teams, so the Teams panel and the
+      // per-user Team dropdowns are both stale until it reruns.
       if (result.errors?.length) {
         setCsvError(result.errors.join("\n"));
         load();
+        loadTeams();
       } else {
         closeCsvModal();
         load();
+        loadTeams();
       }
     } catch (err) {
       setCsvError(err.response?.data?.message || "Failed to import CSV.");

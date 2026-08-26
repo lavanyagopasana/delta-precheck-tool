@@ -4,6 +4,7 @@ import com.cloudfuze.deltatracker.config.CacheConfig;
 import com.cloudfuze.deltatracker.dto.AppUserImportResultDto;
 import com.cloudfuze.deltatracker.entity.AppUser;
 import com.cloudfuze.deltatracker.entity.AppUserRole;
+import com.cloudfuze.deltatracker.entity.Team;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
 import com.cloudfuze.deltatracker.repository.AppUserRepository;
@@ -316,5 +317,46 @@ class AppUserServiceTest {
 
     private static MockMultipartFile csv(String body) {
         return new MockMultipartFile("file", "roster.csv", "text/csv", body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void importCsvCreatesTeamsNamedByTheFileAndReportsThem() {
+        // The whole roster arrives as one file naming teams that do not exist yet. Requiring them to
+        // be hand-created first made onboarding a two-step job that was easy to get out of order.
+        MockMultipartFile file = csv("email,role,team\n"
+                + "harika.velidi@cloudfuze.com,Migration Manager,Team 1\n"
+                + "siva.kota@cloudfuze.com,Migration Engineer,Team 1\n"
+                + "raghu.yellani@cloudfuze.com,Migration Manager,Team 2\n");
+        when(repository.existsByEmailIgnoreCase(any())).thenReturn(false);
+        when(repository.findByEmailIgnoreCase(any())).thenReturn(Optional.empty());
+        when(repository.save(any(AppUser.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(teamRepository.findByNameIgnoreCase(any())).thenReturn(Optional.empty());
+        when(teamRepository.save(any(Team.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AppUserImportResultDto result = service.importCsv(file, null, "admin@cloudfuze.com");
+
+        // Each team created ONCE, even though Team 1 is named by two rows.
+        assertThat(result.getCreatedTeams()).containsExactly("Team 1", "Team 2");
+        assertThat(result.getErrors()).isEmpty();
+        assertThat(result.getCreatedCount()).isEqualTo(3);
+    }
+
+    @Test
+    void importCsvReusesAnExistingTeamRatherThanCreatingADuplicate() {
+        Team existing = new Team("Team 5", "admin@cloudfuze.com");
+        MockMultipartFile file = csv("email,role,team\n"
+                + "abhishikth.yenugula@cloudfuze.com,Migration Manager,Team 5\n"
+                // Same team, different case -- must resolve to the row above, not a second team.
+                + "ajay.singh@cloudfuze.com,Migration Manager,team 5\n");
+        when(repository.existsByEmailIgnoreCase(any())).thenReturn(false);
+        when(repository.findByEmailIgnoreCase(any())).thenReturn(Optional.empty());
+        when(repository.save(any(AppUser.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(teamRepository.findByNameIgnoreCase(any())).thenReturn(Optional.of(existing));
+
+        AppUserImportResultDto result = service.importCsv(file, null, "admin@cloudfuze.com");
+
+        assertThat(result.getCreatedTeams()).isEmpty();
+        verify(teamRepository, never()).save(any(Team.class));
+        assertThat(result.getErrors()).isEmpty();
     }
 }

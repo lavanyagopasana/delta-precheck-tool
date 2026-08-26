@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 
@@ -125,7 +126,7 @@ public class AppUserService {
     // actingAdminEmail is the admin performing the change (from AdminController.requireAdmin). It's
     // stored as addedBy for brand-new rows, and used to guard the scenarios where editing a user
     // isn't safe -- so "editing users" is deliberately NOT allowed for every user/every change.
-    public AppUserDto upsert(String email, AppUserRole role, String actingAdminEmail) {
+    public AppUser upsertEntity(String email, AppUserRole role, String actingAdminEmail) {
         Optional<AppUser> existing = appUserRepository.findByEmailIgnoreCase(email);
 
         if (existing.isPresent()) {
@@ -145,18 +146,30 @@ public class AppUserService {
 
         AppUser user = existing.orElseGet(() -> new AppUser(email, role, actingAdminEmail));
         user.setRole(role);
-        AppUserDto saved = AppUserDto.fromEntity(appUserRepository.save(user));
+        AppUser saved = appUserRepository.save(user);
         evictRosterCache();
         return saved;
+    }
+
+    // DTO-returning wrapper for the controller. upsertEntity above returns the saved row itself,
+    // which importCsv needs so it can set the team without re-reading what it just wrote.
+    public AppUserDto upsert(String email, AppUserRole role, String actingAdminEmail) {
+        return AppUserDto.fromEntity(upsertEntity(email, role, actingAdminEmail));
     }
 
     // One person per row. A header row is auto-detected if any cell normalizes to "email", "role" or
     // "team"; otherwise every row (including the first) is data with the email in the first column.
     //
-    // Team resolution per row: an optional "team" column names an EXISTING team (matched
-    // case-insensitively). An unknown name is a per-row error, not a silently-skipped cell -- a typo
-    // that quietly left someone team-less would show up much later as a wrongly-scoped engineer
-    // dropdown, which is far harder to trace back to the import.
+    // Team resolution per row: an optional "team" column names a team, matched case-insensitively.
+    // A name that doesn't exist yet is CREATED, and every team created this way is listed in the
+    // result's createdTeams.
+    //
+    // This deliberately does not error on an unknown team. Requiring the teams to exist first meant
+    // onboarding a whole org was two manual steps -- hand-create six teams, then import -- and got
+    // the ordering wrong often enough to be the main friction in setting this up at all. The typo
+    // risk that argued for erroring is covered by reporting instead: a mistyped cell surfaces as a
+    // team nobody meant to create, both in createdTeams and in the Teams panel, rather than silently
+    // leaving that person team-less.
     //
     // Role resolution per row: the row's own "role" cell wins, falling back to defaultRole when that
     // cell is blank or the column is absent. defaultRole may be null, which is valid as long as every
@@ -195,6 +208,8 @@ public class AppUserService {
         }
 
         List<String> errors = new ArrayList<>();
+        // Ordered + de-duplicated: a team named by 6 rows must be created once and reported once.
+        LinkedHashSet<String> createdTeams = new LinkedHashSet<>();
         int totalRows = 0;
         int created = 0;
         int updated = 0;
@@ -235,21 +250,21 @@ public class AppUserService {
             String rawTeam = teamColumn >= 0 && teamColumn < fields.size() ? fields.get(teamColumn).trim() : "";
             if (StringUtils.hasText(rawTeam)) {
                 Optional<Team> found = teamRepository.findByNameIgnoreCase(rawTeam);
-                if (found.isEmpty()) {
-                    errors.add("Row " + (rowNum + 1) + ": \"" + rawTeam + "\" isn't a known team. "
-                            + "Create the team first, then re-import.");
-                    continue;
+                if (found.isPresent()) {
+                    rowTeam = found.get();
+                } else {
+                    rowTeam = teamRepository.save(new Team(rawTeam, addedBy));
+                    createdTeams.add(rowTeam.getName());
                 }
-                rowTeam = found.get();
             }
 
             boolean existed = appUserRepository.existsByEmailIgnoreCase(email);
             try {
-                upsert(email, rowRole, addedBy);
+                AppUser stored = upsertEntity(email, rowRole, addedBy);
                 if (rowTeam != null) {
-                    // Separate save from upsert(): upsert owns the role guards (self-demotion, last
-                    // admin) and stays team-agnostic, so team assignment can't be blocked by them.
-                    AppUser stored = appUserRepository.findByEmailIgnoreCase(email).orElseThrow();
+                    // Set on the row upsertEntity just returned rather than re-reading it. Applied as
+                    // a second save because upsert owns the role guards (self-demotion, last admin)
+                    // and stays team-agnostic, so team assignment can't be blocked by them.
                     stored.setTeam(rowTeam);
                     appUserRepository.save(stored);
                     evictRosterCache();
@@ -272,6 +287,11 @@ public class AppUserService {
         result.setCreatedCount(created);
         result.setUpdatedCount(updated);
         result.setErrors(errors);
+        result.setCreatedTeams(new ArrayList<>(createdTeams));
+        // A new team changes which engineers a manager may assign, so the roster map is now stale.
+        if (!createdTeams.isEmpty()) {
+            evictRosterCache();
+        }
         return result;
     }
 
