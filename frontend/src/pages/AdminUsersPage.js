@@ -32,13 +32,17 @@ const ROLE_COLOR = {
 };
 const roleColor = (role) => ROLE_COLOR[role] || "var(--color-text-muted)";
 
-// "Team 4" identifies nothing to a human -- people know a team by who runs it. The team NAME stays
-// the stable key (it survives a manager changing, and a two-manager team cannot be named after one
-// of them), but everywhere a team is shown it is labelled with its managers.
-const teamManagerLabel = (team) => {
+// A team IS its managers, as far as anyone reading the screen is concerned: "manager1/manager2 team".
+// Derived from the current managers rather than stored as the row name on purpose -- a name baked
+// from a person goes stale the moment they move teams, leaving a team called after somebody who no
+// longer runs it. Deriving means the displayed name follows reality with no rename step.
+//
+// The stored name (Team 1..Team 6) is still shown as secondary text, because that is the string the
+// CSV team column and the SQL seed match on.
+const teamDisplayName = (team) => {
   const managers = team.managerEmails || [];
-  if (managers.length === 0) return "no manager yet";
-  return managers.map(emailLocalPart).join(" + ");
+  if (managers.length === 0) return "Unmanaged team";
+  return `${managers.map(emailLocalPart).join("/")} team`;
 };
 
 export default function AdminUsersPage() {
@@ -390,7 +394,7 @@ export default function AdminUsersPage() {
                   <span style={{ display: "flex", flexDirection: "column", gap: 2, textAlign: "left" }}>
                     {/* Managers lead, because that is what the reader is scanning for. The team name
                         is kept underneath so it still matches the CSV/team column elsewhere. */}
-                    <strong style={{ fontWeight: 600 }}>{teamManagerLabel(t)}</strong>
+                    <strong style={{ fontWeight: 600 }}>{teamDisplayName(t)}</strong>
                     <span style={{ color: "var(--color-text-faint)", fontSize: 11.5 }}>
                       {t.name} · {engineers.length} engineer{engineers.length === 1 ? "" : "s"}
                       {managers.length > 1 ? ` · ${managers.length} managers` : ""}
@@ -488,7 +492,7 @@ export default function AdminUsersPage() {
               >
                 <option value="">No team</option>
                 {teams.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name} — {teamManagerLabel(t)}</option>
+                  <option key={t.id} value={t.id}>{teamDisplayName(t)} ({t.name})</option>
                 ))}
               </select>
             ),
