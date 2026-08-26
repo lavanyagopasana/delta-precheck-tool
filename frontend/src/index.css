@@ -2652,28 +2652,7 @@ input[type="checkbox"]:disabled {
   color: var(--color-red);
 }
 
-/* The stored-name pill doubles as a rename trigger, so it must read as pressable without becoming a
-   second visual weight competing with the team name above it. */
-.team-card-tag--button {
-  border: none;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-  transition: filter 0.15s ease;
-}
 
-/* A team with no number yet: present and clickable, but visually quiet so it does not read as a
-   label carrying information. */
-.team-card-tag--empty {
-  background: var(--color-bg);
-  color: var(--color-text-faint);
-  font-weight: 500;
-}
-
-.team-card-tag--button:hover {
-  filter: brightness(0.94);
-  text-decoration: underline;
-}
 
 .team-card-meta {
   display: flex;

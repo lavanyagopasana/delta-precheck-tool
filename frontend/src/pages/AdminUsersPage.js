@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   getAllowedUsers, upsertAllowedUser, removeAllowedUser, importUsersCsv,
-  getTeams, createTeam, updateTeam, removeTeam, assignUserTeam,
+  getTeams, createTeam, removeTeam, assignUserTeam,
 } from "../api/client";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { useToast } from "../components/Toast";
@@ -51,12 +51,30 @@ const roleColor = (role) => ROLE_COLOR[role] || "var(--color-text-muted)";
 //
 // Numbers are allocated from the existing names rather than counted, so deleting Team 3 and adding
 // one does not produce a second Team 6.
-// The pill carries the team NUMBER and nothing else. A stored name that is not a number is an
-// internal import key, and when it was derived from a person it just repeated the heading -- the
-// sasya card printed "sasya.chella team" and then "Sasya.chella@cloudfuze.com" directly beneath it,
-// which is the same fact twice. Such a team shows "no number" instead, still clickable to set one.
-const teamNumberLabel = (team) =>
-  /^team\s+\d+$/i.test((team.name || "").trim()) ? team.name.trim() : null;
+// Team numbers are POSITIONAL, derived from creation order, not read out of the stored name.
+//
+// Parsing the stored name meant a team whose name was not already "Team N" had no number to show,
+// which produced a "no number" pill -- an absence where every other card had a value, and a state
+// the reader could do nothing useful with. Numbering by creation order means every team has one,
+// always, with no naming convention to maintain and nothing to rename.
+//
+// The stored name is still the string a CSV team column matches on, so it stays available on hover
+// rather than being shown as a second label competing with the manager-derived heading.
+const teamNumbersByCreation = (allTeams) => {
+  const ordered = [...(allTeams || [])].sort((a, b) => {
+    const ta = a.createdAt ? Date.parse(a.createdAt) : 0;
+    const tb = b.createdAt ? Date.parse(b.createdAt) : 0;
+    // id as the tiebreak: two teams seeded in the same transaction share a timestamp, and a stable
+    // order matters more than which of them wins.
+    if (ta !== tb) return ta - tb;
+    return (a.id || 0) - (b.id || 0);
+  });
+  const byId = {};
+  ordered.forEach((t, i) => {
+    byId[t.id] = i + 1;
+  });
+  return byId;
+};
 
 const nextTeamName = (existingTeams) => {
   const used = (existingTeams || [])
@@ -112,11 +130,6 @@ export default function AdminUsersPage() {
   // teamId -> manager email chosen on that card, for a team that has no manager yet. Keyed by team
   // so two unmanaged cards do not share one selection.
   const [cardManager, setCardManager] = useState({});
-  // teamId currently being renamed, plus the draft. The stored name is an import key rather than the
-  // label anyone reads, but it was still unfixable from the UI -- so a team created with a junk name
-  // (an email, from the old free-text form) stayed that way forever.
-  const [renamingTeamId, setRenamingTeamId] = useState(null);
-  const [renameDraft, setRenameDraft] = useState("");
   const [teamSaving, setTeamSaving] = useState(false);
 
   const load = () => {
@@ -189,22 +202,6 @@ export default function AdminUsersPage() {
     }
   };
 
-  const handleRenameTeam = async (team) => {
-    const trimmed = renameDraft.trim();
-    if (!trimmed || trimmed === team.name) {
-      setRenamingTeamId(null);
-      return;
-    }
-    try {
-      await updateTeam(team.id, { name: trimmed });
-      showToast(`Renamed to "${trimmed}".`, "success");
-      setRenamingTeamId(null);
-      await loadTeams();
-    } catch (err) {
-      showToast(err.response?.data?.message || "Failed to rename the team.", "error");
-    }
-  };
-
   const handleRemoveTeam = async (team) => {
     const ok = await confirm({
       title: `Delete ${team.name}?`,
@@ -230,6 +227,8 @@ export default function AdminUsersPage() {
     () => users.filter((u) => u.role === "MIGRATION_MANAGER"),
     [users],
   );
+
+  const teamNumbers = useMemo(() => teamNumbersByCreation(teams), [teams]);
 
   const counts = useMemo(() => {
     const c = { total: users.length, ADMIN: 0, MIGRATION_MANAGER: 0, DEV_LEAD: 0, QA_LEAD: 0, MIGRATION_ENGINEER: 0 };
@@ -601,53 +600,11 @@ export default function AdminUsersPage() {
                         string a CSV team column matches on, and it is clickable to rename, because
                         a name inherited from the old free-text form (an email, say) could not be
                         corrected anywhere in the UI. */}
-                    {(() => {
-                      const numberLabel = teamNumberLabel(t);
-                      return (
-                      renamingTeamId === t.id ? (
-                        <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                          <input
-                            type="text"
-                            value={renameDraft}
-                            autoFocus
-                            onChange={(e) => setRenameDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                handleRenameTeam(t);
-                              }
-                              if (e.key === "Escape") setRenamingTeamId(null);
-                            }}
-                            style={{ width: 108, fontSize: 11.5, padding: "1px 6px" }}
-                            aria-label={`Rename ${t.name}`}
-                          />
-                          <button
-                            type="button"
-                            className="btn"
-                            style={{ padding: "2px 7px", fontSize: 11 }}
-                            onClick={() => handleRenameTeam(t)}
-                          >
-                            Save
-                          </button>
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          className={`team-card-tag team-card-tag--button${
-                            numberLabel ? "" : " team-card-tag--empty"
-                          }`}
-                          title={numberLabel ? `Rename ${numberLabel}` : "Give this team a number"}
-                          onClick={() => {
-                            setRenamingTeamId(t.id);
-                            // Prefill the next free number rather than the junk name being replaced.
-                            setRenameDraft(numberLabel || nextTeamName(teams));
-                          }}
-                        >
-                          {numberLabel || "no number"}
-                        </button>
-                      )
-                      );
-                    })()}
+                    {/* Always present, always a number. Title carries the stored name, which is
+                        what a CSV team column matches on. */}
+                    <span className="team-card-tag" title={`Stored name: ${t.name}`}>
+                      Team {teamNumbers[t.id]}
+                    </span>
                     {unmanaged && <span className="team-card-tag team-card-tag--warn">no manager yet</span>}
                     {/* Both counts, always, in the same order on every card. Reporting the manager
                         count only when there was more than one made otherwise-identical cards
