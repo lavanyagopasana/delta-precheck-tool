@@ -87,6 +87,14 @@ services:
 
       TICKETING_BASE_URL: ${TICKETING_BASE_URL:-https://neutaraticketing.cftools.live}
       TICKETING_API_TOKEN: ${TICKETING_API_TOKEN:-}
+
+      # PMO project sync. No port on the URL -- :3001 is PMO's internal app port and is unreachable
+      # from off-box. A blank PMO_API_KEY disables the sync entirely (the poll becomes a no-op), so
+      # forgetting it is silent: the Projects page simply never fills up.
+      PMO_BASE_URL: ${PMO_BASE_URL:-https://neutarapm.cftools.live}
+      PMO_API_KEY: ${PMO_API_KEY:-}
+      PMO_IMPORT_STATUSES: ${PMO_IMPORT_STATUSES:-ACTIVE}
+      PMO_AUTO_SYNC_ENABLED: ${PMO_AUTO_SYNC_ENABLED:-true}
     volumes:
       # THE line this whole file existed to provide. Named volume, so it survives every redeploy,
       # image rebuild, and container recreation. Back it up with the database, not separately --

@@ -23,8 +23,6 @@ public class RosterController {
         RosterDto dto = new RosterDto();
         dto.setMigrationManagers(appUserService.emailsForRole(AppUserRole.MIGRATION_MANAGER));
         dto.setEngineers(appUserService.emailsForRole(AppUserRole.MIGRATION_ENGINEER));
-        dto.setDevLeads(appUserService.emailsForRole(AppUserRole.DEV_LEAD));
-        dto.setQaLeads(appUserService.emailsForRole(AppUserRole.QA_LEAD));
         dto.setEngineersByManager(teamService.engineersByManager());
         return dto;
     }

@@ -227,6 +227,11 @@ frontend/src/
 | `AZURE_REQUIRE_ALLOWLIST` | `true` | Only people added under Manage Access can sign in. Set `false` only for local testing with unregistered accounts |
 | `AZURE_AUTO_PROVISION_DOMAIN` | `cloudfuze.com` | Auto-added as `MIGRATION_ENGINEER` on first sign-in |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` | `smtp.office365.com` / `587` / `leo@fuzebot.io` / *(blank)* | Blank password disables sending (logs a warning) |
+| `PMO_BASE_URL` | `https://neutarapm.cftools.live` | Root of the PMO tool (Neutara PM), whose project list is mirrored into this one. **No port** — their docs say `:3001`, but that is their internal app port; publicly it sits behind nginx on 443 and the port form times out |
+| `PMO_API_KEY` | *(blank)* | Sent as the `X-API-Key` header. **A real secret** — environment only, never in the repo. Blank disables the sync entirely (poll becomes a no-op, manual trigger returns "isn't configured"). A `503` from that endpoint means PMO's *own* `EXTERNAL_API_KEY` is unset on their server, not that this key is wrong |
+| `PMO_IMPORT_STATUSES` | `ACTIVE` | Comma-separated PMO statuses to import. ACTIVE only by product decision — of 190 PMO projects 105 are `COMPLETED` and 1 `CANCELLED`, which can never need a pre-check. Blank imports every status |
+| `PMO_AUTO_SYNC_ENABLED` | `true` | `false` leaves only the admin-triggered `POST /api/pmo/sync` |
+| `PMO_SYNC_INTERVAL_MS` / `PMO_SYNC_INITIAL_DELAY_MS` | `300000` / `60000` | Poll every 5 min, first run 1 min after boot. PMO offers no webhook, so a poll is as close to instant as this gets |
 | `APP_FRONTEND_URL` | `http://localhost:3000` | Used to build links in outgoing emails |
 | `APP_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated CORS allowlist for `/api/**` (`SecurityConfig`) — add the deployed frontend's origin here |
 | (frontend) `REACT_APP_AZURE_CLIENT_ID` | — | Set in `frontend/.env.local`, same value as backend's `AZURE_CLIENT_ID` |

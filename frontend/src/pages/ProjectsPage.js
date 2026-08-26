@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { getProjects, createProject, getRoster, removeProject, updateProjectDetails } from "../api/client";
+import { getProjects, createProject, getRoster, removeProject, updateProjectDetails, syncPmoProjects } from "../api/client";
 import { useToast } from "../components/Toast";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
@@ -116,6 +116,46 @@ export default function ProjectsPage() {
       .then(setRoster)
       .catch(() => {});
   }, []);
+
+  // Only admins can trigger the pull -- POST /api/pmo/sync is ADMIN-gated in SecurityConfig, so
+  // showing this to anyone else would just produce a 403. When auth is off (local dev) there is no
+  // role to check, so the button shows.
+  const canSyncPmo = !AUTH_CONFIGURED || currentUser?.role === "ADMIN";
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSyncPmo = async () => {
+    setSyncing(true);
+    try {
+      const r = await syncPmoProjects();
+      const changed = (r.createdCount || 0) + (r.updatedCount || 0);
+      if (changed === 0) {
+        showToast(`PMO is up to date -- ${r.totalRows} project(s) checked, nothing new.`);
+      } else {
+        const managers = r.managersAssigned ? `, ${r.managersAssigned} manager(s) assigned` : "";
+        showToast(`PMO sync: ${r.createdCount} added, ${r.updatedCount} updated${managers}.`);
+      }
+      // A PMO project manager with no matching Migration Manager account here leaves that project
+      // unassigned, which also makes it invisible to managers/engineers and un-submittable. Say so --
+      // otherwise it just looks like the project never arrived.
+      if (r.unresolvedManagers?.length) {
+        showToast(
+          `No Migration Manager account matches ${r.unresolvedManagers.join(", ")} -- ` +
+            `those projects need one assigning by hand.`,
+          "error"
+        );
+      }
+      // Errors are per-record and non-fatal by design (see PmoSyncResultDto) -- surface the first so
+      // a partial failure isn't silently swallowed by a cheerful success toast.
+      if (r.errors?.length) {
+        showToast(`${r.errors.length} PMO project(s) could not be synced: ${r.errors[0]}`, "error");
+      }
+      load();
+    } catch (err) {
+      showToast(err.response?.data?.message || "Could not sync projects from PMO.", "error");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const resetForm = () => {
     setShowModal(false);
@@ -255,13 +295,47 @@ export default function ProjectsPage() {
         searchPlaceholder="Filter projects..."
         emptyMessage="No projects yet. Click Add Project above."
         toolbarRight={
-          <button className="btn" onClick={() => setShowModal(true)}>
-            <PlusIcon />
-            Add Project
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            {canSyncPmo && (
+              <button
+                className="btn secondary"
+                onClick={handleSyncPmo}
+                disabled={syncing}
+                title="Pull the latest project list from the PMO tool. Runs automatically every 5 minutes."
+              >
+                {syncing ? "Syncing..." : "Sync from PMO"}
+              </button>
+            )}
+            <button className="btn" onClick={() => setShowModal(true)}>
+              <PlusIcon />
+              Add Project
+            </button>
+          </div>
         }
         columns={[
-          { key: "name", label: "Project" },
+          {
+            key: "name",
+            label: "Project",
+            render: (p) => (
+              <span>
+                {p.name}
+                {p.externalId && (
+                  <span
+                    className="badge"
+                    style={{ marginLeft: 8, fontSize: 10.5 }}
+                    title={`Synced from PMO${p.externalPhase ? ` -- phase ${p.externalPhase}` : ""}`}
+                  >
+                    PMO
+                  </span>
+                )}
+              </span>
+            ),
+          },
+          {
+            key: "externalCustomerName",
+            label: "Customer",
+            render: (p) => p.externalCustomerName || "-",
+          },
           { key: "serverCount", label: "No. Server URLs", filterable: false },
           {
             key: "migrationManagers",
@@ -272,6 +346,13 @@ export default function ProjectsPage() {
               p.migrationManagers?.length ? (
                 <span title={p.migrationManagers.join(", ")}>
                   {p.migrationManagers.map(emailLocalPart).join(", ")}
+                </span>
+              ) : p.externalManagerName ? (
+                // PMO gives us a display name, not an email, so it can't be assigned automatically
+                // (migrationManagerName is matched as an email everywhere). Show it as a hint about
+                // who to pick, clearly marked so it doesn't read as an assignment that already happened.
+                <span style={{ opacity: 0.75 }} title={`PMO project manager: ${p.externalManagerName}. Not assigned here yet.`}>
+                  Not assigned ({p.externalManagerName} in PMO)
                 </span>
               ) : (
                 "Not assigned yet"

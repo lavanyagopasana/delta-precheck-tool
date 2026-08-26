@@ -238,6 +238,12 @@ public class SecurityConfig {
                         // manager can assign, so letting a manager edit teams would let them widen
                         // their own pool. TeamController.requireAdmin repeats the check as
                         // defence-in-depth, matching AdminController.
+                        // Triggering the PMO project sync is ADMIN-only: it creates projects in bulk,
+                        // and the arriving projects need an admin to attach a Migration Manager before
+                        // anyone can work them anyway (PmoSyncService's class comment explains why the
+                        // manager can't be taken from PMO). PmoController.requireAdmin repeats the
+                        // check as defence in depth, matching AdminController.
+                        .requestMatchers("/api/pmo/**").access(roleRequired(AppUserRole.ADMIN))
                         .requestMatchers(HttpMethod.GET, "/api/teams").access(allowlistRequired())
                         .requestMatchers("/api/teams/**", "/api/teams").access(roleRequired(AppUserRole.ADMIN))
                         .anyRequest().access(allowlistRequired()))

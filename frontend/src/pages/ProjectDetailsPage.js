@@ -8,7 +8,7 @@ import EngineerChecklist from "../components/EngineerChecklist";
 import ServerUrlsPanel from "../components/ServerUrlsPanel";
 import { PlusIcon, FolderIcon } from "../components/Icons";
 
-const EMPTY_ROSTER = { migrationManagers: [], engineers: [], devLeads: [], qaLeads: [], engineersByManager: {} };
+const EMPTY_ROSTER = { migrationManagers: [], engineers: [], engineersByManager: {} };
 
 const initials = (email) => (email || "?").trim().charAt(0).toUpperCase();
 
@@ -22,56 +22,14 @@ function isDirty(current, saved) {
 
 // The whole project header: name + engineers on the top row, manager below. Owns the engineer
 // selection state, which is why the header lives here rather than being assembled in the page.
-// Single-select assignment for one approval step. "Anyone with the role" is a real, selectable
-// option rather than a hidden default, so it is obvious that leaving it blank widens the step
-// instead of blocking it.
-function LeadPicker({ label, value, options, onChange }) {
-  const pool = options || [];
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 240 }}>
-      <span className="detail-fact-label">{label}</span>
-      {pool.length === 0 ? (
-        <span style={{ fontSize: 12.5, color: "var(--color-text-faint)" }}>
-          Nobody has the {label} role yet — add one under Admin &gt; Manage Access.
-        </span>
-      ) : (
-        <select
-          className="engineer-select"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          aria-label={label}
-        >
-          <option value="">Anyone with the {label} role</option>
-          {/* An assigned person who has since lost the role still needs to render, or the picker
-              would silently show "Anyone" while the project still names them. */}
-          {value && !pool.includes(value) && <option value={value}>{value} (no longer a {label})</option>}
-          {pool.map((email) => (
-            <option key={email} value={email}>{email}</option>
-          ))}
-        </select>
-      )}
-    </div>
-  );
-}
-
 function ProjectHeader({ project, roster, canManage, onSaved, onAddServer }) {
   const showToast = useToast();
   const [engineerEmails, setEngineerEmails] = useState(project.engineerEmails || []);
   const [savedEmails, setSavedEmails] = useState(project.engineerEmails || []);
-  // "" is the unassigned value, matching what the backend stores as null.
-  const [devLeadEmail, setDevLeadEmail] = useState(project.devLeadEmail || "");
-  const [qaLeadEmail, setQaLeadEmail] = useState(project.qaLeadEmail || "");
-  const [savedLeads, setSavedLeads] = useState({
-    devLeadEmail: project.devLeadEmail || "",
-    qaLeadEmail: project.qaLeadEmail || "",
-  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
-  const dirty =
-    isDirty(engineerEmails, savedEmails) ||
-    devLeadEmail !== savedLeads.devLeadEmail ||
-    qaLeadEmail !== savedLeads.qaLeadEmail;
+  const dirty = isDirty(engineerEmails, savedEmails);
 
   // Only the engineers on THIS project's Migration Manager's team may be assigned. The manager is
   // stored as an email (despite the field name), so it keys straight into engineersByManager.
@@ -111,9 +69,8 @@ function ProjectHeader({ project, roster, canManage, onSaved, onAddServer }) {
     setSaving(true);
     setError(null);
     try {
-      await updateProjectAssignments(project.id, { engineerEmails, devLeadEmail, qaLeadEmail });
+      await updateProjectAssignments(project.id, { engineerEmails });
       setSavedEmails(engineerEmails);
-      setSavedLeads({ devLeadEmail, qaLeadEmail });
       showToast("Project assignments updated.");
       onSaved();
     } catch (err) {
@@ -177,25 +134,6 @@ function ProjectHeader({ project, roster, canManage, onSaved, onAddServer }) {
               {unscopedReason && (
                 <div className="inline-hint" style={{ marginTop: 8 }}>{unscopedReason}</div>
               )}
-
-              {/* Dev Lead and QA Lead are single-select, unlike engineers: the sign-off chain has
-                  exactly one of each step. Not scoped by team on purpose -- the same lead usually
-                  covers every team. Leaving one unassigned keeps the old behaviour for that step,
-                  where any holder of the role can approve it. */}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginTop: 14 }}>
-                <LeadPicker
-                  label="Dev Lead"
-                  value={devLeadEmail}
-                  options={roster.devLeads}
-                  onChange={setDevLeadEmail}
-                />
-                <LeadPicker
-                  label="QA Lead"
-                  value={qaLeadEmail}
-                  options={roster.qaLeads}
-                  onChange={setQaLeadEmail}
-                />
-              </div>
             </>
           ) : project.engineerEmails?.length ? (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
