@@ -29,7 +29,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest
 @ActiveProfiles("test")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@TestPropertySource(locations = "classpath:/application-test.properties")
+@TestPropertySource(
+        locations = "classpath:/application-test.properties",
+        // Re-enabled just for this class. The test profile disables it so the seeded roster cannot
+        // leak into every other @SpringBootTest through the shared H2 database.
+        properties = "app.seed-team-roster=true")
 class TeamRosterBootstrapTest {
 
     @Autowired
