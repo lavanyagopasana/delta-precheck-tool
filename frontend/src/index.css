@@ -2693,3 +2693,37 @@ input[type="checkbox"]:disabled {
   color: var(--color-red);
   background: var(--color-bg);
 }
+
+/* ---- Manage Access users table: fit the width, no horizontal scroll -------------------
+   The Team cell holds a <select>, which has no intrinsic width and stretched to whatever
+   the longest option label needed ("abhishikth.yenugula/ajay.singh team (Team 5)"). That
+   pushed the table past its container and forced a horizontal scrollbar, cutting the row
+   actions off the right edge. Capping the control -- not the column -- keeps the full
+   option text available in the open dropdown while the closed control stays narrow. */
+.team-cell-select {
+  width: 100%;
+  max-width: 170px;
+  /* Long option labels must not widen the closed control. */
+  text-overflow: ellipsis;
+}
+
+/* Give the table fixed proportions so no single cell can blow the layout out again. Emails
+   are the only column that genuinely needs room; the rest are short. */
+.users-table table {
+  table-layout: fixed;
+}
+
+.users-table th,
+.users-table td {
+  padding: 11px 12px;
+  overflow-wrap: anywhere;
+}
+
+.users-table th:nth-child(1),
+.users-table td:nth-child(1) { width: 40%; text-align: left; }
+.users-table th:nth-child(2),
+.users-table td:nth-child(2) { width: 20%; }
+.users-table th:nth-child(3),
+.users-table td:nth-child(3) { width: 24%; }
+.users-table th:nth-child(4),
+.users-table td:nth-child(4) { width: 16%; }

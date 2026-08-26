@@ -74,6 +74,10 @@ export default function AdminUsersPage() {
   const [csvError, setCsvError] = useState(null);
   // "ALL" rather than "" so the value is never falsy-ambiguous with a real role.
   const [roleFilter, setRoleFilter] = useState("ALL");
+  // "ALL" = every team, "NONE" = only people with no team. "NONE" is a real case worth filtering
+  // for: someone with no team falls back to the unfiltered engineer list, which is the state an
+  // admin most often needs to hunt down.
+  const [teamFilter, setTeamFilter] = useState("ALL");
   const [teams, setTeams] = useState([]);
   const [newTeamName, setNewTeamName] = useState("");
   const [teamSaving, setTeamSaving] = useState(false);
@@ -164,10 +168,29 @@ export default function AdminUsersPage() {
 
   // Role filtering happens here rather than inside DataTable because DataTable's own filtering is
   // free-text across columns; a role dropdown is an exact-match narrow, and the two need to compose.
-  const visibleUsers = useMemo(
-    () => (roleFilter === "ALL" ? users : users.filter((u) => u.role === roleFilter)),
-    [users, roleFilter],
-  );
+  const visibleUsers = useMemo(() => {
+    // Role and team compose (both must match), the same way each already composes with DataTable's
+    // free-text search, rather than one silently replacing the other.
+    let rows = roleFilter === "ALL" ? users : users.filter((u) => u.role === roleFilter);
+    if (teamFilter === "NONE") {
+      rows = rows.filter((u) => !u.teamId);
+    } else if (teamFilter !== "ALL") {
+      rows = rows.filter((u) => String(u.teamId) === teamFilter);
+    }
+    return rows;
+  }, [users, roleFilter, teamFilter]);
+
+  // Counted off the full user list, not the filtered one, so the numbers in this dropdown do not
+  // shift as the role filter narrows -- a count that changes when you touch a different control
+  // reads as a bug.
+  const teamCounts = useMemo(() => {
+    const c = { NONE: 0 };
+    users.forEach((u) => {
+      if (!u.teamId) c.NONE += 1;
+      else c[u.teamId] = (c[u.teamId] || 0) + 1;
+    });
+    return c;
+  }, [users]);
 
   const handleAdd = async (e) => {
     e.preventDefault();
@@ -444,11 +467,16 @@ export default function AdminUsersPage() {
           (both must match) rather than replacing it: the text box is still the way to find one
           person by email, while this narrows to a whole role -- useful now that a single CSV import
           can add 20 people across five roles at once. */}
+      <div className="users-table">
       <DataTable
         rows={visibleUsers}
         rowKey={(u) => u.email}
         searchPlaceholder="Search users by email or role..."
-        emptyMessage={roleFilter === "ALL" ? "No users yet." : `No ${roleLabel(roleFilter)} users.`}
+        emptyMessage={
+          roleFilter === "ALL" && teamFilter === "ALL"
+            ? "No users yet."
+            : "No users match these filters."
+        }
         toolbarRight={
           <>
             <label htmlFor="role-filter" className="sr-only">
@@ -464,6 +492,23 @@ export default function AdminUsersPage() {
               {ROLE_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
                   {opt.label} ({counts[opt.value] || 0})
+                </option>
+              ))}
+            </select>
+            <label htmlFor="team-filter" className="sr-only">
+              Filter by team
+            </label>
+            <select
+              id="team-filter"
+              value={teamFilter}
+              onChange={(e) => setTeamFilter(e.target.value)}
+              aria-label="Filter by team"
+            >
+              <option value="ALL">All teams ({counts.total})</option>
+              <option value="NONE">No team ({teamCounts.NONE || 0})</option>
+              {teams.map((t) => (
+                <option key={t.id} value={String(t.id)}>
+                  {teamDisplayName(t)} ({teamCounts[t.id] || 0})
                 </option>
               ))}
             </select>
@@ -537,7 +582,7 @@ export default function AdminUsersPage() {
               }
               return (
                 <select
-                  className="engineer-select"
+                  className="team-cell-select"
                   value={u.teamId || ""}
                   onChange={(e) => handleAssignTeam(u, e.target.value)}
                   aria-label={`Team for ${u.email}`}
@@ -589,6 +634,7 @@ export default function AdminUsersPage() {
           },
         ]}
       />
+      </div>
 
       {editUser && (
         <Modal title="Edit role" onClose={closeEdit} width={420} closeIcon>
