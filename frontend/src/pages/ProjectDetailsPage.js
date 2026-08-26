@@ -87,7 +87,20 @@ function ProjectHeader({ project, roster, canManage, onSaved, onAddServer }) {
   const engineerOptions = teamScopedEngineers ?? roster.engineers;
   // Anyone already saved on the project stays visible even if they since left the team -- otherwise
   // their chip would vanish from the picker while remaining assigned in the database.
-  const optionsWithSaved = Array.from(new Set([...(engineerOptions || []), ...savedEmails]));
+  // De-duplicated case-insensitively, keeping the roster's spelling. A plain Set is case-sensitive,
+  // so "pravallika.punumalli@..." from the roster and "Pravallika.Punumalli@..." saved on the project
+  // both survived it -- and the picker then listed the same person twice.
+  const optionsWithSaved = (() => {
+    const seen = new Set();
+    const out = [];
+    for (const email of [...(engineerOptions || []), ...savedEmails]) {
+      const key = email.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(email);
+    }
+    return out;
+  })();
   const unscopedReason = !managerEmail
     ? "No Migration Manager is assigned yet, so every engineer is listed."
     : !teamScopedEngineers

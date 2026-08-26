@@ -123,4 +123,24 @@ describe("ProjectDetailsPage engineer scoping", () => {
 
     expect(await screen.findByText("ramana.reddy@cloudfuze.com")).toBeInTheDocument();
   });
+
+  test("does not offer an engineer who is already assigned under a different case", async () => {
+    // project_engineers keeps whatever case was saved, while the roster serves the lowercased
+    // app_users value. Comparing them exactly listed an already-assigned person as available, so the
+    // same engineer could be added twice under two spellings.
+    client.getProjectDetail.mockResolvedValue(
+      project({
+        migrationManagerName: "harika.velidi@cloudfuze.com",
+        engineerEmails: ["Siva.Kota@cloudfuze.com"],
+      })
+    );
+
+    renderPage();
+    await screen.findByText("Acme Migration");
+    await openEngineerPicker();
+
+    // Exactly one occurrence: the assigned chip. Not a second one in the dropdown.
+    const matches = await screen.findAllByText(/siva\.kota@cloudfuze\.com/i);
+    expect(matches).toHaveLength(1);
+  });
 });

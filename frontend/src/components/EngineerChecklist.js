@@ -24,18 +24,30 @@ export default function EngineerChecklist({ options, selected, onChange }) {
   const available = useMemo(
     () =>
       options.filter(
-        (email) => !selected.includes(email) && email.toLowerCase().includes(query.trim().toLowerCase())
+        // Compared case-insensitively. project_engineers stores whatever case was saved
+        // ("Pravallika.Punumalli@...") while the roster serves the lowercased app_users value, so an
+        // exact-match check offered an already-assigned person again as if they were unassigned.
+        // Email is the identity key in this app -- comparing it case-sensitively is always a bug.
+        (email) =>
+          !selected.some((s) => s.toLowerCase() === email.toLowerCase()) &&
+          email.toLowerCase().includes(query.trim().toLowerCase())
       ),
     [options, selected, query]
   );
 
   const add = (email) => {
+    // Guard as well as filter: without it a case-variant could still be appended twice, e.g. by a
+    // stale render, leaving the same person on the project under two spellings.
+    if (selected.some((s) => s.toLowerCase() === email.toLowerCase())) {
+      return;
+    }
     onChange([...selected, email]);
     setQuery("");
     setAdding(false);
   };
 
-  const remove = (email) => onChange(selected.filter((e) => e !== email));
+  const remove = (email) =>
+    onChange(selected.filter((e) => e.toLowerCase() !== email.toLowerCase()));
 
   const initials = (email) => (email || "?").trim().charAt(0).toUpperCase();
 
