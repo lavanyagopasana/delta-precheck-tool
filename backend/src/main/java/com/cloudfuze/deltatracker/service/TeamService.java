@@ -59,7 +59,9 @@ public class TeamService {
 
     public List<TeamDto> list() {
         return teamRepository.findAllByOrderByNameAsc().stream()
-                .map(team -> TeamDto.fromEntity(team, membersOf(team.getId())))
+                .map(team -> TeamDto.fromEntity(team, membersOf(team.getId()),
+                        emailsOf(team.getId(), AppUserRole.MIGRATION_MANAGER),
+                        emailsOf(team.getId(), AppUserRole.MIGRATION_ENGINEER)))
                 .toList();
     }
 
@@ -94,7 +96,7 @@ public class TeamService {
         }
         Team saved = teamRepository.save(new Team(trimmed, actingAdminEmail));
         rosterCache.evict();
-        return TeamDto.fromEntity(saved, List.of());
+        return TeamDto.fromEntity(saved, List.of(), List.of(), List.of());
     }
 
     public TeamDto rename(Long id, String name) {
@@ -110,7 +112,9 @@ public class TeamService {
         team.setName(trimmed);
         Team saved = teamRepository.save(team);
         rosterCache.evict();
-        return TeamDto.fromEntity(saved, membersOf(id));
+        return TeamDto.fromEntity(saved, membersOf(id),
+                emailsOf(id, AppUserRole.MIGRATION_MANAGER),
+                emailsOf(id, AppUserRole.MIGRATION_ENGINEER));
     }
 
     /**

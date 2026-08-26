@@ -10,6 +10,7 @@ import Modal from "../components/Modal";
 import { TrashIcon, EditIcon } from "../components/Icons";
 import { useConfirm } from "../components/ConfirmDialog";
 import { apiErrorMessage } from "../utils/apiError";
+import { emailLocalPart } from "../utils/format";
 
 const ROLE_OPTIONS = [
   { value: "MIGRATION_ENGINEER", label: "Migration Engineer" },
@@ -30,6 +31,15 @@ const ROLE_COLOR = {
   MIGRATION_ENGINEER: "var(--color-text-muted)",
 };
 const roleColor = (role) => ROLE_COLOR[role] || "var(--color-text-muted)";
+
+// "Team 4" identifies nothing to a human -- people know a team by who runs it. The team NAME stays
+// the stable key (it survives a manager changing, and a two-manager team cannot be named after one
+// of them), but everywhere a team is shown it is labelled with its managers.
+const teamManagerLabel = (team) => {
+  const managers = team.managerEmails || [];
+  if (managers.length === 0) return "no manager yet";
+  return managers.map(emailLocalPart).join(" + ");
+};
 
 export default function AdminUsersPage() {
   const currentUser = useCurrentUser();
@@ -368,12 +378,23 @@ export default function AdminUsersPage() {
         ) : (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {teams.map((t) => {
-              const members = t.memberEmails || [];
+              const managers = t.managerEmails || [];
+              const engineers = t.engineerEmails || [];
               return (
-                <span key={t.id} className="engineer-chip" style={{ cursor: "default" }}>
-                  <strong style={{ fontWeight: 600 }}>{t.name}</strong>
-                  <span style={{ color: "var(--color-text-faint)", fontSize: 12 }}>
-                    {members.length} member{members.length === 1 ? "" : "s"}
+                <span
+                  key={t.id}
+                  className="engineer-chip"
+                  style={{ cursor: "default", alignItems: "flex-start", padding: "8px 10px" }}
+                  title={managers.length ? `Managers: ${managers.join(", ")}` : "No manager assigned"}
+                >
+                  <span style={{ display: "flex", flexDirection: "column", gap: 2, textAlign: "left" }}>
+                    {/* Managers lead, because that is what the reader is scanning for. The team name
+                        is kept underneath so it still matches the CSV/team column elsewhere. */}
+                    <strong style={{ fontWeight: 600 }}>{teamManagerLabel(t)}</strong>
+                    <span style={{ color: "var(--color-text-faint)", fontSize: 11.5 }}>
+                      {t.name} · {engineers.length} engineer{engineers.length === 1 ? "" : "s"}
+                      {managers.length > 1 ? ` · ${managers.length} managers` : ""}
+                    </span>
                   </span>
                   <button
                     type="button"
@@ -467,7 +488,7 @@ export default function AdminUsersPage() {
               >
                 <option value="">No team</option>
                 {teams.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
+                  <option key={t.id} value={t.id}>{t.name} — {teamManagerLabel(t)}</option>
                 ))}
               </select>
             ),
