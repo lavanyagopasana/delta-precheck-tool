@@ -44,10 +44,20 @@ const roleColor = (role) => ROLE_COLOR[role] || "var(--color-text-muted)";
 // A legacy stored name (Team 1..Team 6, or a CSV team column) is still shown as secondary text when
 // it differs from the derived one, because that is the string an import matches on.
 
-// The stored name for a team created from its manager. Deliberately the same shape teamDisplayName
-// derives, so for a team made this way the stored and displayed names are identical and there is
-// nothing for the two to disagree about.
-const teamNameForManager = (email) => `${emailLocalPart(email)} team`;
+// Every card reads the same way: the heading names the managers, the pill carries the team number.
+// For that to hold, the STORED name has to be the number -- naming the row after its manager instead
+// made the two identical, which hid the pill on those cards while seeded Team 1..Team 6 still showed
+// theirs. Same screen, two different layouts, for no reason a reader could see.
+//
+// Numbers are allocated from the existing names rather than counted, so deleting Team 3 and adding
+// one does not produce a second Team 6.
+const nextTeamName = (existingTeams) => {
+  const used = (existingTeams || [])
+    .map((t) => /^team\s+(\d+)$/i.exec((t.name || "").trim()))
+    .filter(Boolean)
+    .map((m) => Number(m[1]));
+  return `Team ${used.length ? Math.max(...used) + 1 : 1}`;
+};
 
 const teamDisplayName = (team) => {
   const managers = team.managerEmails || [];
@@ -138,7 +148,7 @@ export default function AdminUsersPage() {
   const handleCreateTeam = async (e) => {
     e.preventDefault();
     if (!newTeamManager) return;
-    const derivedName = teamNameForManager(newTeamManager);
+    const derivedName = nextTeamName(teams);
     setTeamSaving(true);
     try {
       const created = await createTeam({ name: derivedName });
@@ -509,8 +519,8 @@ export default function AdminUsersPage() {
             }}
           >
             {newTeamManager
-              ? `Will be called "${teamNameForManager(newTeamManager)}"`
-              : "The team is named after its manager."}
+              ? `Will be ${nextTeamName(teams)}, shown as "${emailLocalPart(newTeamManager)} team".`
+              : "Numbered automatically, and shown by its manager's name."}
           </span>
         </form>
         {teamsError ? (
