@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   getAllowedUsers, upsertAllowedUser, removeAllowedUser, importUsersCsv,
-  getTeams, createTeam, removeTeam, assignUserTeam,
+  getTeams, createTeam, updateTeam, removeTeam, assignUserTeam,
 } from "../api/client";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { useToast } from "../components/Toast";
@@ -95,6 +95,11 @@ export default function AdminUsersPage() {
   // teamId -> manager email chosen on that card, for a team that has no manager yet. Keyed by team
   // so two unmanaged cards do not share one selection.
   const [cardManager, setCardManager] = useState({});
+  // teamId currently being renamed, plus the draft. The stored name is an import key rather than the
+  // label anyone reads, but it was still unfixable from the UI -- so a team created with a junk name
+  // (an email, from the old free-text form) stayed that way forever.
+  const [renamingTeamId, setRenamingTeamId] = useState(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const [teamSaving, setTeamSaving] = useState(false);
 
   const load = () => {
@@ -164,6 +169,22 @@ export default function AdminUsersPage() {
       await Promise.all([loadTeams(), getAllowedUsers().then(setUsers).catch(() => {})]);
     } catch (err) {
       showToast(err.response?.data?.message || "Failed to assign the manager.", "error");
+    }
+  };
+
+  const handleRenameTeam = async (team) => {
+    const trimmed = renameDraft.trim();
+    if (!trimmed || trimmed === team.name) {
+      setRenamingTeamId(null);
+      return;
+    }
+    try {
+      await updateTeam(team.id, { name: trimmed });
+      showToast(`Renamed to "${trimmed}".`, "success");
+      setRenamingTeamId(null);
+      await loadTeams();
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to rename the team.", "error");
     }
   };
 
@@ -558,18 +579,62 @@ export default function AdminUsersPage() {
                     </div>
                   )}
                   <div className="team-card-meta">
-                    {/* The stored name is only worth repeating when it is NOT already the heading,
-                        i.e. when managers named the card. It is what the CSV team column matches. */}
-                    {/* Only worth showing when it differs from the heading -- for a team created
-                        from its manager the two are identical, and printing both read as a bug. */}
+                    {/* Shown only when it differs from the heading: for a team created from its
+                        manager the two are identical and printing both read as a bug. It is the
+                        string a CSV team column matches on, and it is clickable to rename, because
+                        a name inherited from the old free-text form (an email, say) could not be
+                        corrected anywhere in the UI. */}
                     {!unmanaged && t.name !== teamDisplayName(t) && (
-                      <span className="team-card-tag">{t.name}</span>
+                      renamingTeamId === t.id ? (
+                        <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                          <input
+                            type="text"
+                            value={renameDraft}
+                            autoFocus
+                            onChange={(e) => setRenameDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                handleRenameTeam(t);
+                              }
+                              if (e.key === "Escape") setRenamingTeamId(null);
+                            }}
+                            style={{ width: 108, fontSize: 11.5, padding: "1px 6px" }}
+                            aria-label={`Rename ${t.name}`}
+                          />
+                          <button
+                            type="button"
+                            className="btn"
+                            style={{ padding: "2px 7px", fontSize: 11 }}
+                            onClick={() => handleRenameTeam(t)}
+                          >
+                            Save
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="team-card-tag team-card-tag--button"
+                          title={`Rename "${t.name}"`}
+                          onClick={() => {
+                            setRenamingTeamId(t.id);
+                            setRenameDraft(t.name);
+                          }}
+                        >
+                          {t.name}
+                        </button>
+                      )
                     )}
                     {unmanaged && <span className="team-card-tag team-card-tag--warn">no manager yet</span>}
+                    {/* Both counts, always, in the same order on every card. Reporting the manager
+                        count only when there was more than one made otherwise-identical cards
+                        disagree about which facts they state. */}
+                    <span>
+                      {managers.length} manager{managers.length === 1 ? "" : "s"}
+                    </span>
                     <span>
                       {engineers.length} engineer{engineers.length === 1 ? "" : "s"}
                     </span>
-                    {managers.length > 1 && <span>{managers.length} managers</span>}
                   </div>
                 </div>
               );
