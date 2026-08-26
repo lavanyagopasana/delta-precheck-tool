@@ -1,30 +1,38 @@
 # Seed data
 
-## `teams-roster.csv` — the 6 delivery teams (31 people)
+## The roster is seeded automatically
 
-Loads the real team structure so each Migration Manager's project dashboard offers only their own
-engineers.
+`backend/src/main/resources/seed/teams-roster.csv` is loaded on startup by `TeamRosterBootstrap`.
+Nobody has to import anything: deploy, and the six teams and their 31 members are there.
 
-### Why a CSV and not a Java seeder
+That file used to live here and be imported by hand through Manage Access. It moved onto the
+classpath because the manual step was work a person had to remember on every fresh database --
+production included, right after a deploy -- and forgetting it is invisible: the app looks fine and
+simply lists every engineer everywhere instead of scoping to a team.
 
-`AdminBootstrap`'s own docstring records what went wrong last time a specific person's address was
-baked into a class: it "seeded the wrong admin on every database created anywhere else, and the only
-way to correct it was a direct SQL edit." That trap scales badly at 31 rows. A CSV goes through the
-already-tested `AppUserService.importCsv` path, is reviewable in a diff, and is correctable without a
-deploy.
+### Editing the roster
 
-### How to load it
+Edit `backend/src/main/resources/seed/teams-roster.csv` and redeploy. Columns are `email,role,team`;
+role accepts either the enum name or the label the UI shows ("Migration Manager").
 
-Teams must exist before the import runs — an unknown team name is reported as a per-row error rather
-than silently leaving someone team-less. So:
+### What it will and will not touch
 
-1. Sign in as an ADMIN.
-2. **Admin → Manage Access → Teams**: create `Team 1` … `Team 6`.
-3. **Import CSV**, upload `teams-roster.csv`. No default role is needed; every row carries its own.
-4. Check the result summary. `errors` is per-row, so a partial success is normal and tells you
-   exactly which rows to fix.
+Grouped by MANAGER rather than by team name, which is what makes it safe to run against a database
+an admin has been editing:
 
-Re-running is safe: rows are upserted by email, never duplicated.
+- If any manager in a group already has a team, **the whole group is skipped** — somebody set that
+  team up by hand and their arrangement wins, whatever they named it.
+- An **ADMIN row is never modified.** Admins sit outside the team structure.
+- Somebody who **already has a team is never moved.**
+- It runs on every boot and converges — once the roster is in place it does nothing but a few reads.
+
+Disable with `APP_SEED_TEAM_ROSTER=false` for a deployment that manages its own roster.
+
+### `teams-roster.sql` (optional, no longer needed)
+
+Still here for loading the same data straight into a database without deploying — useful if you want
+the teams present before the new code ships. Requires database access. It refuses to demote an
+existing ADMIN.
 
 ### Emails corrected from the source list
 
