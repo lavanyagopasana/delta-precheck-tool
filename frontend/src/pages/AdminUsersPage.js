@@ -80,6 +80,10 @@ export default function AdminUsersPage() {
   const [teamFilter, setTeamFilter] = useState("ALL");
   const [teams, setTeams] = useState([]);
   const [newTeamName, setNewTeamName] = useState("");
+  // A team exists to scope ONE manager's engineer list, so its manager is chosen at creation time
+  // rather than being a separate step somebody has to remember. Creating a team with nobody on it
+  // is what produced teams named after a person who was not actually on them.
+  const [newTeamManager, setNewTeamManager] = useState("");
   const [teamSaving, setTeamSaving] = useState(false);
 
   const load = () => {
@@ -115,12 +119,30 @@ export default function AdminUsersPage() {
     e.preventDefault();
     const trimmed = newTeamName.trim();
     if (!trimmed) return;
+    // An email as a team name is the specific mistake this form used to allow: it produced a team
+    // that LOOKED like it belonged to that person while they were not on it at all, reading as
+    // "no manager yet" next to their own address. Name the team, then pick the manager below.
+    if (trimmed.includes("@")) {
+      showToast(
+        "A team name should not be an email address — name the team (e.g. \"Team 7\") and pick its manager below.",
+        "error",
+      );
+      return;
+    }
     setTeamSaving(true);
     try {
-      await createTeam({ name: trimmed });
-      showToast(`Team "${trimmed}" created.`, "success");
+      const created = await createTeam({ name: trimmed });
+      // Assigning the manager is part of creating the team, not a follow-up an admin has to
+      // remember. Without it the team cannot scope anybody's engineer picker.
+      if (newTeamManager) {
+        await assignUserTeam(newTeamManager, created.id);
+        showToast(`Team "${trimmed}" created, managed by ${emailLocalPart(newTeamManager)}.`, "success");
+      } else {
+        showToast(`Team "${trimmed}" created. It has no manager yet, so it scopes nobody.`, "success");
+      }
       setNewTeamName("");
-      await loadTeams();
+      setNewTeamManager("");
+      await Promise.all([loadTeams(), getAllowedUsers().then(setUsers).catch(() => {})]);
     } catch (err) {
       showToast(err.response?.data?.message || "Failed to create team.", "error");
     } finally {
@@ -157,6 +179,13 @@ export default function AdminUsersPage() {
       showToast(err.response?.data?.message || "Failed to change team.", "error");
     }
   };
+
+  // Every Migration Manager, with the team they are currently on (so the picker can say so rather
+  // than silently moving somebody off their existing team).
+  const managerOptions = useMemo(
+    () => users.filter((u) => u.role === "MIGRATION_MANAGER"),
+    [users],
+  );
 
   const counts = useMemo(() => {
     const c = { total: users.length, ADMIN: 0, MIGRATION_MANAGER: 0, DEV_LEAD: 0, QA_LEAD: 0, MIGRATION_ENGINEER: 0 };
@@ -407,6 +436,25 @@ export default function AdminUsersPage() {
               placeholder="e.g. Team 7"
               style={{ width: 260 }}
             />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--color-text-muted)" }}>
+              Managed by
+            </label>
+            <select
+              value={newTeamManager}
+              onChange={(e) => setNewTeamManager(e.target.value)}
+              aria-label="Manager for the new team"
+              style={{ minWidth: 240 }}
+            >
+              <option value="">Choose a Migration Manager…</option>
+              {managerOptions.map((m) => (
+                <option key={m.email} value={m.email}>
+                  {m.email}
+                  {m.teamName ? ` (currently ${m.teamName})` : ""}
+                </option>
+              ))}
+            </select>
           </div>
           <button className="btn" type="submit" disabled={teamSaving || !newTeamName.trim()}>
             {teamSaving ? "Creating..." : "Add team"}
