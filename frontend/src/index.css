@@ -2626,6 +2626,8 @@ input[type="checkbox"]:disabled {
    looking identical to a working one. */
 .team-card--unmanaged {
   border-left-color: var(--color-text-faint);
+  /* Carries an extra control row (assign-a-manager), so it needs more room than a settled card. */
+  min-height: 118px;
 }
 
 .team-card-head {

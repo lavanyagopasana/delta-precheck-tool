@@ -92,6 +92,9 @@ export default function AdminUsersPage() {
   // rather than being a separate step somebody has to remember. Creating a team with nobody on it
   // is what produced teams named after a person who was not actually on them.
   const [newTeamManager, setNewTeamManager] = useState("");
+  // teamId -> manager email chosen on that card, for a team that has no manager yet. Keyed by team
+  // so two unmanaged cards do not share one selection.
+  const [cardManager, setCardManager] = useState({});
   const [teamSaving, setTeamSaving] = useState(false);
 
   const load = () => {
@@ -144,6 +147,23 @@ export default function AdminUsersPage() {
       showToast(err.response?.data?.message || "Failed to create team.", "error");
     } finally {
       setTeamSaving(false);
+    }
+  };
+
+  // Fixes an unmanaged team from the card that reports the problem. Previously the remedy lived
+  // somewhere else entirely: find the manager among 44 users, open their Edit dialog, set their
+  // team. The card said what was wrong and offered nothing to do about it, which is why the same
+  // team stayed broken through several attempts to fix it.
+  const handleAssignManagerToTeam = async (team) => {
+    const managerEmail = cardManager[team.id];
+    if (!managerEmail) return;
+    try {
+      await assignUserTeam(managerEmail, team.id);
+      showToast(`${emailLocalPart(managerEmail)} now manages this team.`, "success");
+      setCardManager((prev) => ({ ...prev, [team.id]: "" }));
+      await Promise.all([loadTeams(), getAllowedUsers().then(setUsers).catch(() => {})]);
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to assign the manager.", "error");
     }
   };
 
@@ -505,6 +525,38 @@ export default function AdminUsersPage() {
                       <TrashIcon />
                     </button>
                   </div>
+                  {unmanaged && (
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <select
+                        value={cardManager[t.id] || ""}
+                        onChange={(e) =>
+                          setCardManager((prev) => ({ ...prev, [t.id]: e.target.value }))
+                        }
+                        aria-label={`Assign a manager to ${t.name}`}
+                        style={{ flex: "1 1 130px", minWidth: 0, fontSize: 12 }}
+                      >
+                        <option value="">Assign a manager…</option>
+                        {managerOptions.map((m) => (
+                          <option key={m.email} value={m.email}>
+                            {emailLocalPart(m.email)}
+                            {m.teamName ? " (has a team)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                      {/* Explicit button rather than committing on change: this reassigns a real
+                          person, and a select that saves on change is what made the users table
+                          hazardous to scroll. */}
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ padding: "4px 10px", fontSize: 12 }}
+                        disabled={!cardManager[t.id]}
+                        onClick={() => handleAssignManagerToTeam(t)}
+                      >
+                        Set
+                      </button>
+                    </div>
+                  )}
                   <div className="team-card-meta">
                     {/* The stored name is only worth repeating when it is NOT already the heading,
                         i.e. when managers named the card. It is what the CSV team column matches. */}
