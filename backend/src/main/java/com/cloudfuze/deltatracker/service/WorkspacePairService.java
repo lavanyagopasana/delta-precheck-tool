@@ -8,6 +8,7 @@ import com.cloudfuze.deltatracker.entity.WorkspacePair;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
 import com.cloudfuze.deltatracker.repository.ProjectRepository;
+import com.cloudfuze.deltatracker.repository.WorkspaceCombinationRepository;
 import com.cloudfuze.deltatracker.repository.ServerRepository;
 import com.cloudfuze.deltatracker.repository.WorkspacePairRepository;
 import com.cloudfuze.deltatracker.util.CsvUtils;
@@ -66,15 +67,24 @@ public class WorkspacePairService {
     private final ServerRepository serverRepository;
     private final WorkspaceCombinationService workspaceCombinationService;
     private final ProjectRepository projectRepository;
+    private final WorkspaceCombinationRepository workspaceCombinationRepository;
+    private final ServerPurgeService serverPurgeService;
+    private final ServerService serverService;
 
     public WorkspacePairService(WorkspacePairRepository workspacePairRepository,
                                  ServerRepository serverRepository,
                                  WorkspaceCombinationService workspaceCombinationService,
-                                 ProjectRepository projectRepository) {
+                                 ProjectRepository projectRepository,
+                                 WorkspaceCombinationRepository workspaceCombinationRepository,
+                                 ServerPurgeService serverPurgeService,
+                                 ServerService serverService) {
         this.workspacePairRepository = workspacePairRepository;
         this.serverRepository = serverRepository;
         this.workspaceCombinationService = workspaceCombinationService;
         this.projectRepository = projectRepository;
+        this.workspaceCombinationRepository = workspaceCombinationRepository;
+        this.serverPurgeService = serverPurgeService;
+        this.serverService = serverService;
     }
 
     public List<WorkspacePairDto> listByServer(Long serverId) {
@@ -291,13 +301,35 @@ public class WorkspacePairService {
     // Deletes every pair under this combination for this server -- the "trash" action on a
     // combination row in the project page's per-server list. Case-insensitive to match how
     // processRow's duplicate check already treats combination values.
+    /**
+     * Deletes one combination on a server: its pairs AND the combination itself.
+     *
+     * <p>This previously deleted only the WorkspacePair rows. The UI lists a server's combinations
+     * from the WorkspaceCombination table, not from its pairs, so the combination stayed on screen
+     * after a "successful" delete and looked undeletable -- while its checklist, sign-offs, tickets
+     * and Delta cycles were left behind as unreachable rows, and its evidence files stranded on
+     * disk. Reuses ServerPurgeService so a combination is torn down by exactly the same rules
+     * whether it is deleted on its own or as part of its whole server.
+     *
+     * <p>Admin-only, enforced in SecurityConfig. No Delta-initiated guard on purpose: that matches
+     * the existing admin override for deleting a project whose Delta has started.
+     */
     public void deleteByServerAndCombination(Long serverId, String combination) {
         Server server = serverRepository.findById(serverId)
                 .orElseThrow(() -> new ResourceNotFoundException("Server not found: " + serverId));
+
         List<WorkspacePair> pairs = workspacePairRepository.findByServerIdAndCombinationIgnoreCase(serverId, combination);
         workspacePairRepository.deleteAll(pairs);
+
+        // Matched by name, case-insensitively, the same way pairs are tied to their combination.
+        workspaceCombinationRepository.findByServerIdAndNameIgnoreCase(serverId, combination)
+                .ifPresent(serverPurgeService::purgeCombination);
+
         server.setTotalPairCount((int) workspacePairRepository.countByServerId(server.getId()));
-        serverRepository.save(server);
+        Server saved = serverRepository.save(server);
+        // The server's status is a rollup of its combinations' statuses, so removing one can change
+        // it -- e.g. the last not-yet-ready combination going away makes the server DELTA_READY.
+        serverService.recomputeStatus(saved);
     }
 
     private enum RowOutcome { CREATED, UPDATED, DUPLICATE, SKIPPED }
