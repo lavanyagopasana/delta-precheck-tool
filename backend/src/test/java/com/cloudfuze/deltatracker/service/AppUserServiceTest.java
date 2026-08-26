@@ -7,6 +7,7 @@ import com.cloudfuze.deltatracker.entity.AppUserRole;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
 import com.cloudfuze.deltatracker.repository.AppUserRepository;
+import com.cloudfuze.deltatracker.repository.TeamRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -49,6 +50,9 @@ class AppUserServiceTest {
     @Mock
     private Cache rosterCache;
 
+    @Mock
+    private TeamRepository teamRepository;
+
     private AppUserService service;
 
     @BeforeEach
@@ -56,7 +60,9 @@ class AppUserServiceTest {
         // getCache is only reached on a write path; lenient so the guard-rejection tests (which throw
         // before evicting) don't trip Mockito's strict-stubbing check.
         lenient().when(cacheManager.getCache(CacheConfig.ROSTER_EMAILS_CACHE)).thenReturn(rosterCache);
-        service = new AppUserService(repository, cacheManager);
+        // Real RosterCache over the mocked CacheManager: it's a 3-line delegator, so wrapping the
+        // existing mock keeps these tests asserting on the same Cache.clear() they always did.
+        service = new AppUserService(repository, new RosterCache(cacheManager), teamRepository);
     }
 
     @Test

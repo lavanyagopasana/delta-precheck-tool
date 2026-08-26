@@ -8,7 +8,7 @@ import EngineerChecklist from "../components/EngineerChecklist";
 import ServerUrlsPanel from "../components/ServerUrlsPanel";
 import { PlusIcon, FolderIcon } from "../components/Icons";
 
-const EMPTY_ROSTER = { migrationManagers: [], engineers: [] };
+const EMPTY_ROSTER = { migrationManagers: [], engineers: [], engineersByManager: {} };
 
 const initials = (email) => (email || "?").trim().charAt(0).toUpperCase();
 
@@ -30,6 +30,27 @@ function ProjectHeader({ project, roster, canManage, onSaved, onAddServer }) {
   const [error, setError] = useState(null);
 
   const dirty = isDirty(engineerEmails, savedEmails);
+
+  // Only the engineers on THIS project's Migration Manager's team may be assigned. The manager is
+  // stored as an email (despite the field name), so it keys straight into engineersByManager.
+  //
+  //   manager set + on a team  -> that team's engineers only
+  //   manager set + no team    -> every engineer, plus a notice (below)
+  //   no manager at all        -> every engineer, plus a notice
+  //
+  // Falling back to the full list rather than an empty one is deliberate: a strict filter would make
+  // assignment impossible until an admin fixed the team, with nothing on screen explaining why.
+  const managerEmail = (project.migrationManagerName || "").toLowerCase();
+  const teamScopedEngineers = managerEmail ? roster.engineersByManager?.[managerEmail] : undefined;
+  const engineerOptions = teamScopedEngineers ?? roster.engineers;
+  // Anyone already saved on the project stays visible even if they since left the team -- otherwise
+  // their chip would vanish from the picker while remaining assigned in the database.
+  const optionsWithSaved = Array.from(new Set([...(engineerOptions || []), ...savedEmails]));
+  const unscopedReason = !managerEmail
+    ? "No Migration Manager is assigned yet, so every engineer is listed."
+    : !teamScopedEngineers
+    ? `${project.migrationManagerName} isn't on a team yet, so every engineer is listed. An admin can set their team under Admin > Manage Access.`
+    : null;
 
   const handleSave = async () => {
     setSaving(true);
@@ -95,7 +116,12 @@ function ProjectHeader({ project, roster, canManage, onSaved, onAddServer }) {
             )}
           </div>
           {canManage ? (
-            <EngineerChecklist options={roster.engineers} selected={engineerEmails} onChange={setEngineerEmails} />
+            <>
+              <EngineerChecklist options={optionsWithSaved} selected={engineerEmails} onChange={setEngineerEmails} />
+              {unscopedReason && (
+                <div className="inline-hint" style={{ marginTop: 8 }}>{unscopedReason}</div>
+              )}
+            </>
           ) : project.engineerEmails?.length ? (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {project.engineerEmails.map((email) => (

@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { getAllowedUsers, upsertAllowedUser, removeAllowedUser, importUsersCsv } from "../api/client";
+import {
+  getAllowedUsers, upsertAllowedUser, removeAllowedUser, importUsersCsv,
+  getTeams, createTeam, removeTeam, assignUserTeam,
+} from "../api/client";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { useToast } from "../components/Toast";
 import DataTable from "../components/DataTable";
@@ -49,6 +52,9 @@ export default function AdminUsersPage() {
   const [csvError, setCsvError] = useState(null);
   // "ALL" rather than "" so the value is never falsy-ambiguous with a real role.
   const [roleFilter, setRoleFilter] = useState("ALL");
+  const [teams, setTeams] = useState([]);
+  const [newTeamName, setNewTeamName] = useState("");
+  const [teamSaving, setTeamSaving] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -62,6 +68,58 @@ export default function AdminUsersPage() {
   };
 
   useEffect(load, []);
+
+  const loadTeams = () => getTeams().then(setTeams).catch(() => {});
+  useEffect(() => {
+    loadTeams();
+  }, []);
+
+  const handleCreateTeam = async (e) => {
+    e.preventDefault();
+    const trimmed = newTeamName.trim();
+    if (!trimmed) return;
+    setTeamSaving(true);
+    try {
+      await createTeam({ name: trimmed });
+      showToast(`Team "${trimmed}" created.`, "success");
+      setNewTeamName("");
+      await loadTeams();
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to create team.", "error");
+    } finally {
+      setTeamSaving(false);
+    }
+  };
+
+  const handleRemoveTeam = async (team) => {
+    const ok = await confirm({
+      title: `Delete ${team.name}?`,
+      // Worth stating plainly: deleting a team is not a destructive act against people. It only
+      // widens their engineer dropdowns back to unfiltered until they are put on another team.
+      message: `${team.memberEmails?.length || 0} member(s) will be left without a team. Nobody loses access.`,
+      confirmLabel: "Delete team",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await removeTeam(team.id);
+      showToast(`Team "${team.name}" deleted.`, "success");
+      await Promise.all([loadTeams(), getAllowedUsers().then(setUsers).catch(() => {})]);
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to delete team.", "error");
+    }
+  };
+
+  const handleAssignTeam = async (user, rawTeamId) => {
+    const teamId = rawTeamId ? Number(rawTeamId) : null;
+    try {
+      await assignUserTeam(user.email, teamId);
+      showToast(teamId ? `${user.email} moved.` : `${user.email} removed from their team.`, "success");
+      await Promise.all([getAllowedUsers().then(setUsers).catch(() => {}), loadTeams()]);
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to change team.", "error");
+    }
+  };
 
   const counts = useMemo(() => {
     const c = { total: users.length, ADMIN: 0, MIGRATION_MANAGER: 0, DEV_LEAD: 0, QA_LEAD: 0, MIGRATION_ENGINEER: 0 };
@@ -259,6 +317,54 @@ export default function AdminUsersPage() {
 
       {error && <div className="inline-hint" style={{ marginBottom: 12 }}>{error}</div>}
 
+      {/* Teams decide which engineers each Migration Manager can assign on a project. Kept on this
+          page rather than its own route because it is the same job as Manage Access -- deciding who
+          may do what -- and an admin setting up a team needs the user list in front of them. */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3 style={{ margin: "0 0 4px", fontSize: 15 }}>Teams</h3>
+        <p style={{ margin: "0 0 12px", fontSize: 12.5, color: "var(--color-text-muted)" }}>
+          A project's engineer picker only offers engineers on that project's Migration Manager's
+          team. A team can have more than one manager; both see the same engineers.
+        </p>
+        <form onSubmit={handleCreateTeam} style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <input
+            value={newTeamName}
+            onChange={(e) => setNewTeamName(e.target.value)}
+            placeholder="New team name"
+            style={{ flex: "0 1 240px" }}
+          />
+          <button className="btn" type="submit" disabled={teamSaving || !newTeamName.trim()}>
+            {teamSaving ? "Creating..." : "Add team"}
+          </button>
+        </form>
+        {teams.length === 0 ? (
+          <div className="inline-hint">
+            No teams yet. Until a manager is on a team, their projects list every engineer.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {teams.map((t) => {
+              const members = t.memberEmails || [];
+              return (
+                <span key={t.id} className="engineer-chip" style={{ cursor: "default" }}>
+                  <strong style={{ fontWeight: 600 }}>{t.name}</strong>
+                  <span style={{ color: "var(--color-text-faint)", fontSize: 12 }}>
+                    {members.length} member{members.length === 1 ? "" : "s"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveTeam(t)}
+                    aria-label={`Delete ${t.name}`}
+                  >
+                    <TrashIcon />
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* Role filter lives in DataTable's toolbarRight, next to the search box, matching how
           Approvals and Project details present their filters. It composes with the free-text search
           (both must match) rather than replacing it: the text box is still the way to find one
@@ -320,6 +426,26 @@ export default function AdminUsersPage() {
                 />
                 {roleLabel(u.role)}
               </span>
+            ),
+          },
+          {
+            key: "team",
+            label: "Team",
+            filterValue: (u) => u.teamName || "",
+            // Editable inline rather than behind the Edit modal: team is the one field an admin
+            // changes in bulk while reading down the list, and the modal only handles role.
+            render: (u) => (
+              <select
+                className="engineer-select"
+                value={u.teamId || ""}
+                onChange={(e) => handleAssignTeam(u, e.target.value)}
+                aria-label={`Team for ${u.email}`}
+              >
+                <option value="">No team</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
             ),
           },
           {

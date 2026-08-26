@@ -105,6 +105,16 @@ export const removeProject = (id) => client.delete(`/projects/${id}`).then((r) =
 
 export const getRoster = () => client.get("/roster").then((r) => r.data);
 
+// Teams scope the project dashboard's engineer picker to the project manager's own people.
+// GET is open to any allowlisted caller; every mutation is ADMIN-only server-side.
+export const getTeams = () => client.get("/teams").then((r) => r.data);
+export const createTeam = (payload) => client.post("/teams", payload).then((r) => r.data);
+export const updateTeam = (id, payload) => client.patch(`/teams/${id}`, payload).then((r) => r.data);
+export const removeTeam = (id) => client.delete(`/teams/${id}`).then((r) => r.data);
+// teamId: null takes the person off every team, which is why it is sent explicitly rather than omitted.
+export const assignUserTeam = (email, teamId) =>
+  client.post("/teams/assign", { email, teamId }).then((r) => r.data);
+
 export const importWorkspacePairsCsv = (serverId, file) => {
   const formData = new FormData();
   formData.append("file", file);

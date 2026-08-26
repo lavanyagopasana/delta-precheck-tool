@@ -3,6 +3,7 @@ package com.cloudfuze.deltatracker.controller;
 import com.cloudfuze.deltatracker.dto.RosterDto;
 import com.cloudfuze.deltatracker.entity.AppUserRole;
 import com.cloudfuze.deltatracker.service.AppUserService;
+import com.cloudfuze.deltatracker.service.TeamService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -10,9 +11,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class RosterController {
 
     private final AppUserService appUserService;
+    private final TeamService teamService;
 
-    public RosterController(AppUserService appUserService) {
+    public RosterController(AppUserService appUserService, TeamService teamService) {
         this.appUserService = appUserService;
+        this.teamService = teamService;
     }
 
     @GetMapping("/api/roster")
@@ -20,6 +23,7 @@ public class RosterController {
         RosterDto dto = new RosterDto();
         dto.setMigrationManagers(appUserService.emailsForRole(AppUserRole.MIGRATION_MANAGER));
         dto.setEngineers(appUserService.emailsForRole(AppUserRole.MIGRATION_ENGINEER));
+        dto.setEngineersByManager(teamService.engineersByManager());
         return dto;
     }
 }

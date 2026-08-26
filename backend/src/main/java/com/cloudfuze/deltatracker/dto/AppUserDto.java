@@ -16,6 +16,8 @@ public class AppUserDto {
     private AppUserRole role;
     private String addedBy;
     private LocalDateTime addedAt;
+    private Long teamId;
+    private String teamName;
 
     public static AppUserDto fromEntity(AppUser user) {
         AppUserDto dto = new AppUserDto();
@@ -24,6 +26,12 @@ public class AppUserDto {
         dto.setRole(user.getRole());
         dto.setAddedBy(user.getAddedBy());
         dto.setAddedAt(user.getAddedAt());
+        // Reading through the lazy proxy is safe here: every caller maps inside an open
+        // transaction (AppUserService is @Transactional), and null simply means "no team".
+        if (user.getTeam() != null) {
+            dto.setTeamId(user.getTeam().getId());
+            dto.setTeamName(user.getTeam().getName());
+        }
         return dto;
     }
 }

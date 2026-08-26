@@ -5,13 +5,13 @@ import com.cloudfuze.deltatracker.dto.AppUserDto;
 import com.cloudfuze.deltatracker.dto.AppUserImportResultDto;
 import com.cloudfuze.deltatracker.entity.AppUser;
 import com.cloudfuze.deltatracker.entity.AppUserRole;
+import com.cloudfuze.deltatracker.entity.Team;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
 import com.cloudfuze.deltatracker.repository.AppUserRepository;
+import com.cloudfuze.deltatracker.repository.TeamRepository;
 import com.cloudfuze.deltatracker.util.CsvUtils;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.cache.Cache;
-import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -50,11 +50,14 @@ public class AppUserService {
     @Value("${azure.auto-provision-domain:cloudfuze.com}")
     private String autoProvisionDomain;
 
-    private final CacheManager cacheManager;
+    private final RosterCache rosterCache;
+    private final TeamRepository teamRepository;
 
-    public AppUserService(AppUserRepository appUserRepository, CacheManager cacheManager) {
+    public AppUserService(AppUserRepository appUserRepository, RosterCache rosterCache,
+                           TeamRepository teamRepository) {
         this.appUserRepository = appUserRepository;
-        this.cacheManager = cacheManager;
+        this.rosterCache = rosterCache;
+        this.teamRepository = teamRepository;
     }
 
     public List<AppUserDto> list() {
@@ -73,12 +76,10 @@ public class AppUserService {
 
     // Drop the whole roster cache whenever the app_users table changes. Called from every write
     // path (manual rather than @CacheEvict so it also fires for the internal importCsv -> upsert
-    // self-call, which a proxy-based annotation would silently miss).
+    // self-call, which a proxy-based annotation would silently miss). The clearing itself lives in
+    // RosterCache because TeamService must evict the same cache for team edits.
     private void evictRosterCache() {
-        Cache cache = cacheManager.getCache(CacheConfig.ROSTER_EMAILS_CACHE);
-        if (cache != null) {
-            cache.clear();
-        }
+        rosterCache.evict();
     }
 
     public Optional<AppUserRole> roleOf(String email) {
@@ -149,8 +150,13 @@ public class AppUserService {
         return saved;
     }
 
-    // One person per row. A header row is auto-detected if any cell normalizes to "email" or "role";
-    // otherwise every row (including the first) is data with the email in the first column.
+    // One person per row. A header row is auto-detected if any cell normalizes to "email", "role" or
+    // "team"; otherwise every row (including the first) is data with the email in the first column.
+    //
+    // Team resolution per row: an optional "team" column names an EXISTING team (matched
+    // case-insensitively). An unknown name is a per-row error, not a silently-skipped cell -- a typo
+    // that quietly left someone team-less would show up much later as a wrongly-scoped engineer
+    // dropdown, which is far harder to trace back to the import.
     //
     // Role resolution per row: the row's own "role" cell wins, falling back to defaultRole when that
     // cell is blank or the column is absent. defaultRole may be null, which is valid as long as every
@@ -171,6 +177,7 @@ public class AppUserService {
         // falls back to defaultRole, so existing single-role files keep working unchanged.
         int emailColumn = 0;
         int roleColumn = -1;
+        int teamColumn = -1;
         int startRow = 0;
         List<String> header = CsvUtils.parseLine(lines.get(0));
         for (int i = 0; i < header.size(); i++) {
@@ -180,6 +187,9 @@ public class AppUserService {
                 startRow = 1;
             } else if (normalized.equals("role")) {
                 roleColumn = i;
+                startRow = 1;
+            } else if (normalized.equals("team")) {
+                teamColumn = i;
                 startRow = 1;
             }
         }
@@ -219,9 +229,31 @@ public class AppUserService {
                 continue;
             }
 
+            // Resolved BEFORE the upsert so an unknown team name doesn't half-apply the row --
+            // otherwise the person would be created/updated and then reported as an error.
+            Team rowTeam = null;
+            String rawTeam = teamColumn >= 0 && teamColumn < fields.size() ? fields.get(teamColumn).trim() : "";
+            if (StringUtils.hasText(rawTeam)) {
+                Optional<Team> found = teamRepository.findByNameIgnoreCase(rawTeam);
+                if (found.isEmpty()) {
+                    errors.add("Row " + (rowNum + 1) + ": \"" + rawTeam + "\" isn't a known team. "
+                            + "Create the team first, then re-import.");
+                    continue;
+                }
+                rowTeam = found.get();
+            }
+
             boolean existed = appUserRepository.existsByEmailIgnoreCase(email);
             try {
                 upsert(email, rowRole, addedBy);
+                if (rowTeam != null) {
+                    // Separate save from upsert(): upsert owns the role guards (self-demotion, last
+                    // admin) and stays team-agnostic, so team assignment can't be blocked by them.
+                    AppUser stored = appUserRepository.findByEmailIgnoreCase(email).orElseThrow();
+                    stored.setTeam(rowTeam);
+                    appUserRepository.save(stored);
+                    evictRosterCache();
+                }
             } catch (ApiException e) {
                 // Keep processing the rest of the batch -- one guarded row (e.g. the acting admin's
                 // own, or a last-admin demotion) must not fail the whole import.

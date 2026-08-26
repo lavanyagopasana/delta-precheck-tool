@@ -18,4 +18,12 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     List<AppUser> findByRole(AppUserRole role);
 
     List<AppUser> findAllByOrderByAddedAtAsc();
+
+    // Drives the team-scoped engineer dropdown: every member of a team holding a given role.
+    List<AppUser> findByTeamIdAndRole(Long teamId, AppUserRole role);
+
+    List<AppUser> findByTeamId(Long teamId);
+
+    // Used when deleting a team, to detach its members rather than orphan a dangling team_id.
+    long countByTeamId(Long teamId);
 }
