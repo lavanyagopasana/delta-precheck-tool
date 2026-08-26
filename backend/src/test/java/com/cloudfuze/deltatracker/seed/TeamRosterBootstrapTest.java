@@ -124,4 +124,38 @@ class TeamRosterBootstrapTest {
             assertThat(user.orElseThrow().getTeam()).as("%s should be on a team", email).isNotNull();
         }
     }
+
+    @Test
+    void aHandMadeTeamOccupyingTheNameTheSeedWantsIsNeverReused() {
+        // The real situation this guards. An admin creates teams through the UI, which auto-numbers
+        // them from whatever exists -- so on a fresh database their first three are "Team 1".."Team 3"
+        // and may belong to entirely different managers than the file's Team 1..Team 3 groups.
+        //
+        // Reusing a team by NAME would put this group's manager into somebody else's team. Only the
+        // manager check decides whether a group is already set up; the name is just a label.
+        Team squatter = teamRepository.save(new Team("Team 9", "an-admin"));
+        AppUser outsider = appUserRepository.save(
+                new AppUser("squatter.manager@cloudfuze.com", AppUserRole.MIGRATION_MANAGER, "an-admin"));
+        outsider.setTeam(squatter);
+        appUserRepository.save(outsider);
+
+        // A roster manager with no team, whose group name is free but whose team must not become
+        // the squatter's. Detach one so the group is reprocessed.
+        AppUser rosterManager = appUserRepository.findByEmailIgnoreCase("raghu.yellani@cloudfuze.com").orElseThrow();
+        Long originalTeamId = rosterManager.getTeam().getId();
+        rosterManager.setTeam(null);
+        appUserRepository.save(rosterManager);
+
+        bootstrap.run();
+
+        AppUser after = appUserRepository.findByEmailIgnoreCase("raghu.yellani@cloudfuze.com").orElseThrow();
+        assertThat(after.getTeam()).as("the roster manager should be placed on a team").isNotNull();
+        assertThat(after.getTeam().getId())
+                .as("must never land in a team an admin made for somebody else")
+                .isNotEqualTo(squatter.getId());
+        assertThat(appUserRepository.findByTeamId(squatter.getId()))
+                .extracting(AppUser::getEmail)
+                .containsExactly("squatter.manager@cloudfuze.com");
+        assertThat(originalTeamId).isNotNull();
+    }
 }

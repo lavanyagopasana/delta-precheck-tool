@@ -114,14 +114,13 @@ public class TeamRosterBootstrap implements CommandLineRunner {
                 continue;
             }
 
-            Optional<Team> found = teamRepository.findByNameIgnoreCase(group.getKey());
-            Team team;
-            if (found.isPresent()) {
-                team = found.get();
-            } else {
-                team = teamRepository.save(new Team(group.getKey(), "roster-seed"));
-                teamsCreated++;
-            }
+            // A team NAME already in use does not mean this group's team exists. An admin creating
+            // teams through the UI gets them auto-numbered from whatever is already there, so their
+            // hand-made "Team 1" can easily belong to a different manager entirely. Reusing it by
+            // name would merge two unrelated teams -- this group's manager would silently join
+            // somebody else's. So take the name if it is free, and otherwise allocate a fresh one.
+            Team team = teamRepository.save(new Team(freeTeamName(group.getKey()), "roster-seed"));
+            teamsCreated++;
 
             for (Row r : members) {
                 Optional<AppUser> existing = appUserRepository.findByEmailIgnoreCase(r.email());
@@ -153,6 +152,28 @@ public class TeamRosterBootstrap implements CommandLineRunner {
         } else {
             log.debug("Team roster already in place ({} group(s) skipped).", skippedGroups);
         }
+    }
+
+    /**
+     * The group's own name if nothing holds it, otherwise the next free "Team N".
+     *
+     * <p>Only the stored name is at stake here -- the UI labels every team by its managers and
+     * numbers them by creation order -- so any unused name is as good as another. What matters is
+     * never handing back a team that belongs to somebody else.
+     */
+    private String freeTeamName(String preferred) {
+        if (teamRepository.findByNameIgnoreCase(preferred).isEmpty()) {
+            return preferred;
+        }
+        for (int n = 1; n <= 200; n++) {
+            String candidate = "Team " + n;
+            if (teamRepository.findByNameIgnoreCase(candidate).isEmpty()) {
+                return candidate;
+            }
+        }
+        // 200 teams named "Team N" already exist. Fall back to something guaranteed unique rather
+        // than looping forever or failing startup.
+        return preferred + " (seeded)";
     }
 
     private List<Row> readRoster() {
