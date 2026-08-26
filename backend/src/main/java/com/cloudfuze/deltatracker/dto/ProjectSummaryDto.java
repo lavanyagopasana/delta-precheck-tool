@@ -23,9 +23,6 @@ public class ProjectSummaryDto {
     private long openEscalationCount;
     private List<String> migrationManagers;
     private String migrationManagerName;
-    // Null means nobody is assigned, in which case any holder of that role may approve that step.
-    private String devLeadEmail;
-    private String qaLeadEmail;
     private List<String> engineerEmails;
     private long devApprovalsDone;
     private long devApprovalsPending;
@@ -42,6 +39,16 @@ public class ProjectSummaryDto {
     private LocalDateTime lastPreCheckSubmittedAt;
     private String createdBy;
     private LocalDateTime createdAt;
+    // Non-null only on projects pulled in from the PMO tool (see PmoSyncService). externalId doubles
+    // as the "this came from PMO" flag the Projects page badges on. The rest is read-only context so
+    // whoever assigns a Migration Manager can see what the project is without opening PMO --
+    // externalManagerName in particular is PMO's project manager as a DISPLAY NAME, never an email,
+    // so it must not be confused with migrationManagerName above.
+    private String externalId;
+    private String externalCustomerName;
+    private String externalManagerName;
+    private String externalStatus;
+    private String externalPhase;
     // True when the project has servers and every one of them has completed its FINAL Delta -- the
     // whole project's migration is done. Note decommissioning is actioned per server now, so this is a
     // rollup for the Projects list rather than something you can act on directly.

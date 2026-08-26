@@ -29,27 +29,53 @@ public class Project {
     @Column(name = "migration_manager_name")
     private String migrationManagerName;
 
-    // The specific Dev Lead / QA Lead who owns this project's approvals. Both nullable, and null is
-    // meaningful: it means "nobody is assigned", in which case any holder of that role may act --
-    // which is how every project behaved before this existed. Existing projects therefore keep
-    // working untouched, and assigning someone narrows the chain rather than unblocking it.
-    //
-    // Single values, not lists like engineers: the chain has exactly one Dev Lead step and one QA
-    // Lead step, so two people holding a step would recreate the ambiguity this replaces. Leads sit
-    // outside the Team structure on purpose -- the same Dev/QA Lead commonly covers every team, so
-    // scoping them by team would be wrong.
-    @Column(name = "dev_lead_email")
-    private String devLeadEmail;
-
-    @Column(name = "qa_lead_email")
-    private String qaLeadEmail;
-
     // Project team members (drawn from the MIGRATION_ENGINEER roster). Whoever works the servers
     // in this project isn't tracked per-server -- just membership at the project level.
     @ElementCollection
     @CollectionTable(name = "project_engineers", joinColumns = @JoinColumn(name = "project_id"))
     @Column(name = "email")
     private Set<String> engineerEmails = new LinkedHashSet<>();
+
+    // Set only on projects that came from the PMO tool's /api/external/projects feed; null means a
+    // project somebody created here by hand. This is what makes the sync idempotent: PmoSyncService
+    // matches on it, never on name, because a project renamed in PMO would otherwise be imported a
+    // second time and the original -- holding all the servers, checklists and sign-off history --
+    // would sit orphaned next to it. Unique so two PMO records can never collapse onto one project.
+    @Column(name = "external_id", unique = true)
+    private String externalId;
+
+    // When the sync last saw this project in the PMO feed. Purely diagnostic (it answers "is the poll
+    // actually running?"), never used to decide anything -- a project that stops appearing in the feed
+    // is deliberately left alone rather than deleted, since ours holds migration history PMO doesn't.
+    @Column(name = "external_synced_at")
+    private LocalDateTime externalSyncedAt;
+
+    // Read-only context copied from PMO so whoever triages a freshly synced project can see what it
+    // is without opening the other tool. None of these drive any behaviour here -- they are display
+    // fields, refreshed on every poll, and this tool remains the authority on everything it owns.
+    //
+    // externalManagerName in particular is NOT a substitute for migrationManagerName: PMO reports its
+    // project manager as a display name ("Harika"), while migrationManagerName is compared as an
+    // email address by ProjectService.isVisible and by the whole sign-off chain. Writing a display
+    // name into that field would silently break both, so PMO's manager is kept here instead, purely
+    // as a hint about who an admin should assign.
+    @Column(name = "external_manager_name")
+    private String externalManagerName;
+
+    @Column(name = "external_customer_name")
+    private String externalCustomerName;
+
+    @Column(name = "external_status")
+    private String externalStatus;
+
+    @Column(name = "external_phase")
+    private String externalPhase;
+
+    // PMO's comma-separated "Source - Destination" list, e.g. "MyDrive - MyDrive, Shared Drive -
+    // Shared Drive". Kept because it is also what disambiguates the 31 PMO project names that repeat
+    // (the same customer split by migration type) -- see PmoSyncService.assignNames.
+    @Column(name = "external_migration_types", length = 1000)
+    private String externalMigrationTypes;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();

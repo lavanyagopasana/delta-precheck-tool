@@ -212,9 +212,6 @@ public class ProjectService {
     public ProjectSummaryDto updateAssignments(Long id, ProjectAssignmentRequest request) {
         Project project = findOrThrow(id);
         project.setEngineerEmails(toSet(request.getEngineerEmails()));
-        // Blank is stored as null so "unassigned" is one value everywhere, not a mix of null and "".
-        project.setDevLeadEmail(blankToNull(request.getDevLeadEmail()));
-        project.setQaLeadEmail(blankToNull(request.getQaLeadEmail()));
         Project saved = projectRepository.save(project);
         return buildSummary(saved, serverRepository.findAll());
     }
@@ -409,8 +406,6 @@ public class ProjectService {
         to.setOpenEscalationCount(from.getOpenEscalationCount());
         to.setMigrationManagers(from.getMigrationManagers());
         to.setMigrationManagerName(from.getMigrationManagerName());
-        to.setDevLeadEmail(from.getDevLeadEmail());
-        to.setQaLeadEmail(from.getQaLeadEmail());
         to.setEngineerEmails(from.getEngineerEmails());
         to.setDevApprovalsDone(from.getDevApprovalsDone());
         to.setDevApprovalsPending(from.getDevApprovalsPending());
@@ -422,6 +417,11 @@ public class ProjectService {
         to.setLastPreCheckSubmittedAt(from.getLastPreCheckSubmittedAt());
         to.setCreatedBy(from.getCreatedBy());
         to.setCreatedAt(from.getCreatedAt());
+        to.setExternalId(from.getExternalId());
+        to.setExternalCustomerName(from.getExternalCustomerName());
+        to.setExternalManagerName(from.getExternalManagerName());
+        to.setExternalStatus(from.getExternalStatus());
+        to.setExternalPhase(from.getExternalPhase());
     }
 
     private ProjectSummaryDto buildSummary(Project project, List<Server> allServers) {
@@ -537,8 +537,6 @@ public class ProjectService {
         dto.setOpenEscalationCount(openEscalations);
         dto.setMigrationManagers(migrationManagers);
         dto.setMigrationManagerName(project.getMigrationManagerName());
-        dto.setDevLeadEmail(project.getDevLeadEmail());
-        dto.setQaLeadEmail(project.getQaLeadEmail());
         dto.setEngineerEmails(List.copyOf(project.getEngineerEmails()));
         dto.setDevApprovalsDone(devDone);
         dto.setDevApprovalsPending(devPending);
@@ -550,6 +548,11 @@ public class ProjectService {
         dto.setLastPreCheckSubmittedAt(lastPreCheckSubmittedAt);
         dto.setCreatedBy(project.getCreatedBy());
         dto.setCreatedAt(project.getCreatedAt());
+        dto.setExternalId(project.getExternalId());
+        dto.setExternalCustomerName(project.getExternalCustomerName());
+        dto.setExternalManagerName(project.getExternalManagerName());
+        dto.setExternalStatus(project.getExternalStatus());
+        dto.setExternalPhase(project.getExternalPhase());
         // Ready to decommission once the project has servers, every one of them has at least one
         // combination, and every combination has completed its FINAL Delta.
         //

@@ -103,6 +103,12 @@ export const updateProjectDetails = (id, payload) =>
   client.patch(`/projects/${id}`, payload).then((r) => r.data);
 export const removeProject = (id) => client.delete(`/projects/${id}`).then((r) => r.data);
 
+// Pulls the project list from the PMO tool on demand (ADMIN only). A background poll already does
+// this every 5 minutes -- this is for an admin who has just created a project over there and doesn't
+// want to wait. Returns { totalRows, createdCount, updatedCount, unchangedCount,
+// skippedByStatusCount, errors }.
+export const syncPmoProjects = () => client.post("/pmo/sync").then((r) => r.data);
+
 export const getRoster = () => client.get("/roster").then((r) => r.data);
 
 // Teams scope the project dashboard's engineer picker to the project manager's own people.

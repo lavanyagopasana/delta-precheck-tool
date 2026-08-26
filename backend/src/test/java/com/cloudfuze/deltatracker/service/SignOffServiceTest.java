@@ -95,9 +95,6 @@ class SignOffServiceTest {
         lenient().when(ticketService.countOpenForCombination(10L)).thenReturn(0L);
         lenient().when(preCheckSubmissionRepository.findByCombinationId(10L)).thenReturn(Optional.empty());
         lenient().when(signOffRepository.save(any(SignOff.class))).thenAnswer(inv -> inv.getArgument(0));
-        // finalizeDelta saves the combination and then recomputes status on the RETURNED instance,
-        // so this has to echo the argument back rather than default to null.
-        lenient().when(combinationService.save(any(WorkspaceCombination.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
     @Test
@@ -174,99 +171,5 @@ class SignOffServiceTest {
                 eq(List.of("engineer@cloudfuze.com")));
         verify(emailService, never()).notifyMigrationManagerApprovalDeclined(anyString(), anyString(), anyString(),
                 anyInt(), anyString(), anyString(), anyString(), anyString());
-    }
-
-    // ---- Per-project Dev Lead / QA Lead assignment -------------------------------------------
-    //
-    // Before this, ANY holder of DEV_LEAD could approve any project's Dev Lead step. A project can
-    // now name one, and then only that person may act. The unassigned case must keep working, or
-    // every project created before the feature would have a chain nobody can move.
-
-    private Project project() {
-        return combination.getServer().getProject();
-    }
-
-    @Test
-    void anAssignedDevLeadCanApproveTheirOwnProject() {
-        project().setDevLeadEmail("assigned.dev@cloudfuze.com");
-        when(signOffRepository.findByCombinationIdAndRole(10L, SignOffRole.DEV_LEAD))
-                .thenReturn(Optional.of(devLeadSignOff));
-        when(signOffRepository.findByCombinationId(10L))
-                .thenReturn(List.of(migrationLeadSignOff, devLeadSignOff, qaLeadSignOff));
-        when(appUserService.isAdmin("assigned.dev@cloudfuze.com")).thenReturn(false);
-        when(appUserService.roleOf("assigned.dev@cloudfuze.com")).thenReturn(Optional.of(AppUserRole.DEV_LEAD));
-
-        signOffService.approve(10L, SignOffRole.DEV_LEAD, "assigned.dev@cloudfuze.com", Boolean.FALSE);
-
-        assertThat(devLeadSignOff.getStatus()).isEqualTo(SignOffStatus.APPROVED);
-    }
-
-    @Test
-    void aDifferentDevLeadCannotApproveAProjectAssignedToSomeoneElse() {
-        // The actual point of the feature: holding the role is no longer enough once a project names
-        // a specific lead.
-        project().setDevLeadEmail("assigned.dev@cloudfuze.com");
-        when(signOffRepository.findByCombinationIdAndRole(10L, SignOffRole.DEV_LEAD))
-                .thenReturn(Optional.of(devLeadSignOff));
-        // Chain stubbed so requireTurn PASSES -- otherwise the rejection below would come from
-        // turn-taking and this test would prove nothing about eligibility.
-        when(signOffRepository.findByCombinationId(10L))
-                .thenReturn(List.of(migrationLeadSignOff, devLeadSignOff, qaLeadSignOff));
-        when(appUserService.isAdmin("other.dev@cloudfuze.com")).thenReturn(false);
-        when(appUserService.roleOf("other.dev@cloudfuze.com")).thenReturn(Optional.of(AppUserRole.DEV_LEAD));
-
-        assertThatThrownBy(() -> signOffService.approve(10L, SignOffRole.DEV_LEAD, "other.dev@cloudfuze.com", Boolean.FALSE))
-                .isInstanceOf(ApiException.class);
-
-        assertThat(devLeadSignOff.getStatus()).isEqualTo(SignOffStatus.PENDING);
-    }
-
-    @Test
-    void anyDevLeadCanStillApproveWhenTheProjectAssignsNobody() {
-        // Regression guard for every project that predates lead assignment: devLeadEmail is null, so
-        // the step must stay open to the whole DEV_LEAD pool rather than becoming unactionable.
-        assertThat(project().getDevLeadEmail()).isNull();
-        when(signOffRepository.findByCombinationIdAndRole(10L, SignOffRole.DEV_LEAD))
-                .thenReturn(Optional.of(devLeadSignOff));
-        when(signOffRepository.findByCombinationId(10L))
-                .thenReturn(List.of(migrationLeadSignOff, devLeadSignOff, qaLeadSignOff));
-        when(appUserService.isAdmin("any.dev@cloudfuze.com")).thenReturn(false);
-        when(appUserService.roleOf("any.dev@cloudfuze.com")).thenReturn(Optional.of(AppUserRole.DEV_LEAD));
-
-        signOffService.approve(10L, SignOffRole.DEV_LEAD, "any.dev@cloudfuze.com", Boolean.FALSE);
-
-        assertThat(devLeadSignOff.getStatus()).isEqualTo(SignOffStatus.APPROVED);
-    }
-
-    @Test
-    void someoneNamedByTheProjectButNoLongerADevLeadIsRejected() {
-        // Assignment does not outrank the role check: being moved off DEV_LEAD has to take effect
-        // even while an old project still names you.
-        project().setDevLeadEmail("former.dev@cloudfuze.com");
-        when(signOffRepository.findByCombinationIdAndRole(10L, SignOffRole.DEV_LEAD))
-                .thenReturn(Optional.of(devLeadSignOff));
-        when(signOffRepository.findByCombinationId(10L))
-                .thenReturn(List.of(migrationLeadSignOff, devLeadSignOff, qaLeadSignOff));
-        when(appUserService.isAdmin("former.dev@cloudfuze.com")).thenReturn(false);
-        when(appUserService.roleOf("former.dev@cloudfuze.com")).thenReturn(Optional.of(AppUserRole.MIGRATION_ENGINEER));
-
-        assertThatThrownBy(() -> signOffService.approve(10L, SignOffRole.DEV_LEAD, "former.dev@cloudfuze.com", Boolean.FALSE))
-                .isInstanceOf(ApiException.class);
-    }
-
-    @Test
-    void adminStillOverridesAnAssignedLead() {
-        // The existing admin override is unchanged -- it is the unblock path when an assigned lead
-        // becomes unavailable, which assignment makes MORE likely, not less.
-        project().setDevLeadEmail("assigned.dev@cloudfuze.com");
-        when(signOffRepository.findByCombinationIdAndRole(10L, SignOffRole.DEV_LEAD))
-                .thenReturn(Optional.of(devLeadSignOff));
-        when(signOffRepository.findByCombinationId(10L))
-                .thenReturn(List.of(migrationLeadSignOff, devLeadSignOff, qaLeadSignOff));
-        when(appUserService.isAdmin("admin@cloudfuze.com")).thenReturn(true);
-
-        signOffService.approve(10L, SignOffRole.DEV_LEAD, "admin@cloudfuze.com", Boolean.FALSE);
-
-        assertThat(devLeadSignOff.getStatus()).isEqualTo(SignOffStatus.APPROVED);
     }
 }
