@@ -9,6 +9,7 @@ import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
 import { TrashIcon, EditIcon } from "../components/Icons";
 import { useConfirm } from "../components/ConfirmDialog";
+import { apiErrorMessage } from "../utils/apiError";
 
 const ROLE_OPTIONS = [
   { value: "MIGRATION_ENGINEER", label: "Migration Engineer" },
@@ -69,7 +70,18 @@ export default function AdminUsersPage() {
 
   useEffect(load, []);
 
-  const loadTeams = () => getTeams().then(setTeams).catch(() => {});
+  // Tracked separately from `teams` so a FAILED load never renders as "No teams yet". It did, and it
+  // was actively misleading: against a backend without /api/teams the request 404s, the catch
+  // swallowed it, and the panel confidently reported an empty roster that actually had six teams in
+  // it. "Couldn't load" and "there are none" have to look different.
+  const [teamsError, setTeamsError] = useState(null);
+  const loadTeams = () =>
+    getTeams()
+      .then((data) => {
+        setTeams(data);
+        setTeamsError(null);
+      })
+      .catch((err) => setTeamsError(apiErrorMessage(err, "Couldn't load teams.")));
   useEffect(() => {
     loadTeams();
   }, []);
@@ -344,7 +356,12 @@ export default function AdminUsersPage() {
             {teamSaving ? "Creating..." : "Add team"}
           </button>
         </form>
-        {teams.length === 0 ? (
+        {teamsError ? (
+          <div className="inline-hint">
+            {teamsError} If the backend was just updated, it may still be running an older build
+            without the teams endpoint — restart it and reload.
+          </div>
+        ) : teams.length === 0 ? (
           <div className="inline-hint">
             No teams yet. Until a manager is on a team, their projects list every engineer.
           </div>
