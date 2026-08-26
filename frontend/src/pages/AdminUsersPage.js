@@ -427,36 +427,50 @@ export default function AdminUsersPage() {
             rendered completely unstyled next to the identical-looking one in "Add a user". */}
         <form
           onSubmit={handleCreateTeam}
-          style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap", alignItems: "flex-end" }}
+          style={{ marginBottom: 16 }}
         >
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--color-text-muted)" }}>
-              New team for
-            </label>
-            <select
-              value={newTeamManager}
-              onChange={(e) => setNewTeamManager(e.target.value)}
-              aria-label="Manager for the new team"
-              style={{ minWidth: 300 }}
-            >
-              <option value="">Choose a Migration Manager…</option>
-              {managerOptions.map((m) => (
-                <option key={m.email} value={m.email}>
-                  {m.email}
-                  {m.teamName ? ` (currently ${m.teamName})` : ""}
-                </option>
-              ))}
-            </select>
-            {/* Show the resulting name before they commit, so the derivation is not a surprise. */}
-            <span style={{ fontSize: 11.5, color: "var(--color-text-faint)", minHeight: 15 }}>
-              {newTeamManager
-                ? `Will be called "${teamNameForManager(newTeamManager)}"`
-                : "The team is named after its manager."}
-            </span>
+          {/* The control and its button share one row. The hint sits BELOW that row, not inside the
+              select's column -- with align-items: flex-end, a third element in that column pushed
+              the button down to align with the hint instead of the select. */}
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--color-text-muted)" }}>
+                New team for
+              </label>
+              <select
+                value={newTeamManager}
+                onChange={(e) => setNewTeamManager(e.target.value)}
+                aria-label="Manager for the new team"
+                style={{ minWidth: 300 }}
+              >
+                <option value="">Choose a Migration Manager…</option>
+                {managerOptions.map((m) => (
+                  <option key={m.email} value={m.email}>
+                    {m.email}
+                    {m.teamName ? ` (currently ${m.teamName})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button className="btn" type="submit" disabled={teamSaving || !newTeamManager}>
+              {teamSaving ? "Creating..." : "Add team"}
+            </button>
           </div>
-          <button className="btn" type="submit" disabled={teamSaving || !newTeamManager}>
-            {teamSaving ? "Creating..." : "Add team"}
-          </button>
+          {/* Shows the resulting name before you commit, so the derivation is not a surprise.
+              minHeight reserves the line so the row does not jump when a manager is picked. */}
+          <span
+            style={{
+              display: "block",
+              marginTop: 7,
+              fontSize: 11.5,
+              color: "var(--color-text-faint)",
+              minHeight: 15,
+            }}
+          >
+            {newTeamManager
+              ? `Will be called "${teamNameForManager(newTeamManager)}"`
+              : "The team is named after its manager."}
+          </span>
         </form>
         {teamsError ? (
           <div className="inline-hint">
