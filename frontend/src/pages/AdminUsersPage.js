@@ -51,6 +51,13 @@ const roleColor = (role) => ROLE_COLOR[role] || "var(--color-text-muted)";
 //
 // Numbers are allocated from the existing names rather than counted, so deleting Team 3 and adding
 // one does not produce a second Team 6.
+// The pill carries the team NUMBER and nothing else. A stored name that is not a number is an
+// internal import key, and when it was derived from a person it just repeated the heading -- the
+// sasya card printed "sasya.chella team" and then "Sasya.chella@cloudfuze.com" directly beneath it,
+// which is the same fact twice. Such a team shows "no number" instead, still clickable to set one.
+const teamNumberLabel = (team) =>
+  /^team\s+\d+$/i.test((team.name || "").trim()) ? team.name.trim() : null;
+
 const nextTeamName = (existingTeams) => {
   const used = (existingTeams || [])
     .map((t) => /^team\s+(\d+)$/i.exec((t.name || "").trim()))
@@ -594,7 +601,9 @@ export default function AdminUsersPage() {
                         string a CSV team column matches on, and it is clickable to rename, because
                         a name inherited from the old free-text form (an email, say) could not be
                         corrected anywhere in the UI. */}
-                    {!unmanaged && t.name !== teamDisplayName(t) && (
+                    {(() => {
+                      const numberLabel = teamNumberLabel(t);
+                      return (
                       renamingTeamId === t.id ? (
                         <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
                           <input
@@ -624,17 +633,21 @@ export default function AdminUsersPage() {
                       ) : (
                         <button
                           type="button"
-                          className="team-card-tag team-card-tag--button"
-                          title={`Rename "${t.name}"`}
+                          className={`team-card-tag team-card-tag--button${
+                            numberLabel ? "" : " team-card-tag--empty"
+                          }`}
+                          title={numberLabel ? `Rename ${numberLabel}` : "Give this team a number"}
                           onClick={() => {
                             setRenamingTeamId(t.id);
-                            setRenameDraft(t.name);
+                            // Prefill the next free number rather than the junk name being replaced.
+                            setRenameDraft(numberLabel || nextTeamName(teams));
                           }}
                         >
-                          {t.name}
+                          {numberLabel || "no number"}
                         </button>
                       )
-                    )}
+                      );
+                    })()}
                     {unmanaged && <span className="team-card-tag team-card-tag--warn">no manager yet</span>}
                     {/* Both counts, always, in the same order on every card. Reporting the manager
                         count only when there was more than one made otherwise-identical cards
