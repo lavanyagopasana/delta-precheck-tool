@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   getServerReadiness,
   getCombinationReadiness,
@@ -42,14 +42,26 @@ function CombinationStatRow({ combinationId, onChanged, onReadiness, preCheckAct
   // onReadiness lets the page above render the combination's facts (pairs / open tickets / manager)
   // in its own header, without a second fetch of the same endpoint. Called on load and after every
   // Start/Finish so those figures stay in step with this panel.
-  const load = () => {
+  // onReadiness is read through a ref rather than listed as a dependency. The parent passes an
+  // inline function (ServerDetailsPage.handleCombinationReadiness), so its identity changes on every
+  // render -- putting it in the dep array would refetch on each render and loop through the setState
+  // below. The ref keeps the latest callback without making the effect depend on its identity, which
+  // is also what silences react-hooks/exhaustive-deps here instead of suppressing it.
+  const onReadinessRef = useRef(onReadiness);
+  useEffect(() => {
+    onReadinessRef.current = onReadiness;
+  }, [onReadiness]);
+
+  const load = useCallback(() => {
     getCombinationReadiness(combinationId).then((data) => {
       setReadiness(data);
-      if (onReadiness) onReadiness(data);
+      if (onReadinessRef.current) onReadinessRef.current(data);
     });
-  };
+  }, [combinationId]);
 
-  useEffect(load, [combinationId]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const handleStartDelta = async () => {
     try {

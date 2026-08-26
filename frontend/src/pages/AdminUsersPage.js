@@ -41,8 +41,14 @@ const roleColor = (role) => ROLE_COLOR[role] || "var(--color-text-muted)";
 // from a person goes stale the moment they move teams, leaving a team called after somebody who no
 // longer runs it. Deriving means the displayed name follows reality with no rename step.
 //
-// The stored name (Team 1..Team 6) is still shown as secondary text, because that is the string the
-// CSV team column and the SQL seed match on.
+// A legacy stored name (Team 1..Team 6, or a CSV team column) is still shown as secondary text when
+// it differs from the derived one, because that is the string an import matches on.
+
+// The stored name for a team created from its manager. Deliberately the same shape teamDisplayName
+// derives, so for a team made this way the stored and displayed names are identical and there is
+// nothing for the two to disagree about.
+const teamNameForManager = (email) => `${emailLocalPart(email)} team`;
+
 const teamDisplayName = (team) => {
   const managers = team.managerEmails || [];
   // No manager -> fall back to the team's own name. Returning a generic "Unmanaged team" here
@@ -65,6 +71,9 @@ export default function AdminUsersPage() {
   const [removingEmail, setRemovingEmail] = useState(null);
   const [editUser, setEditUser] = useState(null);
   const [editRole, setEditRole] = useState("MIGRATION_ENGINEER");
+  // "" means no team. Held here rather than edited inline in the table: a <select> in a row commits
+  // on change, so a stray click or a scroll over a focused control silently reassigned somebody.
+  const [editTeamId, setEditTeamId] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState(null);
   const [csvModalOpen, setCsvModalOpen] = useState(false);
@@ -79,7 +88,6 @@ export default function AdminUsersPage() {
   // admin most often needs to hunt down.
   const [teamFilter, setTeamFilter] = useState("ALL");
   const [teams, setTeams] = useState([]);
-  const [newTeamName, setNewTeamName] = useState("");
   // A team exists to scope ONE manager's engineer list, so its manager is chosen at creation time
   // rather than being a separate step somebody has to remember. Creating a team with nobody on it
   // is what produced teams named after a person who was not actually on them.
@@ -115,32 +123,21 @@ export default function AdminUsersPage() {
     loadTeams();
   }, []);
 
+  // One input, because there is only one decision. A team exists to scope one manager's engineer
+  // list, and it is displayed by its managers everywhere, so asking for a separate free-text name
+  // was asking the same question twice -- and letting the two answers disagree. Typing a manager's
+  // email into that box is exactly what produced a team named after somebody who was not on it.
   const handleCreateTeam = async (e) => {
     e.preventDefault();
-    const trimmed = newTeamName.trim();
-    if (!trimmed) return;
-    // An email as a team name is the specific mistake this form used to allow: it produced a team
-    // that LOOKED like it belonged to that person while they were not on it at all, reading as
-    // "no manager yet" next to their own address. Name the team, then pick the manager below.
-    if (trimmed.includes("@")) {
-      showToast(
-        "A team name should not be an email address — name the team (e.g. \"Team 7\") and pick its manager below.",
-        "error",
-      );
-      return;
-    }
+    if (!newTeamManager) return;
+    const derivedName = teamNameForManager(newTeamManager);
     setTeamSaving(true);
     try {
-      const created = await createTeam({ name: trimmed });
-      // Assigning the manager is part of creating the team, not a follow-up an admin has to
-      // remember. Without it the team cannot scope anybody's engineer picker.
-      if (newTeamManager) {
-        await assignUserTeam(newTeamManager, created.id);
-        showToast(`Team "${trimmed}" created, managed by ${emailLocalPart(newTeamManager)}.`, "success");
-      } else {
-        showToast(`Team "${trimmed}" created. It has no manager yet, so it scopes nobody.`, "success");
-      }
-      setNewTeamName("");
+      const created = await createTeam({ name: derivedName });
+      // Creating the team and putting its manager on it are one action. Split apart, the second
+      // half gets forgotten and the team cannot scope anybody.
+      await assignUserTeam(newTeamManager, created.id);
+      showToast(`${derivedName} created.`, "success");
       setNewTeamManager("");
       await Promise.all([loadTeams(), getAllowedUsers().then(setUsers).catch(() => {})]);
     } catch (err) {
@@ -166,17 +163,6 @@ export default function AdminUsersPage() {
       await Promise.all([loadTeams(), getAllowedUsers().then(setUsers).catch(() => {})]);
     } catch (err) {
       showToast(err.response?.data?.message || "Failed to delete team.", "error");
-    }
-  };
-
-  const handleAssignTeam = async (user, rawTeamId) => {
-    const teamId = rawTeamId ? Number(rawTeamId) : null;
-    try {
-      await assignUserTeam(user.email, teamId);
-      showToast(teamId ? `${user.email} moved.` : `${user.email} removed from their team.`, "success");
-      await Promise.all([getAllowedUsers().then(setUsers).catch(() => {}), loadTeams()]);
-    } catch (err) {
-      showToast(err.response?.data?.message || "Failed to change team.", "error");
     }
   };
 
@@ -287,6 +273,7 @@ export default function AdminUsersPage() {
   const openEdit = (user) => {
     setEditUser(user);
     setEditRole(user.role);
+    setEditTeamId(user.teamId ? String(user.teamId) : "");
     setEditError(null);
   };
 
@@ -298,15 +285,32 @@ export default function AdminUsersPage() {
   const handleEditSave = async (e) => {
     e.preventDefault();
     if (!editUser) return;
-    if (editRole === editUser.role) {
+    const teamChanged = editTeamId !== (editUser.teamId ? String(editUser.teamId) : "");
+    const roleChanged = editRole !== editUser.role;
+    if (!roleChanged && !teamChanged) {
       closeEdit();
       return;
     }
     setEditSaving(true);
     setEditError(null);
     try {
-      await upsertAllowedUser({ email: editUser.email, role: editRole });
-      showToast(`${editUser.email} is now ${roleLabel(editRole)}.`);
+      // Role and team are two separate endpoints, so only send what actually changed -- upsert
+      // carries guards (no self-demotion, no demoting the last admin) that should not fire for
+      // somebody who only moved team.
+      if (roleChanged) {
+        await upsertAllowedUser({ email: editUser.email, role: editRole });
+      }
+      if (teamChanged) {
+        await assignUserTeam(editUser.email, editTeamId ? Number(editTeamId) : null);
+      }
+      const parts = [];
+      if (roleChanged) parts.push(`is now ${roleLabel(editRole)}`);
+      if (teamChanged) {
+        const t = teams.find((x) => String(x.id) === editTeamId);
+        parts.push(t ? `moved to ${teamDisplayName(t)}` : "removed from their team");
+      }
+      showToast(`${editUser.email} ${parts.join(" and ")}.`);
+      loadTeams();
       closeEdit();
       load();
     } catch (err) {
@@ -427,25 +431,13 @@ export default function AdminUsersPage() {
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--color-text-muted)" }}>
-              New team
-            </label>
-            <input
-              type="text"
-              value={newTeamName}
-              onChange={(e) => setNewTeamName(e.target.value)}
-              placeholder="e.g. Team 7"
-              style={{ width: 260 }}
-            />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--color-text-muted)" }}>
-              Managed by
+              New team for
             </label>
             <select
               value={newTeamManager}
               onChange={(e) => setNewTeamManager(e.target.value)}
               aria-label="Manager for the new team"
-              style={{ minWidth: 240 }}
+              style={{ minWidth: 300 }}
             >
               <option value="">Choose a Migration Manager…</option>
               {managerOptions.map((m) => (
@@ -455,8 +447,14 @@ export default function AdminUsersPage() {
                 </option>
               ))}
             </select>
+            {/* Show the resulting name before they commit, so the derivation is not a surprise. */}
+            <span style={{ fontSize: 11.5, color: "var(--color-text-faint)", minHeight: 15 }}>
+              {newTeamManager
+                ? `Will be called "${teamNameForManager(newTeamManager)}"`
+                : "The team is named after its manager."}
+            </span>
           </div>
-          <button className="btn" type="submit" disabled={teamSaving || !newTeamName.trim()}>
+          <button className="btn" type="submit" disabled={teamSaving || !newTeamManager}>
             {teamSaving ? "Creating..." : "Add team"}
           </button>
         </form>
@@ -496,7 +494,11 @@ export default function AdminUsersPage() {
                   <div className="team-card-meta">
                     {/* The stored name is only worth repeating when it is NOT already the heading,
                         i.e. when managers named the card. It is what the CSV team column matches. */}
-                    {!unmanaged && <span className="team-card-tag">{t.name}</span>}
+                    {/* Only worth showing when it differs from the heading -- for a team created
+                        from its manager the two are identical, and printing both read as a bug. */}
+                    {!unmanaged && t.name !== teamDisplayName(t) && (
+                      <span className="team-card-tag">{t.name}</span>
+                    )}
                     {unmanaged && <span className="team-card-tag team-card-tag--warn">no manager yet</span>}
                     <span>
                       {engineers.length} engineer{engineers.length === 1 ? "" : "s"}
@@ -628,18 +630,16 @@ export default function AdminUsersPage() {
                   </span>
                 );
               }
+              // Read-only on purpose. This was an editable <select>, which commits the moment its
+              // value changes -- so scrolling the page with the control focused, or a mis-aimed
+              // click, reassigned a person's team instantly and silently. Team changes now go
+              // through the Edit dialog, where they are deliberate and reviewable before saving.
+              const team = teams.find((t) => t.id === u.teamId);
+              if (!team) {
+                return <span style={{ color: "var(--color-text-faint)", fontSize: 12.5 }}>No team</span>;
+              }
               return (
-                <select
-                  className="team-cell-select"
-                  value={u.teamId || ""}
-                  onChange={(e) => handleAssignTeam(u, e.target.value)}
-                  aria-label={`Team for ${u.email}`}
-                >
-                  <option value="">No team</option>
-                  {teams.map((t) => (
-                    <option key={t.id} value={t.id}>{teamDisplayName(t)} ({t.name})</option>
-                  ))}
-                </select>
+                <span title={`${team.name} — edit via the pencil button`}>{teamDisplayName(team)}</span>
               );
             },
           },
@@ -685,7 +685,7 @@ export default function AdminUsersPage() {
       </div>
 
       {editUser && (
-        <Modal title="Edit role" onClose={closeEdit} width={420} closeIcon>
+        <Modal title="Edit user" onClose={closeEdit} width={420} closeIcon>
           <form onSubmit={handleEditSave}>
             <p style={{ marginTop: 0, marginBottom: 14, color: "var(--color-text-muted)", fontSize: 13 }}>
               {editUser.email}
@@ -701,13 +701,40 @@ export default function AdminUsersPage() {
               </select>
             </div>
 
+            {/* Only offered for the roles a team means anything for. An Admin/Dev Lead/QA Lead has
+                no team by design, so showing the control would imply otherwise. */}
+            {TEAM_ROLES.includes(editRole) && (
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Team</label>
+                <select value={editTeamId} onChange={(e) => setEditTeamId(e.target.value)} style={{ width: "100%" }}>
+                  <option value="">No team</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={String(t.id)}>
+                      {teamDisplayName(t)} ({t.name})
+                    </option>
+                  ))}
+                </select>
+                <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "var(--color-text-faint)" }}>
+                  A Migration Manager's team decides which engineers their projects can assign.
+                </p>
+              </div>
+            )}
+
             {editError && <div className="inline-hint" style={{ marginBottom: 12 }}>{editError}</div>}
 
             <div className="form-actions" style={{ justifyContent: "flex-end", gap: 8 }}>
               <button type="button" className="btn secondary" onClick={closeEdit} disabled={editSaving}>
                 Cancel
               </button>
-              <button type="submit" className="btn" disabled={editSaving || editRole === editUser.role}>
+              <button
+                type="submit"
+                className="btn"
+                disabled={
+                  editSaving ||
+                  (editRole === editUser.role &&
+                    editTeamId === (editUser.teamId ? String(editUser.teamId) : ""))
+                }
+              >
                 {editSaving ? "Saving..." : "Save"}
               </button>
             </div>
