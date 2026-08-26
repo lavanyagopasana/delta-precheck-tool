@@ -77,6 +77,7 @@ Project (1) ──< Server (N) ──< WorkspaceCombination (N)   ["Teams to Sla
                                                combination is matched by NAME string, not a FK]
 
 AppUser (email → role)  ── independent of Azure AD identity; drives all authorization
+   └──1 Team (nullable)  ── which engineers a Migration Manager may assign to a project
 ```
 
 **The pre-check and sign-off chain are per `WorkspaceCombination`, not per `Server`.** A server
@@ -105,6 +106,17 @@ history holds it — but somebody has to fill the entire checklist in again. A c
 `currentCycleNumber: 2` with `submissionStatus: NOT_STARTED` and `completedCycleCount: 0` is the
 normal post-decline state, not a bug (`completedCycleCount` only counts cycles whose status is
 `COMPLETED`, and a declined cycle never is).
+
+**Teams scope the engineer picker.** `Team` is a real entity; membership is `AppUser.team` (nullable)
+and who *manages* a team is derived from each member's `role`, never stored twice. A team can have
+more than one Migration Manager (Teams 5 and 6 in the real roster do), and both see the same engineer
+pool. `GET /api/roster` carries `engineersByManager` (manager email → their team's engineer emails)
+alongside the flat lists; `ProjectDetailsPage` scopes its picker with
+`engineersByManager[manager] ?? engineers`. **An absent key deliberately means "show everyone",** not
+"show nobody" — a strict filter would leave an empty dropdown and block assignment with nothing on
+screen explaining why. Team reads are open to any allowlisted caller; every write is ADMIN-only,
+because team membership decides which engineers a manager can assign and a manager editing teams
+could widen their own pool. Seed data and the three corrected email addresses: `docs/seed/`.
 
 Authorization is a separate concern from authentication: any valid Microsoft account can sign in,
 but `AppUserService` (backed by the `app_users` table) decides what they can actually do via

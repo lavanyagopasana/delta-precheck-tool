@@ -73,8 +73,17 @@ public class SignOffService {
                 ? combination.getServer().getProject().getMigrationManagerName() : null;
         signOffRepository.save(new SignOff(combination, SignOffRole.MIGRATION_LEAD,
                 managerEmail != null ? managerEmail : "Not assigned"));
-        signOffRepository.save(new SignOff(combination, SignOffRole.DEV_LEAD, "Any Dev Lead"));
-        signOffRepository.save(new SignOff(combination, SignOffRole.QA_LEAD, "Any QA Lead"));
+        Project chainProject = combination.getServer().getProject();
+        String devLead = chainProject != null ? chainProject.getDevLeadEmail() : null;
+        String qaLead = chainProject != null ? chainProject.getQaLeadEmail() : null;
+        signOffRepository.save(new SignOff(combination, SignOffRole.DEV_LEAD,
+                StringUtils.hasText(devLead) ? devLead : "Any Dev Lead"));
+        signOffRepository.save(new SignOff(combination, SignOffRole.QA_LEAD,
+                StringUtils.hasText(qaLead) ? qaLead : "Any QA Lead"));
+    }
+
+    private List<String> assignedLeadOrPool(String assignedEmail, AppUserRole role) {
+        return StringUtils.hasText(assignedEmail) ? List.of(assignedEmail) : appUserService.emailsForRole(role);
     }
 
     // Tears down the approval chain when a pre-check is withdrawn (un-submitted) before anyone has
@@ -269,8 +278,12 @@ public class SignOffService {
     }
 
     // Admins can act on any step as an override. Otherwise: Migration Manager must be the exact
-    // person the project names; Dev/QA Lead just needs to currently hold that AppUserRole -- either
-    // of the two people in that pool can act, since it isn't assigned to one specific name.
+    // person the project names, and Dev/QA Lead must be the person the project ASSIGNS -- falling
+    // back to "anyone holding that role" only when the project assigns nobody.
+    //
+    // That fallback is what keeps every project created before lead assignment existed working: a
+    // null devLeadEmail/qaLeadEmail means unassigned, not "nobody qualifies", so the chain still
+    // moves. Assigning someone narrows the step to them; clearing it widens it back.
     private boolean isEligible(SignOffRole role, String actorEmail, WorkspaceCombination combination) {
         if (actorEmail == null) {
             return false;
@@ -278,13 +291,24 @@ public class SignOffService {
         if (appUserService.isAdmin(actorEmail)) {
             return true;
         }
-        Server server = combination.getServer();
+        Project project = combination.getServer().getProject();
         return switch (role) {
-            case MIGRATION_LEAD -> server.getProject() != null
-                    && actorEmail.equalsIgnoreCase(server.getProject().getMigrationManagerName());
-            case DEV_LEAD -> appUserService.roleOf(actorEmail).filter(r -> r == AppUserRole.DEV_LEAD).isPresent();
-            case QA_LEAD -> appUserService.roleOf(actorEmail).filter(r -> r == AppUserRole.QA_LEAD).isPresent();
+            case MIGRATION_LEAD -> project != null
+                    && actorEmail.equalsIgnoreCase(project.getMigrationManagerName());
+            case DEV_LEAD -> holdsAssignedLead(actorEmail, AppUserRole.DEV_LEAD,
+                    project == null ? null : project.getDevLeadEmail());
+            case QA_LEAD -> holdsAssignedLead(actorEmail, AppUserRole.QA_LEAD,
+                    project == null ? null : project.getQaLeadEmail());
         };
+    }
+
+    // The role check still applies when somebody IS assigned: a person since moved off DEV_LEAD must
+    // not keep approving Dev Lead steps just because an old project still names them.
+    private boolean holdsAssignedLead(String actorEmail, AppUserRole requiredRole, String assignedEmail) {
+        if (appUserService.roleOf(actorEmail).filter(r -> r == requiredRole).isEmpty()) {
+            return false;
+        }
+        return !StringUtils.hasText(assignedEmail) || actorEmail.equalsIgnoreCase(assignedEmail);
     }
 
     // Rejects the action if this role isn't the one currently allowed to act -- either someone
@@ -430,8 +454,11 @@ public class SignOffService {
         List<String> recipients = switch (nextRole) {
             case MIGRATION_LEAD -> StringUtils.hasText(project.getMigrationManagerName())
                     ? List.of(project.getMigrationManagerName()) : List.of();
-            case DEV_LEAD -> appUserService.emailsForRole(AppUserRole.DEV_LEAD);
-            case QA_LEAD -> appUserService.emailsForRole(AppUserRole.QA_LEAD);
+            // Only the assigned lead is mailed. With nobody assigned this still falls back to the
+            // whole pool -- otherwise turning this on would silently stop notifying anyone at all on
+            // every project that predates it.
+            case DEV_LEAD -> assignedLeadOrPool(project.getDevLeadEmail(), AppUserRole.DEV_LEAD);
+            case QA_LEAD -> assignedLeadOrPool(project.getQaLeadEmail(), AppUserRole.QA_LEAD);
         };
         int workspacePairCount = combinationService.pairCount(combination);
         String submittedBy = preCheckSubmissionRepository.findByCombinationId(combination.getId())

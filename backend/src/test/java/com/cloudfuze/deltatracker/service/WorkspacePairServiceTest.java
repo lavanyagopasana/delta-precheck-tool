@@ -4,6 +4,7 @@ import com.cloudfuze.deltatracker.dto.WorkspacePairImportResultDto;
 import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.entity.WorkspacePair;
 import com.cloudfuze.deltatracker.repository.ProjectRepository;
+import com.cloudfuze.deltatracker.repository.WorkspaceCombinationRepository;
 import com.cloudfuze.deltatracker.repository.ServerRepository;
 import com.cloudfuze.deltatracker.repository.WorkspacePairRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,13 +46,17 @@ class WorkspacePairServiceTest {
     @Mock private ServerRepository serverRepository;
     @Mock private WorkspaceCombinationService workspaceCombinationService;
     @Mock private ProjectRepository projectRepository;
+    @Mock private WorkspaceCombinationRepository workspaceCombinationRepository;
+    @Mock private ServerPurgeService serverPurgeService;
+    @Mock private ServerService serverService;
 
     private WorkspacePairService service;
     private Server server;
 
     @BeforeEach
     void setUp() {
-        service = new WorkspacePairService(workspacePairRepository, serverRepository, workspaceCombinationService, projectRepository);
+        service = new WorkspacePairService(workspacePairRepository, serverRepository, workspaceCombinationService,
+                projectRepository, workspaceCombinationRepository, serverPurgeService, serverService);
         server = new Server("SRV-1");
         server.setId(SID);
 

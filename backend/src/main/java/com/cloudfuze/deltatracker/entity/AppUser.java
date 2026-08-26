@@ -25,6 +25,13 @@ public class AppUser {
     @Column(nullable = false)
     private AppUserRole role = AppUserRole.MIGRATION_ENGINEER;
 
+    // Nullable on purpose: ADMIN/DEV_LEAD/QA_LEAD sit outside the team structure, and an engineer
+    // can be on the allowlist before anyone decides which team they belong to. LAZY because the
+    // roster/allowlist queries read every user and almost none of them need the team row.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "team_id")
+    private Team team;
+
     @Column(name = "added_by")
     private String addedBy;
 

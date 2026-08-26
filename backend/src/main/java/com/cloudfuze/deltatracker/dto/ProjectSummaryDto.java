@@ -23,6 +23,9 @@ public class ProjectSummaryDto {
     private long openEscalationCount;
     private List<String> migrationManagers;
     private String migrationManagerName;
+    // Null means nobody is assigned, in which case any holder of that role may approve that step.
+    private String devLeadEmail;
+    private String qaLeadEmail;
     private List<String> engineerEmails;
     private long devApprovalsDone;
     private long devApprovalsPending;

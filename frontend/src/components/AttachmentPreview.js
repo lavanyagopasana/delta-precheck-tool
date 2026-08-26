@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { FILE_BASE } from "../api/client";
+import { useToast } from "./Toast";
 
 // How each extension should be PRESENTED. This is not an allowlist -- FileStorageService decides what
 // may be uploaded. Anything not listed here still previews, just as a download card rather than a
@@ -14,7 +15,12 @@ const KIND_BY_EXTENSION = {
   // as images would reliably produce the broken-image icon this component now guards against, so
   // they're presented as downloads on purpose.
   pdf: "pdf",
-  txt: "text", csv: "text", tsv: "text", log: "text", json: "text", md: "text", har: "text",
+  txt: "text", log: "text", json: "text", md: "text",
+  // csv/tsv/har are text-ish but Chrome (and most browsers) downloads them rather than rendering them
+  // inline, unlike txt/json/md -- an <iframe> pointed at one silently downloads the file and shows
+  // nothing, with no way to detect that and fall back (unlike <img>/<video>'s onError). Rather than a
+  // permanently blank modal, these skip the preview modal entirely and download immediately.
+  csv: "download", tsv: "download", har: "download",
   mp4: "video", mov: "video", webm: "video", m4v: "video", mkv: "video",
   mp3: "audio", wav: "audio", m4a: "audio",
 };
@@ -30,6 +36,7 @@ function iconFor(kind) {
     case "image": return "🖼️";
     case "pdf": return "📕";
     case "text": return "📄";
+    case "download": return "📄";
     case "video": return "🎬";
     case "audio": return "🎧";
     default: return "📎";
@@ -38,6 +45,7 @@ function iconFor(kind) {
 
 export default function AttachmentPreview({ filePath, fileName, caption, variant = "chip", onRemove, showName = true }) {
   const [open, setOpen] = useState(false);
+  const showToast = useToast();
   // A file can be a perfectly valid upload and still be undecodable by the browser -- a truncated or
   // corrupt PNG, or a non-image renamed to .png. Previously both <img> tags had no onError, so that
   // case rendered the browser's broken-image icon with no way to reach the file. Tracking the failure
@@ -71,6 +79,19 @@ export default function AttachmentPreview({ filePath, fileName, caption, variant
       <div
         onClick={(e) => {
           e.stopPropagation();
+          if (kind === "download") {
+            // No modal to open -- these download the moment the browser handles the URL, so a
+            // preview modal on top of that would only ever show a blank iframe with no way to
+            // know the download already happened.
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = displayName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            showToast(`${displayName} downloaded.`, "success");
+            return;
+          }
           setOpen(true);
         }}
         style={

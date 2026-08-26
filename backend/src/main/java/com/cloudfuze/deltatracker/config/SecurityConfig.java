@@ -232,6 +232,14 @@ public class SecurityConfig {
                         // The per-action admin bypasses live in the services (ownership lock, submitted lock).
                         .requestMatchers("/api/combinations/*/precheck-items/**", "/api/combinations/*/precheck-submission/**")
                                 .access(roleRequired(AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER))
+                        // Teams: any allowlisted caller may READ them, because the project dashboard
+                        // needs team membership to scope its engineer picker and every role opens that
+                        // page. Every WRITE is ADMIN-only -- team membership decides which engineers a
+                        // manager can assign, so letting a manager edit teams would let them widen
+                        // their own pool. TeamController.requireAdmin repeats the check as
+                        // defence-in-depth, matching AdminController.
+                        .requestMatchers(HttpMethod.GET, "/api/teams").access(allowlistRequired())
+                        .requestMatchers("/api/teams/**", "/api/teams").access(roleRequired(AppUserRole.ADMIN))
                         .anyRequest().access(allowlistRequired()))
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.decoder(azureJwtDecoder())));
 

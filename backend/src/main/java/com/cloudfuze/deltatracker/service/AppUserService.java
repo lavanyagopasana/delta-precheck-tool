@@ -5,13 +5,13 @@ import com.cloudfuze.deltatracker.dto.AppUserDto;
 import com.cloudfuze.deltatracker.dto.AppUserImportResultDto;
 import com.cloudfuze.deltatracker.entity.AppUser;
 import com.cloudfuze.deltatracker.entity.AppUserRole;
+import com.cloudfuze.deltatracker.entity.Team;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
 import com.cloudfuze.deltatracker.repository.AppUserRepository;
+import com.cloudfuze.deltatracker.repository.TeamRepository;
 import com.cloudfuze.deltatracker.util.CsvUtils;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.cache.Cache;
-import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 
@@ -50,11 +51,14 @@ public class AppUserService {
     @Value("${azure.auto-provision-domain:cloudfuze.com}")
     private String autoProvisionDomain;
 
-    private final CacheManager cacheManager;
+    private final RosterCache rosterCache;
+    private final TeamRepository teamRepository;
 
-    public AppUserService(AppUserRepository appUserRepository, CacheManager cacheManager) {
+    public AppUserService(AppUserRepository appUserRepository, RosterCache rosterCache,
+                           TeamRepository teamRepository) {
         this.appUserRepository = appUserRepository;
-        this.cacheManager = cacheManager;
+        this.rosterCache = rosterCache;
+        this.teamRepository = teamRepository;
     }
 
     public List<AppUserDto> list() {
@@ -73,12 +77,10 @@ public class AppUserService {
 
     // Drop the whole roster cache whenever the app_users table changes. Called from every write
     // path (manual rather than @CacheEvict so it also fires for the internal importCsv -> upsert
-    // self-call, which a proxy-based annotation would silently miss).
+    // self-call, which a proxy-based annotation would silently miss). The clearing itself lives in
+    // RosterCache because TeamService must evict the same cache for team edits.
     private void evictRosterCache() {
-        Cache cache = cacheManager.getCache(CacheConfig.ROSTER_EMAILS_CACHE);
-        if (cache != null) {
-            cache.clear();
-        }
+        rosterCache.evict();
     }
 
     public Optional<AppUserRole> roleOf(String email) {
@@ -124,7 +126,7 @@ public class AppUserService {
     // actingAdminEmail is the admin performing the change (from AdminController.requireAdmin). It's
     // stored as addedBy for brand-new rows, and used to guard the scenarios where editing a user
     // isn't safe -- so "editing users" is deliberately NOT allowed for every user/every change.
-    public AppUserDto upsert(String email, AppUserRole role, String actingAdminEmail) {
+    public AppUser upsertEntity(String email, AppUserRole role, String actingAdminEmail) {
         Optional<AppUser> existing = appUserRepository.findByEmailIgnoreCase(email);
 
         if (existing.isPresent()) {
@@ -144,13 +146,30 @@ public class AppUserService {
 
         AppUser user = existing.orElseGet(() -> new AppUser(email, role, actingAdminEmail));
         user.setRole(role);
-        AppUserDto saved = AppUserDto.fromEntity(appUserRepository.save(user));
+        AppUser saved = appUserRepository.save(user);
         evictRosterCache();
         return saved;
     }
 
-    // One person per row. A header row is auto-detected if any cell normalizes to "email" or "role";
-    // otherwise every row (including the first) is data with the email in the first column.
+    // DTO-returning wrapper for the controller. upsertEntity above returns the saved row itself,
+    // which importCsv needs so it can set the team without re-reading what it just wrote.
+    public AppUserDto upsert(String email, AppUserRole role, String actingAdminEmail) {
+        return AppUserDto.fromEntity(upsertEntity(email, role, actingAdminEmail));
+    }
+
+    // One person per row. A header row is auto-detected if any cell normalizes to "email", "role" or
+    // "team"; otherwise every row (including the first) is data with the email in the first column.
+    //
+    // Team resolution per row: an optional "team" column names a team, matched case-insensitively.
+    // A name that doesn't exist yet is CREATED, and every team created this way is listed in the
+    // result's createdTeams.
+    //
+    // This deliberately does not error on an unknown team. Requiring the teams to exist first meant
+    // onboarding a whole org was two manual steps -- hand-create six teams, then import -- and got
+    // the ordering wrong often enough to be the main friction in setting this up at all. The typo
+    // risk that argued for erroring is covered by reporting instead: a mistyped cell surfaces as a
+    // team nobody meant to create, both in createdTeams and in the Teams panel, rather than silently
+    // leaving that person team-less.
     //
     // Role resolution per row: the row's own "role" cell wins, falling back to defaultRole when that
     // cell is blank or the column is absent. defaultRole may be null, which is valid as long as every
@@ -171,6 +190,7 @@ public class AppUserService {
         // falls back to defaultRole, so existing single-role files keep working unchanged.
         int emailColumn = 0;
         int roleColumn = -1;
+        int teamColumn = -1;
         int startRow = 0;
         List<String> header = CsvUtils.parseLine(lines.get(0));
         for (int i = 0; i < header.size(); i++) {
@@ -181,10 +201,15 @@ public class AppUserService {
             } else if (normalized.equals("role")) {
                 roleColumn = i;
                 startRow = 1;
+            } else if (normalized.equals("team")) {
+                teamColumn = i;
+                startRow = 1;
             }
         }
 
         List<String> errors = new ArrayList<>();
+        // Ordered + de-duplicated: a team named by 6 rows must be created once and reported once.
+        LinkedHashSet<String> createdTeams = new LinkedHashSet<>();
         int totalRows = 0;
         int created = 0;
         int updated = 0;
@@ -219,9 +244,31 @@ public class AppUserService {
                 continue;
             }
 
+            // Resolved BEFORE the upsert so an unknown team name doesn't half-apply the row --
+            // otherwise the person would be created/updated and then reported as an error.
+            Team rowTeam = null;
+            String rawTeam = teamColumn >= 0 && teamColumn < fields.size() ? fields.get(teamColumn).trim() : "";
+            if (StringUtils.hasText(rawTeam)) {
+                Optional<Team> found = teamRepository.findByNameIgnoreCase(rawTeam);
+                if (found.isPresent()) {
+                    rowTeam = found.get();
+                } else {
+                    rowTeam = teamRepository.save(new Team(rawTeam, addedBy));
+                    createdTeams.add(rowTeam.getName());
+                }
+            }
+
             boolean existed = appUserRepository.existsByEmailIgnoreCase(email);
             try {
-                upsert(email, rowRole, addedBy);
+                AppUser stored = upsertEntity(email, rowRole, addedBy);
+                if (rowTeam != null) {
+                    // Set on the row upsertEntity just returned rather than re-reading it. Applied as
+                    // a second save because upsert owns the role guards (self-demotion, last admin)
+                    // and stays team-agnostic, so team assignment can't be blocked by them.
+                    stored.setTeam(rowTeam);
+                    appUserRepository.save(stored);
+                    evictRosterCache();
+                }
             } catch (ApiException e) {
                 // Keep processing the rest of the batch -- one guarded row (e.g. the acting admin's
                 // own, or a last-admin demotion) must not fail the whole import.
@@ -240,6 +287,11 @@ public class AppUserService {
         result.setCreatedCount(created);
         result.setUpdatedCount(updated);
         result.setErrors(errors);
+        result.setCreatedTeams(new ArrayList<>(createdTeams));
+        // A new team changes which engineers a manager may assign, so the roster map is now stale.
+        if (!createdTeams.isEmpty()) {
+            evictRosterCache();
+        }
         return result;
     }
 

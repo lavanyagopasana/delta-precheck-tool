@@ -219,11 +219,32 @@ class ServerPurgeServiceTest {
     void clearsOrphanedLegacyEscalationRowsBeforeDeletingTheServer() {
         // ddl-auto=update never dropped the pre-rename "escalations" table or its FK, so a leftover row
         // still blocks deleting the server it points at with a raw constraint error.
+        //
+        // The table-existence probe must be stubbed PRESENT for this case: the cleanup is now guarded,
+        // because ddl-auto never CREATES that table either, so on any database newer than the rename
+        // the unguarded DELETE failed with `relation "escalations" does not exist`. This test is the
+        // older-database half of that pair; ServerPurgeLegacyTableTest covers both halves for real
+        // against H2, which is what a mocked JdbcTemplate cannot do.
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class))).thenReturn(1);
+
         service.purge(server);
 
         InOrder order = inOrder(jdbcTemplate, serverRepository);
         order.verify(jdbcTemplate).update(anyString(), eq(SID));
         order.verify(serverRepository).delete(server);
+    }
+
+    @Test
+    void skipsTheLegacyEscalationsCleanupWhenThatTableDoesNotExist() {
+        // The regression that made every project/server delete a 500: no entity maps "escalations",
+        // so ddl-auto never creates it, and the raw DELETE threw BadSqlGrammarException -- which no
+        // GlobalExceptionHandler case matches, surfacing as "Something went wrong. Please try again."
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class))).thenReturn(0);
+
+        service.purge(server);
+
+        verify(jdbcTemplate, never()).update(anyString(), eq(SID));
+        verify(serverRepository).delete(server);
     }
 
     @Test

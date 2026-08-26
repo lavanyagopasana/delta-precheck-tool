@@ -83,23 +83,42 @@ public class ServerPurgeService {
     public void purge(Server server) {
         List<WorkspaceCombination> combinations = workspaceCombinationRepository.findByServerId(server.getId());
 
-        for (WorkspaceCombination combination : combinations) {
-            purgeDeltaCycles(combination.getId());
-
-            List<PreCheckItem> items = preCheckItemRepository.findByCombinationId(combination.getId());
-            items.forEach(item -> fileStorageService.delete(item.getEvidenceFilePath()));
-            preCheckItemRepository.deleteAll(items);
-
-            preCheckSubmissionRepository.findByCombinationId(combination.getId())
-                    .ifPresent(preCheckSubmissionRepository::delete);
-            signOffRepository.deleteAll(signOffRepository.findByCombinationId(combination.getId()));
-            ticketRepository.deleteAll(ticketRepository.findByCombinationId(combination.getId()));
-        }
+        combinations.forEach(this::purgeCombinationChildren);
 
         workspaceCombinationRepository.deleteAll(combinations);
         deleteOrphanedEscalationRows(server.getId());
         // Workspace pairs cascade via Server's @OneToMany(orphanRemoval = true).
         serverRepository.delete(server);
+    }
+
+    /**
+     * Erases everything hanging off ONE combination, then the combination row itself.
+     *
+     * <p>Exists so deleting a single combination and deleting a whole server share one definition of
+     * "everything under a combination". Before this, deleting a combination removed only its
+     * WorkspacePair rows and left the combination row plus its checklist, sign-offs, tickets and
+     * Delta cycles behind -- the UI lists combinations from the WorkspaceCombination table, so the
+     * combination simply reappeared and looked undeletable.
+     *
+     * <p>Does NOT touch WorkspacePair (they hang off Server, not Combination, and are matched by
+     * name) and does not recompute the server rollup -- the caller owns both.
+     */
+    public void purgeCombination(WorkspaceCombination combination) {
+        purgeCombinationChildren(combination);
+        workspaceCombinationRepository.delete(combination);
+    }
+
+    private void purgeCombinationChildren(WorkspaceCombination combination) {
+        purgeDeltaCycles(combination.getId());
+
+        List<PreCheckItem> items = preCheckItemRepository.findByCombinationId(combination.getId());
+        items.forEach(item -> fileStorageService.delete(item.getEvidenceFilePath()));
+        preCheckItemRepository.deleteAll(items);
+
+        preCheckSubmissionRepository.findByCombinationId(combination.getId())
+                .ifPresent(preCheckSubmissionRepository::delete);
+        signOffRepository.deleteAll(signOffRepository.findByCombinationId(combination.getId()));
+        ticketRepository.deleteAll(ticketRepository.findByCombinationId(combination.getId()));
     }
 
     // Per-cycle snapshot rows (checklist items + sign-offs) point at the cycle, which points at the
@@ -132,7 +151,40 @@ public class ServerPurgeService {
     // drops old tables or their foreign keys, so a row left over from that era still blocks deleting
     // the server it points at with a raw FK-constraint error. Plain JDBC since there's no JPA
     // repository (and shouldn't be one) for a table nothing in the codebase otherwise touches.
+    //
+    // MUST be guarded by the existence check. Because no entity maps it, ddl-auto=update never
+    // CREATES this table either -- it exists only in databases old enough to predate the rename. On
+    // any database created since (every fresh install, and the PostgreSQL database this app was
+    // migrated onto in 2026-08), the statement below fails with `relation "escalations" does not
+    // exist`. That is a BadSqlGrammarException, which no handler in GlobalExceptionHandler matches,
+    // so it fell through to handleGeneric as a 500 "Something went wrong. Please try again." --
+    // making project deletion, server deletion and decommissioning all impossible, for admins
+    // included, with no usable error message.
+    //
+    // Checking first rather than catching is required, not stylistic: in PostgreSQL a failed
+    // statement aborts the whole transaction, so a try/catch here would still leave every later
+    // statement in this purge failing with "current transaction is aborted".
     private void deleteOrphanedEscalationRows(Long serverId) {
+        if (!legacyEscalationsTableExists()) {
+            return;
+        }
         jdbcTemplate.update("DELETE FROM escalations WHERE server_id = ?", serverId);
+    }
+
+    // Cached after the first look: no code path creates or drops this table, so the answer cannot
+    // change while the app is running. information_schema is used because it is understood by both
+    // PostgreSQL (production) and H2 (tests); table_name is lowercased since H2 stores it uppercase.
+    private volatile Boolean legacyEscalationsTableExists;
+
+    private boolean legacyEscalationsTableExists() {
+        Boolean cached = legacyEscalationsTableExists;
+        if (cached == null) {
+            Integer found = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM information_schema.tables WHERE LOWER(table_name) = 'escalations'",
+                    Integer.class);
+            cached = found != null && found > 0;
+            legacyEscalationsTableExists = cached;
+        }
+        return cached;
     }
 }
