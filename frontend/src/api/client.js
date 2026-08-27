@@ -102,6 +102,11 @@ export const updateProjectAssignments = (id, payload) =>
 export const updateProjectDetails = (id, payload) =>
   client.patch(`/projects/${id}`, payload).then((r) => r.data);
 export const removeProject = (id) => client.delete(`/projects/${id}`).then((r) => r.data);
+// Which Metabase database holds this project's migration data. Its own endpoint rather than part of
+// updateProjectDetails, because that one only lets a non-admin edit a project with no servers yet and
+// this field is needed once servers exist. Send "" to clear it.
+export const updateProjectMetabaseDatabase = (id, metabaseDatabaseName) =>
+  client.patch(`/projects/${id}/metabase`, { metabaseDatabaseName }).then((r) => r.data);
 
 // Pulls the project list from the PMO tool on demand (ADMIN only). A background poll already does
 // this every 5 minutes -- this is for an admin who has just created a project over there and doesn't

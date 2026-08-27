@@ -49,6 +49,10 @@ public class ProjectSummaryDto {
     private String externalManagerName;
     private String externalStatus;
     private String externalPhase;
+    // The Metabase database this project's migration data lives in, or null if nobody has set it yet.
+    // Null is what the frontend reads as "Get process status has nothing to query" -- see
+    // Project.metabaseDatabaseName for why this can't be derived from the PMO record.
+    private String metabaseDatabaseName;
     // True when the project has servers and every one of them has completed its FINAL Delta -- the
     // whole project's migration is done. Note decommissioning is actioned per server now, so this is a
     // rollup for the Projects list rather than something you can act on directly.

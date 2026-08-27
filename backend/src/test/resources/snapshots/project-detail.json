@@ -25,6 +25,7 @@
   "externalManagerName" : null,
   "externalStatus" : null,
   "externalPhase" : null,
+  "metabaseDatabaseName" : null,
   "decommissionReady" : false,
   "serversReadyToDecommission" : 0,
   "serversDecommissioned" : 0,

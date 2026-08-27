@@ -217,6 +217,14 @@ public class SecurityConfig {
                         // Delta-initiated audit guard are enforced in ProjectService.delete.
                         .requestMatchers(HttpMethod.DELETE, "/api/projects/*").access(roleRequired(
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER, AppUserRole.MIGRATION_ENGINEER))
+                        // Setting a project's Metabase database name. Needs its own matcher: a single
+                        // "*" matches one path segment, so the /api/projects/* rule below never covers
+                        // /api/projects/{id}/metabase and this would otherwise fall through to the
+                        // allowlist-only default. Same role set as editing a project; the per-project
+                        // check (admin / managing MM / assigned engineer -- deliberately NOT the
+                        // DEV_LEAD/QA_LEAD approvers) is in ProjectService.updateMetabaseDatabaseName.
+                        .requestMatchers(HttpMethod.PATCH, "/api/projects/*/metabase").access(roleRequired(
+                                AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER, AppUserRole.MIGRATION_ENGINEER))
                         // Edit project details -- gated to roles that can ever edit; the per-project
                         // check (admin / current MM / creator / assigned engineer) is in ProjectService.
                         .requestMatchers(HttpMethod.PATCH, "/api/projects/*").access(roleRequired(

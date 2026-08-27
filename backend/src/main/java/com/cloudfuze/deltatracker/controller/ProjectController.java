@@ -4,6 +4,7 @@ import com.cloudfuze.deltatracker.dto.CreateServerRequest;
 import com.cloudfuze.deltatracker.dto.ProjectAssignmentRequest;
 import com.cloudfuze.deltatracker.dto.ProjectCreateRequest;
 import com.cloudfuze.deltatracker.dto.ProjectDetailDto;
+import com.cloudfuze.deltatracker.dto.ProjectMetabaseRequest;
 import com.cloudfuze.deltatracker.dto.ProjectSummaryDto;
 import com.cloudfuze.deltatracker.dto.ProjectUpdateRequest;
 import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
@@ -75,6 +76,32 @@ public class ProjectController {
                                            @AuthenticationPrincipal Jwt jwt) {
         String email = JwtEmailUtil.extractEmail(jwt);
         return projectService.updateDetails(id, request, email, appUserService.roleOf(email).orElse(null));
+    }
+
+    // Set which Metabase database holds this project's migration data. Its own route rather than a
+    // field on PATCH /api/projects/{id}, because that endpoint only lets a non-admin edit a project
+    // with no servers yet -- and this field is only useful once servers exist. Permission (admin /
+    // this project's MM / an assigned engineer) is in ProjectService.updateMetabaseDatabaseName.
+    @PatchMapping("/{id}/metabase")
+    public ProjectSummaryDto updateMetabaseDatabase(@PathVariable Long id,
+                                                    @Valid @RequestBody ProjectMetabaseRequest request,
+                                                    @AuthenticationPrincipal Jwt jwt) {
+        String email = JwtEmailUtil.extractEmail(jwt);
+        return projectService.updateMetabaseDatabaseName(id, request, email,
+                appUserService.roleOf(email).orElse(null));
+    }
+
+    // Set which Metabase database holds this project's migration data. Its own route rather than a
+    // field on PATCH /api/projects/{id}: that endpoint only lets a non-admin edit a project with no
+    // servers yet, while this field is needed once servers exist. The per-project check (admin /
+    // managing MM / assigned engineer) is in ProjectService.updateMetabaseDatabaseName.
+    @PatchMapping("/{id}/metabase")
+    public ProjectSummaryDto updateMetabaseDatabase(@PathVariable Long id,
+                                                    @Valid @RequestBody ProjectMetabaseRequest request,
+                                                    @AuthenticationPrincipal Jwt jwt) {
+        String email = JwtEmailUtil.extractEmail(jwt);
+        return projectService.updateMetabaseDatabaseName(id, request, email,
+                appUserService.roleOf(email).orElse(null));
     }
 
     // Fine-grained authorization (creator / managing MM / admin, and the Delta-initiated audit

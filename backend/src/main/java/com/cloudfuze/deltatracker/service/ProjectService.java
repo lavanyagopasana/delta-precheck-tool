@@ -2,6 +2,7 @@ package com.cloudfuze.deltatracker.service;
 
 import com.cloudfuze.deltatracker.dto.ProjectAssignmentRequest;
 import com.cloudfuze.deltatracker.dto.ProjectDetailDto;
+import com.cloudfuze.deltatracker.dto.ProjectMetabaseRequest;
 import com.cloudfuze.deltatracker.dto.ProjectUpdateRequest;
 import com.cloudfuze.deltatracker.dto.ProjectSummaryDto;
 import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
@@ -287,6 +288,46 @@ public class ProjectService {
         return buildSummary(saved, serverRepository.findAll());
     }
 
+    // Set (or clear) the Metabase database this project's migration data lives in.
+    //
+    // Separate from updateDetails on purpose. updateDetails is gated by canDelete, which lets a
+    // non-admin edit only a project with NO servers yet -- exactly backwards for this field, which is
+    // needed once servers exist and there is migration data to look at. So this uses its own rule:
+    // the admin, the project's own Migration Manager, or an engineer on the project. DEV_LEAD and
+    // QA_LEAD can read it (it rides along on the project DTO) but not set it -- they are approvers,
+    // and pointing the tool at a different database is a change to what they are approving against.
+    //
+    // Blank clears it back to "not configured", which is the state the frontend's "Get process
+    // status" button refuses to act on.
+    public ProjectSummaryDto updateMetabaseDatabaseName(Long id, ProjectMetabaseRequest request,
+                                                        String callerEmail, AppUserRole callerRole) {
+        Project project = findOrThrow(id);
+        if (!canEditMetabaseDatabase(project, callerEmail, callerRole)) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Only this project's Migration Manager, an assigned engineer, or an admin can set its Metabase database.");
+        }
+        project.setMetabaseDatabaseName(blankToNull(request.getMetabaseDatabaseName()));
+        Project saved = projectRepository.save(project);
+        return buildSummary(saved, serverRepository.findAll());
+    }
+
+    private boolean canEditMetabaseDatabase(Project project, String callerEmail, AppUserRole callerRole) {
+        // Matches how the rest of the app degrades when auth isn't configured (see isVisible).
+        if (callerEmail == null) {
+            return true;
+        }
+        if (callerRole == null) {
+            return false;
+        }
+        return switch (callerRole) {
+            case ADMIN -> true;
+            case MIGRATION_MANAGER -> callerEmail.equalsIgnoreCase(project.getMigrationManagerName());
+            case MIGRATION_ENGINEER -> callerEmail.equalsIgnoreCase(project.getCreatedBy())
+                    || project.getEngineerEmails().stream().anyMatch(callerEmail::equalsIgnoreCase);
+            case DEV_LEAD, QA_LEAD -> false;
+        };
+    }
+
     // Deleting a project cascades to everything hanging off its servers (pre-check items + their
     // evidence files, the submission, the sign-off chain, escalations, and workspace pairs). Two
     // guards apply:
@@ -422,6 +463,7 @@ public class ProjectService {
         to.setExternalManagerName(from.getExternalManagerName());
         to.setExternalStatus(from.getExternalStatus());
         to.setExternalPhase(from.getExternalPhase());
+        to.setMetabaseDatabaseName(from.getMetabaseDatabaseName());
     }
 
     private ProjectSummaryDto buildSummary(Project project, List<Server> allServers) {
@@ -553,6 +595,7 @@ public class ProjectService {
         dto.setExternalManagerName(project.getExternalManagerName());
         dto.setExternalStatus(project.getExternalStatus());
         dto.setExternalPhase(project.getExternalPhase());
+        dto.setMetabaseDatabaseName(project.getMetabaseDatabaseName());
         // Ready to decommission once the project has servers, every one of them has at least one
         // combination, and every combination has completed its FINAL Delta.
         //

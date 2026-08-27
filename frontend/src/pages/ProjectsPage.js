@@ -8,7 +8,7 @@ import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
 import { TrashIcon, PlusIcon, EditIcon } from "../components/Icons";
 import { useConfirm } from "../components/ConfirmDialog";
-import { emailLocalPart } from "../utils/format";
+import { emailLocalPart, humanizePhase } from "../utils/format";
 
 const EMPTY_ROSTER = { migrationManagers: [], engineers: [] };
 
@@ -335,6 +335,15 @@ export default function ProjectsPage() {
             key: "externalCustomerName",
             label: "Customer",
             render: (p) => p.externalCustomerName || "-",
+          },
+          {
+            // PMO's own phase for the project (KICKOFF -> ... -> DELTA -> COMPLETED). Read-only: this
+            // tool does not drive it, PMO does, and it is refreshed on every poll. Useful here because
+            // DELTA is precisely the phase this tracker gates, so it says which projects are close to
+            // needing a pre-check. Blank for projects created by hand, which have no PMO phase at all.
+            key: "externalPhase",
+            label: "PMO Phase",
+            render: (p) => (p.externalPhase ? humanizePhase(p.externalPhase) : "-"),
           },
           { key: "serverCount", label: "No. Server URLs", filterable: false },
           {
