@@ -491,7 +491,7 @@ export default function TicketsPage() {
             key: "ticketUrl",
             label: "Ticket",
             render: (t) => (
-              <div style={{ maxWidth: 360, margin: "0 auto" }}>
+              <div style={{ maxWidth: 360 }}>
                 <a
                   href={t.ticketUrl}
                   target="_blank"

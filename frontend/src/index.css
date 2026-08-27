@@ -287,10 +287,18 @@ table {
 }
 
 th, td {
-  text-align: center;
-  padding: 13px 18px;
+  /* Left, not center: several columns across this app stack 2-3 lines of text in one cell
+     (Ticket Tracker's "Project · Server · Combination", the ticket link + summary, "Reported By"
+     + email + date) -- centered, each line has a different width and starts at a different x
+     position, so there's no consistent left edge for the eye to track down the column. Left
+     alignment is also the general convention for text-heavy tables; a column that's genuinely
+     just a short number or badge reads fine left-aligned too, so this is a safe default rather
+     than something that needs a per-column override. */
+  text-align: left;
+  padding: 15px 18px;
   border-bottom: 1px solid var(--color-border);
   font-size: 13.5px;
+  line-height: 1.45;
 }
 
 th {
@@ -1395,6 +1403,14 @@ input[type="checkbox"]:disabled {
   display: flex;
   align-items: center;
   gap: 12px;
+  /* Was nowrap (the default) with no fallback below 620px other than the dedicated mobile
+     stacking rules further down -- at an in-between width (title + two selects + a button don't
+     fit on one line, but the viewport isn't narrow enough to trigger the mobile rules), the title
+     and the filter/action row that were mid-row with the title still tried to share one line and
+     visibly overlapped instead of dropping to a second line. Wrapping unconditionally here changes
+     nothing wherever the row already fits (nothing wraps), and only takes effect exactly where it
+     was breaking before. */
+  flex-wrap: wrap;
 }
 
 .table-filter-input {

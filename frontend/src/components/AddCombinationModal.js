@@ -184,8 +184,11 @@ export default function AddCombinationModal({ server, open, onClose, onSaved }) 
                   width: 26,
                   height: 26,
                   marginLeft: "auto",
-                  color: "var(--color-red)",
-                  borderColor: "var(--color-red)",
+                  // Lighter than the standard bright --color-red used for real destructive
+                  // actions (delete server, decline) -- removing a not-yet-uploaded file is much
+                  // lower-stakes, so it doesn't need the same visual weight.
+                  color: "color-mix(in srgb, var(--color-red) 55%, white)",
+                  borderColor: "color-mix(in srgb, var(--color-red) 30%, white)",
                   background: "var(--color-red-soft)",
                 }}
                 title="Remove file"
