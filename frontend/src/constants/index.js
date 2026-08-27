@@ -39,6 +39,11 @@ export const DELTA_TYPE_ITEM = "Delta Type";
 export const DELTA_MESSAGE_SYNC_ITEM = "Delta Message Sync";
 export const PRE_DELTA_MIGRATION_ITEM = "Previous Delta Migration";
 
+// Content-only checklist item. Its NOT_APPLICABLE status exempts it from the evidence/note
+// requirement other items carry -- see PreCheckPanel's isNotApplicable and the backend mirror,
+// ServerService.HYPERLINKS_VERIFIED_ITEM / PreCheckSubmissionService.isHyperlinksNotApplicable.
+export const HYPERLINKS_VERIFIED_ITEM = "Hyperlinks Verified";
+
 // Renamed from "Pre Delta Migration" on 2026-08-06. The name IS the matching key and it's persisted
 // per row, so checklists seeded before the rename still carry the old string -- match both or the
 // item stops being conditionally hidden on existing combinations. Mirrors

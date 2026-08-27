@@ -19,6 +19,7 @@ import {
   MAX_EVIDENCE_FILE_SIZE_LABEL,
   DELTA_TYPE_ITEM,
   DELTA_MESSAGE_SYNC_ITEM,
+  HYPERLINKS_VERIFIED_ITEM,
   isPreDeltaMigrationItem,
 } from "../constants";
 import DeltaBadge from "./DeltaBadge";
@@ -86,7 +87,13 @@ function statusOptionsFor(itemName, productType) {
     return MESSAGE_ONETIME_MIGRATION_OPTIONS;
   }
   if (itemName === "Drive changes") {
-    return BASE_STATUS_OPTIONS.map((o) => (o.value === "COMPLETED" ? { ...o, label: "Not up to date" } : o));
+    return [
+      ...BASE_STATUS_OPTIONS.map((o) => (o.value === "COMPLETED" ? { ...o, label: "Not up to date" } : o)),
+      { value: "UP_TO_DATE", label: "Up to Date" },
+    ];
+  }
+  if (itemName === HYPERLINKS_VERIFIED_ITEM) {
+    return [...BASE_STATUS_OPTIONS, { value: "NOT_APPLICABLE", label: "Not Applicable" }];
   }
   if (isPreDeltaMigrationItem(itemName)) {
     return [...BASE_STATUS_OPTIONS, { value: "NOT_AVAILABLE", label: "Not available" }];
@@ -235,6 +242,11 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
 
   const displayName = evidenceDisplayName(item);
   const isDeltaType = item.itemName === DELTA_TYPE_ITEM;
+  // Hyperlinks Verified answered "Not Applicable": nothing to attach evidence for or note, since
+  // this combination has no hyperlinks to check at all. Mirrors
+  // PreCheckSubmissionService.isHyperlinksNotApplicable on the backend, which is what actually
+  // exempts it from the submit-time requirement -- this only controls what the form shows.
+  const isNotApplicable = item.itemName === HYPERLINKS_VERIFIED_ITEM && item.status === "NOT_APPLICABLE";
   const visual = statusVisual(item.status);
   // Spelled out at the point of choice rather than left to a tooltip: "Final delta" permanently closes
   // the combination, and an engineer picking it by mistake can only be undone by an admin.
@@ -297,6 +309,8 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
               variant="full"
               onRemove={locked ? undefined : removeEvidence}
             />
+          ) : isNotApplicable ? (
+            <div className="progress-label">No evidence needed -- not applicable to this combination.</div>
           ) : (
             !locked && (
               <div
@@ -322,7 +336,7 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
               </div>
             )
           )}
-          {!locked && !item.evidenceFilePath && (
+          {!locked && !item.evidenceFilePath && !isNotApplicable && (
             <div style={{ fontSize: 11, color: "var(--color-red)", marginTop: 4 }}>Evidence required</div>
           )}
 
@@ -344,7 +358,7 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
                 onBlur={handleNotesBlur}
                 rows={1}
               />
-              {!notesInput.trim() && (
+              {!notesInput.trim() && !isNotApplicable && (
                 <div style={{ fontSize: 11, color: "var(--color-red)", marginTop: 2 }}>Note required</div>
               )}
             </>
@@ -506,11 +520,15 @@ export default function PreCheckPanel({
   const canWithdraw = submission.status === "SUBMITTED" && (!AUTH_CONFIGURED || isAdmin);
   const completedCount = visibleItems.filter(isItemComplete).length;
   const allCompleted = visibleItems.length > 0 && completedCount === visibleItems.length;
+  // Hyperlinks Verified answered Not Applicable is exempt from both, same as PreCheckSubmissionService.
+  const isNotApplicableItem = (i) => i.itemName === HYPERLINKS_VERIFIED_ITEM && i.status === "NOT_APPLICABLE";
   const allHaveEvidence = visibleItems
     .filter((i) => i.itemName !== DELTA_TYPE_ITEM)
+    .filter((i) => !isNotApplicableItem(i))
     .every((i) => !!i.evidenceFilePath);
   const allHaveNotes = visibleItems
     .filter((i) => i.itemName !== DELTA_TYPE_ITEM)
+    .filter((i) => !isNotApplicableItem(i))
     .every((i) => !!i.notes?.trim());
   // Everything filled in correctly -- only then does the Submit button appear.
   const readyToSubmit = allCompleted && allHaveEvidence && allHaveNotes && hasMigrationManager && !!submittedByName;

@@ -84,10 +84,12 @@ public class PreCheckSubmissionService {
         boolean allHaveEvidence = items.stream()
                 .filter(i -> !ServerService.DELTA_TYPE_ITEM.equals(i.getItemName()))
                 .filter(i -> preDeltaMigrationRequired || !ServerService.isPreDeltaMigrationItem(i.getItemName()))
+                .filter(i -> !isHyperlinksNotApplicable(i))
                 .allMatch(i -> StringUtils.hasText(i.getEvidenceFilePath()));
         boolean allHaveNotes = items.stream()
                 .filter(i -> !ServerService.DELTA_TYPE_ITEM.equals(i.getItemName()))
                 .filter(i -> preDeltaMigrationRequired || !ServerService.isPreDeltaMigrationItem(i.getItemName()))
+                .filter(i -> !isHyperlinksNotApplicable(i))
                 .allMatch(i -> StringUtils.hasText(i.getNotes()));
 
         String migrationManagerEmail = combination.getServer().getProject() != null
@@ -275,5 +277,13 @@ public class PreCheckSubmissionService {
     // (Evidence is still required separately for every item except Delta Type.)
     private static boolean isItemComplete(PreCheckItem item) {
         return item.getStatus() != ItemStatus.NOT_STARTED;
+    }
+
+    // Hyperlinks Verified answered "Not Applicable" -- this combination has no hyperlinks to check,
+    // so there's nothing to attach evidence for or write a note about. Mirrors PreCheckPanel.js's
+    // own isNotApplicable check.
+    private static boolean isHyperlinksNotApplicable(PreCheckItem item) {
+        return ServerService.HYPERLINKS_VERIFIED_ITEM.equals(item.getItemName())
+                && item.getStatus() == ItemStatus.NOT_APPLICABLE;
     }
 }

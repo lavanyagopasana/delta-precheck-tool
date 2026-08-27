@@ -36,6 +36,9 @@ import java.util.stream.Collectors;
 public class ServerService {
 
     public static final String DELTA_TYPE_ITEM = "Delta Type";
+    // Content only. Its NOT_APPLICABLE status exempts it from the evidence/note requirement other
+    // items carry -- see PreCheckSubmissionService.submit.
+    public static final String HYPERLINKS_VERIFIED_ITEM = "Hyperlinks Verified";
     // Only required/counted when Delta Type's own status is PRE_DELTA -- see
     // PreCheckSubmissionService.isPreDeltaMigrationRequired.
     public static final String PRE_DELTA_MIGRATION_ITEM = "Previous Delta Migration";
@@ -66,7 +69,7 @@ public class ServerService {
             PRE_DELTA_MIGRATION_ITEM,
             "Data Verified",
             "Permissions Verified",
-            "Hyperlinks Verified",
+            HYPERLINKS_VERIFIED_ITEM,
             "Workspace Status Updated in DB",
             "Drive changes"
     );

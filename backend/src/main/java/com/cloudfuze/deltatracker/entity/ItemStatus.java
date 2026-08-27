@@ -25,5 +25,12 @@ public enum ItemStatus {
     NOT_ENABLED,
     // The Delta Type item's answer, which settles whether the cycle is a pre-delta or the final one.
     PRE_DELTA,
-    FINAL_DELTA
+    FINAL_DELTA,
+    // Content's Hyperlinks Verified only: this combination has no hyperlinks to check at all, so
+    // there's nothing to attach evidence for. Unlike NOT_AVAILABLE (a real negative answer that
+    // still needs evidence/a note like anything else), choosing this exempts the item from both --
+    // see PreCheckSubmissionService.submit.
+    NOT_APPLICABLE,
+    // Content's Drive changes only: the drive is already current, nothing needed updating.
+    UP_TO_DATE
 }
