@@ -4,6 +4,7 @@ import com.cloudfuze.deltatracker.dto.PmoProjectDto;
 import com.cloudfuze.deltatracker.dto.PmoSyncResultDto;
 import com.cloudfuze.deltatracker.entity.AppUserRole;
 import com.cloudfuze.deltatracker.entity.Project;
+import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.repository.ProjectRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeast;
@@ -433,6 +435,77 @@ class PmoSyncServiceTest {
         assertThat(result.getCreatedCount()).isEqualTo(1);
         assertThat(result.getErrors()).hasSize(1);
         assertThat(result.getErrors().get(0)).contains("boom").contains("constraint violation");
+    }
+
+    @Test
+    void aProjectCreatedInPmoAfterTheFirstSyncIsPickedUpByTheNextPollWithNoManualTrigger() {
+        // The whole point of the feature: somebody creates a project in PMO and it turns up here on
+        // its own. Poll 1 sees one project; PMO then gains a second; poll 2 must create it without
+        // anybody pressing "Sync from PMO".
+        when(pmoProjectClient.isConfigured()).thenReturn(true);
+        PmoProjectDto first = withManager("id-1", "vatica health", "Ajay Singh");
+        PmoProjectDto second = withManager("id-2", "brand new project", "Harika");
+
+        when(pmoProjectClient.fetchProjects()).thenReturn(List.of(first));
+        service.scheduledSync();
+        assertThat(savedProjects()).extracting(Project::getName).containsExactly("vatica health");
+
+        // PMO now returns both. The already-synced one must be found by externalId (not re-created).
+        Project alreadySynced = new Project();
+        alreadySynced.setId(1L);
+        alreadySynced.setExternalId("id-1");
+        alreadySynced.setName("vatica health");
+        alreadySynced.setExternalManagerName("Ajay Singh");
+        alreadySynced.setExternalStatus("ACTIVE");
+        alreadySynced.setExternalPhase("DELTA");
+        alreadySynced.setExternalCustomerName("Some Customer");
+        alreadySynced.setExternalMigrationTypes("Gmail - Gmail");
+        alreadySynced.setMigrationManagerName("ajay.singh@cloudfuze.com");
+        when(projectRepository.findByExternalId("id-1")).thenReturn(Optional.of(alreadySynced));
+        when(pmoProjectClient.fetchProjects()).thenReturn(List.of(first, second));
+
+        service.scheduledSync();
+
+        // Across both polls: one save for the first project, then one untouched re-save plus the new one.
+        assertThat(savedProjects()).extracting(Project::getName)
+                .containsExactly("vatica health", "vatica health", "brand new project");
+        assertThat(savedProjects().get(2).getExternalId()).isEqualTo("id-2");
+        assertThat(savedProjects().get(2).getMigrationManagerName()).isEqualTo("harika.velidi@cloudfuze.com");
+        assertThat(savedProjects().get(2).getCreatedBy()).isEqualTo(PmoSyncService.SYNC_CREATED_BY);
+    }
+
+    @Test
+    void aProjectThatOnlyLaterBecomesActiveInPmoIsPickedUpWhenItDoes() {
+        // Filtering to ACTIVE is not a permanent exclusion: a project sitting in ON_HOLD or COMPLETED
+        // today arrives the moment PMO flips it to ACTIVE, on the next poll.
+        when(pmoProjectClient.isConfigured()).thenReturn(true);
+        PmoProjectDto onHold = record("id-9", "waking up", "ON_HOLD", "Gmail - Gmail");
+        when(pmoProjectClient.fetchProjects()).thenReturn(List.of(onHold));
+
+        service.scheduledSync();
+        assertThat(savedProjects()).isEmpty();
+
+        onHold.setStatus("ACTIVE");
+        service.scheduledSync();
+
+        assertThat(savedProjects()).extracting(Project::getName).containsExactly("waking up");
+    }
+
+    @Test
+    void aSecondSyncIsRefusedWhileOneIsAlreadyRunningRatherThanRacingItself() {
+        // Both callers would see findByExternalId() return empty and both would try to create the same
+        // project; the loser hits the UNIQUE constraint on external_id and reports it as an error.
+        when(pmoProjectClient.fetchProjects()).thenAnswer(invocation -> {
+            // Re-entrant call standing in for the poll firing mid-way through an admin-triggered run.
+            assertThatThrownBy(() -> service.sync())
+                    .isInstanceOf(ApiException.class)
+                    .hasMessageContaining("already running");
+            return List.of(record("id-1", "only once", "ACTIVE", "Gmail - Gmail"));
+        });
+
+        service.sync();
+
+        assertThat(savedProjects()).extracting(Project::getName).containsExactly("only once");
     }
 
     @Test
