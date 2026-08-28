@@ -5,6 +5,8 @@ import com.cloudfuze.deltatracker.exception.ApiException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -48,6 +50,8 @@ import java.util.Map;
  */
 @Service
 public class MetabaseClient {
+
+    private static final Logger log = LoggerFactory.getLogger(MetabaseClient.class);
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(20);
@@ -350,7 +354,22 @@ public class MetabaseClient {
         try {
             return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         } catch (IOException e) {
-            throw new ApiException(HttpStatus.BAD_GATEWAY, "Could not reach Metabase right now -- try again shortly.");
+            // The cause has to reach both the log AND the message. Every one of these is an
+            // IOException, and they need completely different fixes:
+            //   UnknownHostException   -- the hostname does not resolve from THIS machine (no DNS
+            //                             record, no hosts entry). metabase.cloudfuze.com is not in
+            //                             public DNS, so a server without a hosts entry lands here.
+            //   ConnectException       -- resolved, but nothing accepted the connection (wrong port,
+            //                             firewall, service down).
+            //   HttpConnectTimeout...  -- no answer at all, usually a firewall dropping packets.
+            //   SSLHandshakeException  -- reachable, but the certificate does not match (typical when
+            //                             METABASE_BASE_URL is an IP rather than the hostname).
+            // Collapsing all four into one sentence made this undiagnosable from the screen and from
+            // the log, which cost real time: it had to be worked out from outside the server.
+            log.warn("Could not reach Metabase at {}: {}", request.uri(), e.toString(), e);
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "Could not reach Metabase at " + request.uri().getHost() + " ("
+                            + e.getClass().getSimpleName() + "). Check METABASE_BASE_URL.");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new ApiException(HttpStatus.BAD_GATEWAY, "The Metabase request was interrupted -- try again.");

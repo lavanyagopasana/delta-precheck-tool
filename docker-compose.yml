@@ -107,6 +107,22 @@ services:
       METABASE_API_KEY: ${METABASE_API_KEY:-}
       METABASE_USERNAME: ${METABASE_USERNAME:-}
       METABASE_PASSWORD: ${METABASE_PASSWORD:-}
+    # metabase.cloudfuze.com IS NOT IN PUBLIC DNS -- confirmed against 8.8.8.8, which returns
+    # "non-existent domain". It resolves on team laptops only because a line was added to each one's
+    # hosts file. A container has its own /etc/hosts and no such line, so the backend got
+    # UnknownHostException and the panel reported "Could not reach Metabase".
+    #
+    # Pointing METABASE_BASE_URL at the IP instead does NOT work: Metabase is behind name-based
+    # virtual hosting with SNI. Measured 2026-08-28 -- the bare IP returns 404 (default vhost), and
+    # sending the right Host header over TLS returns 421 Misdirected Request, because the handshake
+    # carried the IP rather than the hostname. The request has to be made BY NAME.
+    #
+    # extra_hosts gives the container the same line the laptops have, so the URL stays the hostname
+    # and both SNI and Host are correct. THIS IS A WORKAROUND FOR A MISSING DNS RECORD -- delete it
+    # once metabase.cloudfuze.com resolves publicly (or in the server's own resolver), and everything
+    # keeps working with no other change.
+    extra_hosts:
+      - "metabase.cloudfuze.com:${METABASE_HOST_IP:-208.70.254.43}"
     volumes:
       # THE line this whole file existed to provide. Named volume, so it survives every redeploy,
       # image rebuild, and container recreation. Back it up with the database, not separately --
