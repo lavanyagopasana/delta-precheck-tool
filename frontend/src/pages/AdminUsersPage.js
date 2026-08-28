@@ -762,20 +762,22 @@ export default function AdminUsersPage() {
             render: (u) => {
               const isSelf = currentUser?.email?.toLowerCase() === u.email.toLowerCase();
               return (
-                <div style={{ display: "flex", gap: 8 }}>
+                // Both actions used .btn.secondary, which is the same outlined blue -- so Remove
+                // looked identical to Edit and nothing distinguished the destructive one. Now on the
+                // .row-actions/.row-action pattern the Projects and Tickets tables already use:
+                // neutral icon for Edit, red for Remove.
+                <div className="row-actions">
                   <button
-                    className="btn secondary"
-                    style={{ padding: "6px 10px" }}
+                    className="row-action"
                     onClick={() => openEdit(u)}
                     disabled={isSelf}
                     title={isSelf ? "You can't change your own role -- another admin must." : "Edit role"}
                     aria-label="Edit role"
                   >
-                    <EditIcon size={18} style={{ marginRight: 0 }} />
+                    <EditIcon size={17} style={{ marginRight: 0 }} />
                   </button>
                   <button
-                    className="btn secondary"
-                    style={{ padding: "6px 10px" }}
+                    className="row-action danger"
                     onClick={() => handleRemove(u)}
                     disabled={removingEmail === u.email || isSelf}
                     title={isSelf ? "You can't remove your own access -- another admin must." : "Remove user"}
@@ -784,7 +786,7 @@ export default function AdminUsersPage() {
                     {removingEmail === u.email ? (
                       <span className="spinner" />
                     ) : (
-                      <TrashIcon size={18} style={{ marginRight: 0 }} />
+                      <TrashIcon size={17} style={{ marginRight: 0 }} />
                     )}
                   </button>
                 </div>

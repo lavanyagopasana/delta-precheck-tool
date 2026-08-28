@@ -163,7 +163,7 @@ function ActionsCell({ approval, onActed }) {
   return (
     <div style={{ display: "flex", gap: 6, justifyContent: "center" }} onClick={(e) => e.stopPropagation()}>
       <button
-        className="btn icon-btn success"
+        className="btn icon-btn success-outline"
         title={`Approve as ${roleLabel}`}
         aria-label={`Approve as ${roleLabel}`}
         onClick={handleApproveClick}
@@ -172,7 +172,7 @@ function ActionsCell({ approval, onActed }) {
         <CheckIcon />
       </button>
       <button
-        className="btn icon-btn danger"
+        className="btn icon-btn danger-outline"
         title={`Reject as ${roleLabel}`}
         aria-label={`Reject as ${roleLabel}`}
         onClick={() => setRejecting(true)}
@@ -359,6 +359,7 @@ export default function ApprovalsPage() {
           },
           {
             key: "deltaLabel",
+            align: "center",
             label: "Delta",
             // Approving a Final Delta is irreversible and makes the server decommissionable, whereas a
             // Pre-Delta will come round again -- approvers need to see which one this is before acting.
@@ -403,6 +404,7 @@ export default function ApprovalsPage() {
           },
           {
             key: "precheck",
+            align: "center",
             label: "Pre-Check",
             sortable: false,
             filterable: false,
@@ -421,6 +423,7 @@ export default function ApprovalsPage() {
           },
           {
             key: "actions",
+            align: "center",
             label: "Actions",
             sortable: false,
             filterable: false,

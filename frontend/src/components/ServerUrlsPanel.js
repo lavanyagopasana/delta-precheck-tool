@@ -501,7 +501,7 @@ function CombinationRow({ server, row, isAdmin, canManage, onSaved }) {
           )}
           {isAdmin && (
             <button
-              className="btn icon-btn danger"
+              className="btn icon-btn danger-outline"
               title="Delete combination"
               aria-label="Delete combination"
               onClick={handleDelete}
@@ -650,7 +650,7 @@ function DeleteServerButton({ server, onSaved }) {
   return (
     <button
       type="button"
-      className="btn danger"
+      className="btn danger-outline"
       style={{ padding: "6px 14px", fontSize: 12.5, whiteSpace: "nowrap" }}
       disabled={busy}
       title="Delete this server permanently"
