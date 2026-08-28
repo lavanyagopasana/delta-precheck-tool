@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import PreCheckPanel from "./PreCheckPanel";
@@ -203,5 +203,119 @@ describe("PreCheckPanel", () => {
     await screen.findByText("Pre-Check Items");
 
     expect(screen.getByText(/Delta cycle 2/)).toBeInTheDocument();
+  });
+});
+
+// "Drive changes" is the one item that reuses a shared status value under a different meaning: its
+// COMPLETED is shown as "Not up to date". Both that and "Up to Date" rendered green, so two opposite
+// answers looked identical and the one meaning "there are still changes to migrate" read as resolved.
+describe("PreCheckPanel Drive changes status colour", () => {
+  function submissionWith(status) {
+    return {
+      ...READY_SUBMISSION,
+      items: [{ ...READY_SUBMISSION.items[0], itemName: "Drive changes", status }],
+    };
+  }
+
+  async function badgeFor(status) {
+    client.getPreCheckSubmission.mockResolvedValue(submissionWith(status));
+    client.getCombinationReadiness.mockResolvedValue(READY_COMBINATION);
+    renderPanel();
+    return waitFor(() => screen.getByText("Drive changes"));
+  }
+
+  test('"Not up to date" is not shown as a resolved, green answer', async () => {
+    await badgeFor("COMPLETED");
+    const select = screen.getByRole("combobox");
+    // The relabel is what makes this item special -- assert it, so a rename breaks this test loudly
+    // rather than silently detaching the colour rule from the label it exists for.
+    expect(select.querySelector('option[value="COMPLETED"]').textContent).toBe("Not up to date");
+    expect(select).toHaveAttribute("data-status-tone", "yellow");
+  });
+
+  test('"Up to Date" stays green, because that one really is resolved', async () => {
+    await badgeFor("UP_TO_DATE");
+    expect(screen.getByRole("combobox")).toHaveAttribute("data-status-tone", "green");
+  });
+
+  test("COMPLETED on any other item is still green", async () => {
+    // The fix must be scoped to this one item: COMPLETED means genuinely finished everywhere else.
+    client.getPreCheckSubmission.mockResolvedValue(READY_SUBMISSION);
+    client.getCombinationReadiness.mockResolvedValue(READY_COMBINATION);
+    renderPanel();
+    await waitFor(() => screen.getByText("Item A"));
+    expect(screen.getByRole("combobox")).toHaveAttribute("data-status-tone", "green");
+  });
+});
+
+// An nvm-setup.exe was attached as pre-check evidence on the deployed site and stored. The backend is
+// the real gate (FileStorageService.validateType, now enforcing), but the picker's accept attribute
+// does nothing for drag-and-drop, so the client check has to exist and has to be tested.
+describe("PreCheckPanel evidence file types", () => {
+  beforeEach(() => {
+    client.getPreCheckSubmission.mockResolvedValue({
+      ...READY_SUBMISSION,
+      items: [{ ...READY_SUBMISSION.items[0], evidenceFilePath: null, evidenceFileName: null }],
+    });
+    client.getCombinationReadiness.mockResolvedValue(READY_COMBINATION);
+  });
+
+  test("refuses an executable without uploading it", async () => {
+    renderPanel();
+    await waitFor(() => screen.getByText("Item A"));
+
+    const input = document.querySelector('input[type="file"]');
+    // fireEvent, not userEvent.upload: userEvent honours the accept attribute and would drop the file
+    // before the handler ever ran, which would test the picker filter rather than the guard. A
+    // drag-and-drop bypasses accept in exactly this way, so this is the real path being covered.
+    fireEvent.change(input, {
+      target: { files: [new File(["MZ"], "nvm-setup.exe", { type: "application/x-msdownload" })] },
+    });
+
+    // Two matches by design: the inline hint under the item AND the toast, which is how every other
+    // error in this panel is surfaced.
+    expect(await screen.findAllByText(/isn't a file type that can be attached as evidence/i))
+      .not.toHaveLength(0);
+    // Never reaches the network: the point is to stop it before the upload, not after.
+    expect(client.uploadEvidence).not.toHaveBeenCalled();
+  });
+
+  test("still accepts a normal screenshot", async () => {
+    client.uploadEvidence.mockResolvedValue({ filePath: "/uploads/x.png", fileName: "shot.png" });
+    client.updatePreCheckItem.mockResolvedValue({ ...READY_SUBMISSION.items[0] });
+    renderPanel();
+    await waitFor(() => screen.getByText("Item A"));
+
+    const input = document.querySelector('input[type="file"]');
+    await userEvent.upload(input, new File(["x"], "shot.png", { type: "image/png" }));
+
+    await waitFor(() => expect(client.uploadEvidence).toHaveBeenCalled());
+  });
+
+  test("the picker only offers accepted types", async () => {
+    renderPanel();
+    await waitFor(() => screen.getByText("Item A"));
+
+    const accept = document.querySelector('input[type="file"]').getAttribute("accept");
+    expect(accept).toContain(".png");
+    expect(accept).toContain(".pdf");
+    expect(accept).toContain(".zip");
+    expect(accept).not.toContain(".exe");
+    // Deliberately narrowed: OpenDocument, archives other than zip, and media are no longer evidence.
+    expect(accept).not.toContain(".odt");
+    expect(accept).not.toContain(".rar");
+    expect(accept).not.toContain(".mp4");
+  });
+
+  test("rejects a video, which is no longer an accepted evidence type", async () => {
+    renderPanel();
+    await waitFor(() => screen.getByText("Item A"));
+
+    const input = document.querySelector('input[type="file"]');
+    fireEvent.change(input, { target: { files: [new File(["x"], "run.mp4", { type: "video/mp4" })] } });
+
+    expect(await screen.findAllByText(/isn't a file type that can be attached as evidence/i))
+      .not.toHaveLength(0);
+    expect(client.uploadEvidence).not.toHaveBeenCalled();
   });
 });

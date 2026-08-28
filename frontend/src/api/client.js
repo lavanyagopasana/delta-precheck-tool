@@ -37,13 +37,22 @@ client.interceptors.response.use(undefined, (error) => {
   if (isJsonEnvelope) return Promise.reject(error);
 
   if (response.status === 413) {
+    // What the person needs is the limit and that they are over it. The rest -- which proxy answered,
+    // client_max_body_size, that three separate limits have to agree -- is operator detail: it cannot
+    // be acted on by the engineer filling in a pre-check, and putting it on screen made a routine
+    // "file too big" read like a system fault.
+    //
+    // It is still worth having when the limits genuinely disagree, so it goes to the console for
+    // whoever is debugging rather than being thrown away.
+    console.warn(
+      `Upload rejected with 413. If the file was under ${MAX_EVIDENCE_FILE_SIZE_LABEL}, a proxy in ` +
+        `front of the app rejected it before Spring saw it -- raise client_max_body_size to match ` +
+        `spring.servlet.multipart.max-file-size.`
+    );
     response.data = {
       status: 413,
       error: "Payload Too Large",
-      message:
-        `That file is larger than the server accepts (limit ${MAX_EVIDENCE_FILE_SIZE_LABEL}). ` +
-        `If the file is under that, a proxy in front of the app is rejecting it first and its ` +
-        `client_max_body_size needs raising to match.`,
+      message: `That file is too large. The limit is ${MAX_EVIDENCE_FILE_SIZE_LABEL}.`,
     };
     return Promise.reject(error);
   }
@@ -54,9 +63,10 @@ client.interceptors.response.use(undefined, (error) => {
     response.data = {
       status: response.status,
       error: response.statusText || "Request failed",
-      message:
-        `The server returned ${response.status} without an application error. This usually means a ` +
-        `proxy or gateway answered instead of the app.`,
+      // Same reasoning as the 413 above: "a proxy or gateway answered instead of the app" is not
+      // something the person on the page can do anything with. The status code is kept because it is
+      // what they will quote when they report it.
+      message: `Something went wrong (${response.status}). Please try again, or report it if it keeps happening.`,
     };
   }
   return Promise.reject(error);

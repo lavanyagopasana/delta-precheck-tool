@@ -1440,14 +1440,30 @@ input[type="checkbox"]:disabled {
   flex-shrink: 0;
 }
 
+/* The title gets its own row at every width, and the filter + controls share the next one.
+   Previously the title was flex:1 on the same row as the filter, so the right-hand cluster wrapped
+   onto a row of its own -- three visual rows on Ticket Tracker (title+filter, then the selects, then
+   a "Log Ticket" running off the edge). One row of controls under one heading is tidier and has
+   nothing left to overflow into. */
 .table-toolbar-title {
   margin: 0;
-  flex: 1;
+  flex: 1 1 100%;
   min-width: 0;
 }
 
+/* With the title on its own row the filter can take the slack, and the controls sit beside it. */
 .table-toolbar--titled .table-filter-input {
-  flex: 0 1 260px;
+  flex: 1 1 240px;
+}
+
+/* A <select> sizes to its WIDEST OPTION, and the project filter lists names like "artnet world wide
+   corporation (OneDrive - MyDrive, Shared Drive - SharePoint)". That stretched the closed control past
+   a thousand pixels and pushed "Log Ticket" off the right edge of the page. Capping the control -- not
+   the column -- keeps the full text readable in the open dropdown while the closed one stays sane.
+   Same fix, and the same reason, as .team-cell-select. */
+.table-toolbar-right select {
+  max-width: 190px;
+  text-overflow: ellipsis;
 }
 
 .table-result-count {
@@ -2015,10 +2031,6 @@ input[type="checkbox"]:disabled {
      spilled out under the input rather than the input moving down. */
   .table-toolbar {
     flex-wrap: wrap;
-  }
-
-  .table-toolbar-title {
-    flex-basis: 100%;
   }
 
   /* The right-hand cluster (filters + primary action) is a nowrap row by default.
