@@ -382,7 +382,8 @@ jobs:
                    HOTJAR_SITE_ID SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD \
                    TICKETING_BASE_URL TICKETING_API_TOKEN \
                    PMO_BASE_URL PMO_API_KEY PMO_IMPORT_STATUSES PMO_AUTO_SYNC_ENABLED \
-                   METABASE_BASE_URL METABASE_API_KEY METABASE_USERNAME METABASE_PASSWORD \n                   METABASE_HOST_IP; do
+                   METABASE_BASE_URL METABASE_API_KEY METABASE_USERNAME METABASE_PASSWORD \
+                   METABASE_HOST_IP; do
             val="${!v:-}"
             if [ -n "$val" ]; then
               printf '%s=%s\n' "$v" "$val" >> env.overrides
