@@ -39,26 +39,18 @@ public class FileStorageService {
     // /uploads/** is same-origin and permitAll, so an inline-rendered SVG or HTML upload would be
     // stored XSS against every signed-in reviewer. See that filter for the rest of the reasoning.
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
-            // images
-            "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif", "avif",
-            // documents / plain data
-            "pdf", "csv", "tsv", "txt", "log", "json", "xml", "md", "rtf", "har",
-            // office
-            "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp",
-            // email exports
-            "msg", "eml",
-            // archives
-            "zip", "7z", "rar", "tar", "gz", "tgz",
-            // screen recordings and audio -- the natural evidence for "I watched it sync"
-            "mp4", "mov", "webm", "mkv", "avi", "m4v", "mp3", "wav", "m4a");
+            // images -- a screenshot is what most evidence actually is
+            "png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif",
+            // documents everyone recognises
+            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "csv", "txt",
+            // one archive format, for a bundle of screenshots
+            "zip");
 
     private static final String ACCEPTED_FORMATS_MESSAGE =
-            "Accepted formats: images (PNG, JPG, GIF, WEBP, BMP, TIFF, HEIC, AVIF), PDF, "
-                    + "text/data (CSV, TSV, TXT, LOG, JSON, XML, MD, RTF, HAR), Office documents "
-                    + "(DOC/DOCX, XLS/XLSX, PPT/PPTX, ODT/ODS/ODP), email exports (MSG, EML), "
-                    + "archives (ZIP, 7Z, RAR, TAR, GZ), and recordings (MP4, MOV, WEBM, MKV, AVI, "
-                    + "MP3, WAV, M4A). Web pages and SVG aren't accepted as evidence -- they can "
-                    + "carry scripts; export a PDF or a screenshot instead.";
+            "Accepted formats: images (PNG, JPG, GIF, WEBP, BMP, HEIC), PDF, Word (DOC/DOCX), "
+                    + "Excel (XLS/XLSX), PowerPoint (PPT/PPTX), CSV, TXT, and ZIP. Web pages and SVG "
+                    + "aren't accepted as evidence -- they can carry scripts; export a PDF or a "
+                    + "screenshot instead.";
 
     private final Path uploadRoot;
 

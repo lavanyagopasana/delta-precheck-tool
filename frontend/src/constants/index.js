@@ -44,6 +44,10 @@ export const PRE_DELTA_MIGRATION_ITEM = "Previous Delta Migration";
 // ServerService.HYPERLINKS_VERIFIED_ITEM / PreCheckSubmissionService.isHyperlinksNotApplicable.
 export const HYPERLINKS_VERIFIED_ITEM = "Hyperlinks Verified";
 
+// Content-only checklist item. Its COMPLETED value is relabelled "Not up to date" and it gains an
+// UP_TO_DATE value -- see statusOptionsFor and statusVisual in PreCheckPanel.
+export const DRIVE_CHANGES_ITEM = "Drive changes";
+
 // Renamed from "Pre Delta Migration" on 2026-08-06. The name IS the matching key and it's persisted
 // per row, so checklists seeded before the rename still carry the old string -- match both or the
 // item stops being conditionally hidden on existing combinations. Mirrors
@@ -82,3 +86,20 @@ export const DELTA_CYCLE_STATUS_BADGE = {
   COMPLETED: { color: "green", label: "Completed" },
   DECLINED: { color: "red", label: "Declined" },
 };
+
+// Mirrors FileStorageService.ALLOWED_EXTENSIONS on the backend, which is the real gate -- this only
+// filters the file picker and gives an instant error instead of a round trip. If the two drift, the
+// backend wins and the user sees its 400; keep them in step.
+export const EVIDENCE_ALLOWED_EXTENSIONS = [
+  // images -- a screenshot is what most evidence actually is
+  "png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif",
+  // documents everyone recognises
+  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "csv", "txt",
+  // one archive format, for a bundle of screenshots
+  "zip",
+];
+
+// The accept attribute for the evidence file picker. Extensions rather than MIME types: browsers
+// disagree on the type they report for several of these (msg, heic, har), and an extension list is
+// the one form every browser filters on consistently.
+export const EVIDENCE_ACCEPT = EVIDENCE_ALLOWED_EXTENSIONS.map((e) => `.${e}`).join(",");

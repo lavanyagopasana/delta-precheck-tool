@@ -17,9 +17,12 @@ import { useConfirm } from "./ConfirmDialog";
 import {
   MAX_EVIDENCE_FILE_SIZE_MB,
   MAX_EVIDENCE_FILE_SIZE_LABEL,
+  EVIDENCE_ACCEPT,
+  EVIDENCE_ALLOWED_EXTENSIONS,
   DELTA_TYPE_ITEM,
   DELTA_MESSAGE_SYNC_ITEM,
   HYPERLINKS_VERIFIED_ITEM,
+  DRIVE_CHANGES_ITEM,
   isPreDeltaMigrationItem,
 } from "../constants";
 import DeltaBadge from "./DeltaBadge";
@@ -121,8 +124,27 @@ const STATUS_VISUAL = {
   NOT_ENABLED: { border: "var(--color-border)", badge: "gray", bg: "var(--color-gray-soft)", fg: "var(--color-text-muted)" },
 };
 const STATUS_VISUAL_DEFAULT = { border: "var(--color-green)", badge: "green", bg: "var(--color-green-soft)", fg: "var(--color-green)" };
+const STATUS_VISUAL_ATTENTION = { border: "var(--color-yellow)", badge: "yellow", bg: "var(--color-yellow-soft)", fg: "var(--color-yellow)" };
 
-function statusVisual(status) {
+/**
+ * The colour has to know which ITEM it is on, not just the status, because one item reuses a shared
+ * status value under a different meaning.
+ *
+ * "Drive changes" relabels COMPLETED as "Not up to date" (see statusOptionsFor). COMPLETED is not in
+ * STATUS_VISUAL, so it fell through to the green default and "Not up to date" was painted as a
+ * resolved, everything-is-fine answer -- next to "Up to Date", which is also green. Two opposite
+ * answers, the same colour, and the one meaning "there are still changes to migrate" reading as done.
+ *
+ * It cannot be fixed on status alone: COMPLETED means genuinely finished on every other item and must
+ * stay green there. So this takes the item name, exactly as the label does.
+ */
+function statusVisual(status, itemName) {
+  if (itemName === DRIVE_CHANGES_ITEM && status === "COMPLETED") {
+    // Yellow, not red: the drive having pending changes is the normal reason to run a Delta, not a
+    // failure. It is unresolved work, which is what yellow already means here (IN_PROGRESS,
+    // PARTIALLY_COMPLETED).
+    return STATUS_VISUAL_ATTENTION;
+  }
   return STATUS_VISUAL[status] || STATUS_VISUAL_DEFAULT;
 }
 
@@ -185,6 +207,16 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
 
   const uploadFile = async (file) => {
     if (!file) return;
+    // The accept attribute filters the picker but does nothing for drag-and-drop, so the check has to
+    // live here too. The backend rejects these regardless (FileStorageService.validateType); this just
+    // says so immediately instead of after uploading the whole file.
+    const ext = file.name.includes(".") ? file.name.split(".").pop().toLowerCase() : "";
+    if (!EVIDENCE_ALLOWED_EXTENSIONS.includes(ext)) {
+      const msg = `"${file.name}" isn't a file type that can be attached as evidence.`;
+      setError(msg);
+      showToast(msg, "error");
+      return;
+    }
     if (file.size > MAX_EVIDENCE_FILE_SIZE_MB * 1024 * 1024) {
       const msg = `"${file.name}" is larger than the ${MAX_EVIDENCE_FILE_SIZE_LABEL} attachment limit.`;
       setError(msg);
@@ -247,7 +279,7 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
   // PreCheckSubmissionService.isHyperlinksNotApplicable on the backend, which is what actually
   // exempts it from the submit-time requirement -- this only controls what the form shows.
   const isNotApplicable = item.itemName === HYPERLINKS_VERIFIED_ITEM && item.status === "NOT_APPLICABLE";
-  const visual = statusVisual(item.status);
+  const visual = statusVisual(item.status, item.itemName);
   // Spelled out at the point of choice rather than left to a tooltip: "Final delta" permanently closes
   // the combination, and an engineer picking it by mistake can only be undone by an admin.
   const deltaTypeHint = !isDeltaType
@@ -278,6 +310,11 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
           disabled={locked}
           onChange={handleStatusChange}
           className="precheck-status-pill"
+          // The tone as a plain attribute as well as a colour. The colours are CSS custom properties,
+          // which jsdom drops from inline styles, so this is the only way the meaning of a status is
+          // observable to a test -- and "Not up to date" reading as resolved-green is exactly the kind
+          // of thing that regresses silently.
+          data-status-tone={visual.badge}
           style={{ backgroundColor: visual.bg, color: visual.fg }}
         >
           {statusOptionsFor(item.itemName, productType).map((opt) => (
@@ -330,7 +367,13 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
                       : `Uploading... ${uploadPercent}%`
                     : "Drop evidence file here, or "}
                   {!uploading && <span style={{ color: "var(--color-primary)", fontWeight: 600 }}>click to browse</span>}
-                  <input type="file" onChange={handleFileChange} disabled={uploading} style={{ display: "none" }} />
+                  <input
+                    type="file"
+                    accept={EVIDENCE_ACCEPT}
+                    onChange={handleFileChange}
+                    disabled={uploading}
+                    style={{ display: "none" }}
+                  />
                 </label>
                 <span className="progress-label">· up to {MAX_EVIDENCE_FILE_SIZE_LABEL}</span>
               </div>
