@@ -2512,17 +2512,13 @@ input[type="checkbox"]:disabled {
 }
 
 /* Engineers get the remaining width -- the chip list is the part that actually grows. */
+/* No left divider any more. This block used to be the RIGHT column of a two-column people row --
+   manager on the left, engineers on the right -- and the border separated them. The manager has since
+   moved up into the header's top row, so .project-people holds this single block and the border was
+   dividing nothing: it drew a stray vertical line, and it indented "Migration Engineers" 27px so it
+   no longer shared a left edge with the section label below it. */
 .project-people-block--grow {
   flex: 1 1 340px;
-  padding-left: 26px;
-  border-left: 1px solid var(--color-border);
-}
-
-@media (max-width: 700px) {
-  .project-people-block--grow {
-    padding-left: 0;
-    border-left: none;
-  }
 }
 
 .assign-section-head {
