@@ -175,7 +175,19 @@ signing in with the auto-provision domain (default `cloudfuze.com`) is silently 
   frontend origin, no code change needed. Owned by `SecurityConfig` (via a `CorsConfigurationSource`
   wired into the filter chain), not `WebConfig` — a `WebMvcConfigurer`-only registration never runs
   for requests Spring Security itself rejects (401/403).
-- **Hibernate `ddl-auto=update`** means schema changes happen by editing `@Entity` annotations directly — there is no migration file to write or review.
+- **Hibernate `ddl-auto=update`** means schema changes happen by editing `@Entity` annotations directly
+  — there is no migration file to write or review. **But `update` only ADDS; it never alters or drops.**
+  The trap this hides: Hibernate 6 generates a `CHECK` constraint for every
+  `@Enumerated(EnumType.STRING)` column listing that enum's values, and `update` does **not** rewrite
+  it when you add a value. So adding an enum constant is a schema change that silently does not get
+  applied — it works on every freshly created database (local, tests, CI) and fails only on a
+  long-lived one, i.e. production, where it surfaces as
+  `DataIntegrityViolationException` → *"That conflicts with an existing record."* This actually
+  happened: `ba0bf01` added `NOT_APPLICABLE`/`UP_TO_DATE` to `ItemStatus` and the deployed app could
+  not save the Hyperlinks Verified or Drive changes items. `EnumCheckConstraintSync` now repairs every
+  enum column's constraint from the Java enum at startup, so adding a value is safe again — but the
+  general rule stands: **an `update`-mode schema is only as current as the parts Hibernate is willing
+  to alter.**
 - The approval sequence (`MIGRATION_LEAD, DEV_LEAD, QA_LEAD`) is defined as an identical constant in **two** places (`SignOffService` and `ProjectService`) — keep both in sync if it ever changes.
 
 ## Repository Navigation
