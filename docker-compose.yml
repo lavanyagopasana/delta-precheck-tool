@@ -95,6 +95,18 @@ services:
       PMO_API_KEY: ${PMO_API_KEY:-}
       PMO_IMPORT_STATUSES: ${PMO_IMPORT_STATUSES:-ACTIVE}
       PMO_AUTO_SYNC_ENABLED: ${PMO_AUTO_SYNC_ENABLED:-true}
+
+      # Metabase (MetabaseClient): where the migration data itself lives, read for the per-project
+      # processed/conflict figures. Blank credentials disable the integration -- the databases endpoint
+      # returns a clear "isn't configured" message and the rest of the app is unaffected, so a missing
+      # value here degrades one feature rather than breaking a deploy.
+      #
+      # METABASE_API_KEY is preferred over the username/password pair: scoped, revocable, and it keeps
+      # a person's password out of the environment. If both are set, the key wins.
+      METABASE_BASE_URL: ${METABASE_BASE_URL:-https://metabase.cloudfuze.com}
+      METABASE_API_KEY: ${METABASE_API_KEY:-}
+      METABASE_USERNAME: ${METABASE_USERNAME:-}
+      METABASE_PASSWORD: ${METABASE_PASSWORD:-}
     volumes:
       # THE line this whole file existed to provide. Named volume, so it survives every redeploy,
       # image rebuild, and container recreation. Back it up with the database, not separately --
