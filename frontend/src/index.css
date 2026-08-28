@@ -10,12 +10,29 @@
   --color-primary-dark: #0c18d4;
   --color-primary-soft: #e1ecff;
 
+  /* Same role split as red below: the plain token is for text/borders and keeps its contrast, the
+     -fill token is for solid backgrounds carrying white text and is lighter than the old single
+     value. #16a34a and #b45309 as fills read as heavy blocks of colour next to this app's mostly
+     white surfaces. */
   --color-green: #16a34a;
-  --color-green-soft: #e5f8ed;
+  --color-green-fill: #2eb95f;
+  --color-green-fill-hover: #23a552;
+  --color-green-soft: #e9f9f0;
   --color-yellow: #b45309;
-  --color-yellow-soft: #fef6e0;
-  --color-red: #dc2626;
-  --color-red-soft: #fdecec;
+  --color-yellow-fill: #d1780f;
+  --color-yellow-fill-hover: #bd6a0c;
+  --color-yellow-soft: #fef8e6;
+  /* Red is split by ROLE, because the two have opposite constraints. Text and borders sit on white
+     and need contrast to stay legible; solid fills carry white text and were reading heavy. Lightening
+     one value for both would have made red text fail contrast, so:
+       --color-red        text, borders, icons   -- 4.6:1 on white, passes WCAG AA
+       --color-red-fill   solid button/badge fills, noticeably softer than the old #dc2626
+     The old single value was #dc2626 with a #b91c1c hover, which is where the heaviness came from --
+     the hover was darker than the base rather than lighter. */
+  --color-red: #d93636;
+  --color-red-fill: #e04d4d;
+  --color-red-fill-hover: #d03a3a;
+  --color-red-soft: #fdf0f0;
   --color-gray-soft: #eef0f4;
   /* Reserved for the Final Delta / decommission milestones -- deliberately distinct from primary blue
      (routine pre-deltas) and green (a step merely completing), because these mark the irreversible
@@ -177,7 +194,7 @@ a:hover {
 
 .nav-badge {
   margin-left: auto;
-  background: var(--color-red);
+  background: var(--color-red-fill);
   color: #fff;
   font-size: 10.5px;
   font-weight: 700;
@@ -404,9 +421,9 @@ tr.selected-row.clickable-row:hover td {
   box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.04);
 }
 
-.dot.green { background: var(--color-green); }
-.dot.yellow { background: var(--color-yellow); }
-.dot.red { background: var(--color-red); }
+.dot.green { background: var(--color-green-fill); }
+.dot.yellow { background: var(--color-yellow-fill); }
+.dot.red { background: var(--color-red-fill); }
 
 /* ---------- Approval stepper (Migration Manager -> Dev -> QA) ---------- */
 
@@ -431,8 +448,8 @@ tr.selected-row.clickable-row:hover td {
   cursor: default;
 }
 
-.approval-stepper-dot.approved { background: var(--color-green); border-color: var(--color-green); color: #fff; }
-.approval-stepper-dot.declined { background: var(--color-red); border-color: var(--color-red); color: #fff; }
+.approval-stepper-dot.approved { background: var(--color-green-fill); border-color: var(--color-green-fill); color: #fff; }
+.approval-stepper-dot.declined { background: var(--color-red-fill); border-color: var(--color-red-fill); color: #fff; }
 .approval-stepper-dot.turn { border-color: var(--color-yellow); color: var(--color-yellow); background: var(--color-yellow-soft); }
 .approval-stepper-dot.skipped { border-color: var(--color-text-faint); color: var(--color-text-faint); background: var(--color-surface); }
 
@@ -444,7 +461,7 @@ tr.selected-row.clickable-row:hover td {
   flex-shrink: 0;
 }
 
-.approval-stepper-line.done { background: var(--color-green); }
+.approval-stepper-line.done { background: var(--color-green-fill); }
 
 .current-status-text {
   display: inline-flex;
@@ -577,30 +594,31 @@ tr.selected-row.clickable-row:hover td {
 }
 
 .btn.danger {
-  background: var(--color-red);
-  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.28);
+  background: var(--color-red-fill);
+  /* Lighter than the 0.28 it was: a saturated red plus a strong shadow read as one heavy block. */
+  box-shadow: 0 2px 6px rgba(224, 77, 77, 0.2);
 }
 
 .btn.success {
-  background: var(--color-green);
-  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.28);
+  background: var(--color-green-fill);
+  box-shadow: 0 2px 6px rgba(46, 185, 95, 0.2);
 }
 
 .btn.success:hover:not(:disabled) {
-  background: #128a3e;
+  background: var(--color-green-fill-hover);
 }
 
 .btn.danger:hover:not(:disabled) {
-  background: #b91c1c;
+  background: var(--color-red-fill-hover);
 }
 
 .btn.warning {
-  background: var(--color-yellow);
-  box-shadow: 0 2px 8px rgba(180, 83, 9, 0.28);
+  background: var(--color-yellow-fill);
+  box-shadow: 0 2px 6px rgba(209, 120, 15, 0.2);
 }
 
 .btn.warning:hover:not(:disabled) {
-  background: #92400e;
+  background: var(--color-yellow-fill-hover);
 }
 
 .icon-btn {
@@ -2189,7 +2207,7 @@ input[type="checkbox"]:disabled {
   background: var(--color-border);
 }
 .combo-stage.done:not(:last-child)::after {
-  background: var(--color-green);
+  background: var(--color-green-fill);
 }
 
 .combo-stage-node {
@@ -2209,8 +2227,8 @@ input[type="checkbox"]:disabled {
 }
 
 .combo-stage.done .combo-stage-node {
-  background: var(--color-green);
-  border-color: var(--color-green);
+  background: var(--color-green-fill);
+  border-color: var(--color-green-fill);
   color: #fff;
 }
 
@@ -2413,13 +2431,52 @@ input[type="checkbox"]:disabled {
    of the width. Split by a hairline from the project name above -- no tinted panels, and no
    "Assignments" heading, since each block already labels itself. */
 /* Top row carrying the name, the manager and the primary action. */
+/* Title | manager | action, as a GRID rather than a flex row.
+   Two failed attempts are worth recording so neither is tried again:
+     flex-wrap: wrap   -> a long project name ("Texas Municipal League Intergovernmental Risk Pool")
+                          pushed Add Server onto a second line at the LEFT, so the primary action
+                          moved depending on the title, which is the opposite of consistent.
+     flex-wrap: nowrap -> the manager block would not shrink, so the email ran UNDERNEATH the button
+                          and was unreadable. Strictly worse than the wrap it replaced.
+   Grid tracks cannot overlap, and only the title track flexes: a long name wraps its own text while
+   the manager and the action keep their content width and stay put. */
 .detail-header-top--split {
+  display: grid;
+  /* minmax(0, auto) on the manager too: if the title and a long email together still do not
+     fit, the email must WRAP inside its own track rather than overflow into the button. */
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, auto) auto;
   align-items: center;
-  flex-wrap: wrap;
   gap: 14px 18px;
 }
 
-/* The manager, pushed to the right of the top row and separated from the name by a hairline. */
+.detail-header-top--split .detail-header-title {
+  min-width: 0;
+}
+
+/* margin-left:auto was doing the right-pushing in the flex version; in a grid the track does it. */
+.detail-header-top--split .project-manager {
+  margin-left: 0;
+  /* Emails have no spaces, so without this the address is one unbreakable word and overflows. */
+  overflow-wrap: anywhere;
+}
+
+/* Under this width one row genuinely does not fit, so it stacks in a fixed, predictable order --
+   title, then manager, then the action -- instead of the button landing wherever it happens to. */
+@media (max-width: 900px) {
+  .detail-header-top--split {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .detail-header-top--split .project-manager {
+    grid-column: 1 / -1;
+    padding-left: 0;
+    border-left: none;
+  }
+  .detail-header-top--split > .btn {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+
 .project-manager {
   margin-left: auto;
   display: flex;
@@ -2476,6 +2533,11 @@ input[type="checkbox"]:disabled {
   flex-wrap: wrap;
   margin-bottom: 10px;
 }
+
+/* MESSAGE / EMAIL / CONTENT is a LABEL -- which of the project's product types this row is about.
+   The database name next to it is a VALUE. Styling both as pills made them read as one thing, so the
+   label is a quiet uppercase caption in a fixed-width gutter and the value is a monospace chip: two
+   different roles, told apart at a glance rather than by reading. */
 
 /* One server, as its own bordered white block on the page background -- replaces the grey
    .subpanel, so the combination rows inside it no longer need a surface of their own to be legible. */
@@ -2747,3 +2809,44 @@ input[type="checkbox"]:disabled {
 .users-table td:nth-child(3) { width: 24%; }
 .users-table th:nth-child(4),
 .users-table td:nth-child(4) { width: 16%; }
+
+/* Outlined coloured actions: the icon carries the meaning, the border carries the affordance.
+   Used for destructive/approving actions that live IN the page (Approve, Reject, Delete server,
+   per-row trash icons) rather than inside a dialog.
+
+   Two things this fixes. A solid green or red fill made a single row action shout louder than the row
+   it belonged to. And the first attempt used --color-*-soft as the resting border, which is so faint
+   the control stopped looking like a button at all -- so the border is the normal --color-border at
+   rest and only takes the accent colour on hover, exactly like .btn.secondary.
+
+   Solid .btn.danger is kept for the confirm button inside a dialog: there the fill IS the point,
+   because the user opened that dialog to destroy something and there is one button to press. */
+.btn.success-outline,
+.btn.danger-outline {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn.success-outline { color: var(--color-green); }
+.btn.danger-outline { color: var(--color-red); }
+
+.btn.success-outline:hover:not(:disabled) {
+  background: var(--color-green-soft);
+  border-color: var(--color-green);
+  color: var(--color-green);
+}
+
+.btn.danger-outline:hover:not(:disabled) {
+  background: var(--color-red-soft);
+  border-color: var(--color-red);
+  color: var(--color-red);
+}
+
+.btn.success-outline:disabled,
+.btn.danger-outline:disabled {
+  color: var(--color-text-faint);
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  box-shadow: none;
+}

@@ -93,6 +93,10 @@ export default function DataTable({
                     <th
                       key={col.key}
                       className={sortable ? "sortable-th" : undefined}
+                      // col.align sets the header AND its cells from one value, so a column's label
+                      // can never drift out of line with the data under it. Left stays the default:
+                      // see the th/td comment in index.css for why text columns are left-aligned.
+                      style={col.align ? { textAlign: col.align } : undefined}
                       onClick={sortable ? () => toggleSort(col.key) : undefined}
                       aria-sort={isSorted ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
                     >
@@ -123,7 +127,11 @@ export default function DataTable({
                       // the DOM ever leaves the browser, so the value is never sent, not merely hidden
                       // on playback. Put here rather than on each call site so every table gets the
                       // same lever; see analytics/hotjar.js.
-                      <td key={col.key} data-hj-suppress={col.sensitive ? "" : undefined}>
+                      <td
+                        key={col.key}
+                        data-hj-suppress={col.sensitive ? "" : undefined}
+                        style={col.align ? { textAlign: col.align } : undefined}
+                      >
                         {col.render ? col.render(row) : row[col.key]}
                       </td>
                     ))}

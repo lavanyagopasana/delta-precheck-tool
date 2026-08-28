@@ -316,19 +316,23 @@ export default function ProjectsPage() {
           {
             key: "name",
             label: "Project",
+            // The badge sits on its own line UNDER the name, not inline after it. Project names here
+            // are long enough to wrap over three or four lines, and an inline badge lands wherever the
+            // last line happens to end -- which reads as part of the name rather than as a label about
+            // it. A block below the name is always in the same place.
             render: (p) => (
-              <span>
-                {p.name}
+              <div>
+                <div>{p.name}</div>
                 {p.externalId && (
                   <span
                     className="badge"
-                    style={{ marginLeft: 8, fontSize: 10.5 }}
+                    style={{ marginTop: 4, fontSize: 10.5 }}
                     title={`Synced from PMO${p.externalPhase ? ` -- phase ${p.externalPhase}` : ""}`}
                   >
                     PMO
                   </span>
                 )}
-              </span>
+              </div>
             ),
           },
           {
@@ -336,16 +340,9 @@ export default function ProjectsPage() {
             label: "Customer",
             render: (p) => p.externalCustomerName || "-",
           },
-          {
-            // PMO's own phase for the project (KICKOFF -> ... -> DELTA -> COMPLETED). Read-only: this
-            // tool does not drive it, PMO does, and it is refreshed on every poll. Useful here because
-            // DELTA is precisely the phase this tracker gates, so it says which projects are close to
-            // needing a pre-check. Blank for projects created by hand, which have no PMO phase at all.
-            key: "externalPhase",
-            label: "PMO Phase",
-            render: (p) => (p.externalPhase ? humanizePhase(p.externalPhase) : "-"),
-          },
-          { key: "serverCount", label: "No. Server URLs", filterable: false },
+          // Centred: a single-character count sitting at the left edge of a three-word header does not
+          // read as belonging to it.
+          { key: "serverCount", label: "No. Server URLs", filterable: false, align: "center" },
           {
             key: "migrationManagers",
             label: "Migration Manager",
@@ -368,42 +365,54 @@ export default function ProjectsPage() {
               ),
           },
           {
-            key: "createdBy",
-            label: "Created By",
-            render: (p) => (p.createdBy ? <span title={p.createdBy}>{emailLocalPart(p.createdBy)}</span> : "-"),
+            // PMO's own phase for the project (KICKOFF -> ... -> DELTA -> COMPLETED). Read-only: this
+            // tool does not drive it, PMO does, and it is refreshed on every poll. Useful here because
+            // DELTA is precisely the phase this tracker gates, so it says which projects are close to
+            // needing a pre-check. Blank for projects created by hand, which have no PMO phase at all.
+            //
+            // Last of the data columns, by request. The actions column after it carries no label and
+            // holds the edit/delete buttons, so this is the rightmost thing on the row that reads as
+            // information about the project.
+            key: "externalPhase",
+            label: "PMO Phase",
+            render: (p) => (p.externalPhase ? humanizePhase(p.externalPhase) : "-"),
           },
+          // No "Created By" column. Every PMO-synced project carried the literal string "PMO sync"
+          // there (PmoSyncService.SYNC_CREATED_BY), so on a list that is almost entirely PMO projects
+          // it was a full column repeating what the PMO badge under the project name already says.
+          // The field itself is untouched -- it still drives the can-edit/can-delete checks below.
           {
             key: "actions",
             label: "",
             sortable: false,
             filterable: false,
+            align: "center",
+            // Uses the .row-actions/.row-action pattern already established on the Tickets page rather
+            // than solid .btn/.btn.danger. Two reasons: a filled red block per row made Delete shout
+            // louder than the row's own content, and Projects was the only table styling its row
+            // actions differently from every other table in the app.
             render: (p) => (
-              <div
-                style={{ display: "flex", gap: 6, justifyContent: "center" }}
-                onClick={(e) => e.stopPropagation()}
-              >
+              <div className="row-actions" onClick={(e) => e.stopPropagation()}>
                 {canEditProject(p) && (
                   <button
                     type="button"
-                    className="btn secondary"
-                    style={{ padding: "6px 10px" }}
+                    className="row-action"
                     title="Edit project"
                     aria-label="Edit project"
                     onClick={() => openEdit(p)}
                   >
-                    <EditIcon size={18} style={{ marginRight: 0 }} />
+                    <EditIcon size={17} style={{ marginRight: 0 }} />
                   </button>
                 )}
                 {canDeleteProject(p) && (
                   <button
                     type="button"
-                    className="btn danger"
-                    style={{ padding: "6px 10px" }}
+                    className="row-action danger"
                     title="Delete project"
                     aria-label="Delete project"
                     onClick={() => handleDelete(p)}
                   >
-                    <TrashIcon size={18} style={{ marginRight: 0 }} />
+                    <TrashIcon size={17} style={{ marginRight: 0 }} />
                   </button>
                 )}
               </div>

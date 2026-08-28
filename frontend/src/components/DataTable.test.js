@@ -38,3 +38,37 @@ describe("DataTable sensitive columns", () => {
     expect(screen.getByText("jane.doe@customer-tenant.com")).toBeInTheDocument();
   });
 });
+
+// Covers the `align` column flag. The point of it is that ONE value drives both the header and its
+// cells, so a column's label can never end up aligned differently from the data under it -- which is
+// what made a single-character count look like it belonged to the neighbouring column.
+describe("DataTable column alignment", () => {
+  const rows = [{ id: 1, name: "Demo prjct", serverCount: 0 }];
+
+  function renderTable() {
+    render(
+      <DataTable
+        rows={rows}
+        rowKey={(r) => r.id}
+        columns={[
+          { key: "name", label: "Project" },
+          { key: "serverCount", label: "No. Server URLs", align: "center" },
+        ]}
+      />
+    );
+  }
+
+  it("applies the alignment to the header and its cell together", () => {
+    renderTable();
+    expect(screen.getByText("No. Server URLs").closest("th")).toHaveStyle({ textAlign: "center" });
+    expect(screen.getByText("0").closest("td")).toHaveStyle({ textAlign: "center" });
+  });
+
+  it("leaves columns without an alignment to the stylesheet's left default", () => {
+    // No inline style at all, rather than an inline "left" -- so the th/td rule in index.css stays
+    // the single place the default is decided.
+    renderTable();
+    expect(screen.getByText("Project").closest("th").style.textAlign).toBe("");
+    expect(screen.getByText("Demo prjct").closest("td").style.textAlign).toBe("");
+  });
+});
