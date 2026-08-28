@@ -205,13 +205,17 @@ class MetabaseStatusServiceTest {
         configured(ProductType.MESSAGE, "bakktmsg");
         configured(ProductType.CONTENT, "bakkt");
         when(metabaseClient.fetchDatabases())
-                .thenThrow(new ApiException(HttpStatus.BAD_GATEWAY, "Could not reach Metabase right now."));
+                .thenThrow(new ApiException(HttpStatus.BAD_GATEWAY,
+                        "Could not reach Metabase at metabase.cloudfuze.com (UnknownHostException). Check METABASE_BASE_URL."));
 
         List<MetabaseStatusDto> out = service.statusForProject(1L);
 
         assertThat(out).hasSize(2);
         assertThat(out).allSatisfy(dto -> {
-            assertThat(dto.getError()).contains("Could not reach Metabase");
+            // The exception type is the whole point: UnknownHostException, SSLHandshakeException and
+            // ConnectException need completely different fixes, and all three are IOExceptions.
+            assertThat(dto.getError()).contains("Could not reach Metabase")
+                    .contains("UnknownHostException");
             assertThat(dto.getStatuses()).isEmpty();
         });
     }
