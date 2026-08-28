@@ -53,6 +53,7 @@ const READY_COMBINATION = {
   projectId: null,
   projectName: null,
   currentCycleNumber: 1,
+  currentDeltaCycleLabel: "1.1",
   currentDeltaType: null,
   currentDeltaLabel: null,
   completedCycleCount: 0,
@@ -196,13 +197,18 @@ describe("PreCheckPanel", () => {
   test("a reset checklist on cycle 2 says which cycle it belongs to", async () => {
     // A rolled-over checklist is byte-identical to a brand-new one, so the cycle number is the only
     // thing telling the engineer they're on their second pre-delta.
-    client.getCombinationReadiness.mockResolvedValue({ ...READY_COMBINATION, currentCycleNumber: 2, completedCycleCount: 1 });
+    client.getCombinationReadiness.mockResolvedValue({
+      ...READY_COMBINATION,
+      currentCycleNumber: 2,
+      currentDeltaCycleLabel: "2.1",
+      completedCycleCount: 1,
+    });
     client.getPreCheckSubmission.mockResolvedValue({ ...READY_SUBMISSION, status: "NOT_STARTED" });
 
     renderPanel({ user: { email: "eng@cloudfuze.com", role: "MIGRATION_ENGINEER" } });
     await screen.findByText("Pre-Check Items");
 
-    expect(screen.getByText(/Delta cycle 2/)).toBeInTheDocument();
+    expect(screen.getByText(/Delta cycle 2\.1/)).toBeInTheDocument();
   });
 });
 

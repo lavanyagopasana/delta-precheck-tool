@@ -18,8 +18,9 @@ function fmtDateTime(value) {
 
 // The frozen checklist for one past cycle. Read-only by nature -- a snapshot is never editable, which
 // is the whole point of keeping it separately from the live form. Rendered inside a Modal, so it owns
-// no panel chrome of its own.
-function CycleSnapshot({ cycle }) {
+// no panel chrome of its own. Exported so ApprovalsPage's "Review" on a still-declined row can show
+// this table directly, without the extra click through this panel's own cycle list first.
+export function CycleSnapshot({ cycle }) {
   return (
     <div>
       {!cycle.items?.length ? (

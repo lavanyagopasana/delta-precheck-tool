@@ -17,6 +17,7 @@ const ProjectDetailsPage = lazy(() => import("./pages/ProjectDetailsPage"));
 const ServerDetailsPage = lazy(() => import("./pages/ServerDetailsPage"));
 const TicketsPage = lazy(() => import("./pages/TicketsPage"));
 const ApprovalsPage = lazy(() => import("./pages/ApprovalsPage"));
+const TeamPage = lazy(() => import("./pages/TeamPage"));
 const AdminUsersPage = lazy(() => import("./pages/AdminUsersPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 
@@ -166,6 +167,7 @@ function AppShell() {
                 <Route path="/servers/:serverId" element={<ServerDetailsPage />} />
                 <Route path="/tickets" element={<TicketsPage />} />
                 <Route path="/approvals" element={<ApprovalsPage />} />
+                <Route path="/team" element={<TeamPage />} />
                 <Route path="/admin" element={<AdminUsersPage />} />
               </Routes>
             </Suspense>

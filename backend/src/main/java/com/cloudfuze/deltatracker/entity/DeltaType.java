@@ -10,14 +10,16 @@ public enum DeltaType {
     PRE_DELTA,
     FINAL_DELTA;
 
-    // Cycle label shown everywhere in the UI -- "Pre-Delta 2" numbers the pre-deltas because there
-    // can be many, while Final Delta is unique per combination so a number would be noise.
+    // Cycle label shown everywhere in the UI -- "Pre-Delta 2.1" names the pre-delta and which attempt
+    // at it this is (the ".1"/".2" advances on a decline-triggered redo of the SAME pre-delta, the
+    // leading number only on a genuine finish -- see WorkspaceCombination.currentDeltaMajor/Minor).
+    // Final Delta is unique per combination so a number would be noise.
     //
     // No "#": inside a small pill next to labels like "10 pairs" the hash read as clutter, and it made
     // the badge look like it was quoting an issue number rather than naming a cycle. The bare number
     // reads the same and sits better.
-    public String label(int cycleNumber) {
-        return this == PRE_DELTA ? "Pre-Delta " + cycleNumber : "Final Delta";
+    public String label(String cycleLabel) {
+        return this == PRE_DELTA ? "Pre-Delta " + cycleLabel : "Final Delta";
     }
 
     /**
@@ -35,8 +37,8 @@ public enum DeltaType {
      * "done" — this cycle's migration was marked finished via the Finish button.
      * completeness, though callers render no chip at all in that state (there is no settled type yet).
      */
-    public String labelWithPhase(int cycleNumber, DeltaPhase phase) {
-        String base = label(cycleNumber);
+    public String labelWithPhase(String cycleLabel, DeltaPhase phase) {
+        String base = label(cycleLabel);
         return switch (phase) {
             case IN_APPROVAL -> base + " - in progress";
             case READY -> base + " - ready to start";

@@ -190,6 +190,10 @@ class DeltaCycleServiceTest {
 
         assertThat(wasFinal).isFalse();
         assertThat(combination.getCurrentCycleNumber()).isEqualTo(2);
+        // A genuine finish is the ONE thing that advances the user-facing "Delta N": major +1, minor
+        // reset to 1 for the fresh Pre-Delta this rolls into.
+        assertThat(combination.getCurrentDeltaMajor()).isEqualTo(2);
+        assertThat(combination.getCurrentDeltaMinor()).isEqualTo(1);
         assertThat(combination.getCurrentDeltaType()).isNull();
         assertThat(combination.isFinalDeltaComplete()).isFalse();
         // Every per-cycle timestamp is cleared, so the next cycle starts from a clean pre-submit state
@@ -247,6 +251,78 @@ class DeltaCycleServiceTest {
 
         assertThat(service.completeCycle(combination, "eng@cloudfuze.com", FINISHED_AT)).isFalse();
         assertThat(combination.isFinalDeltaComplete()).isFalse();
+    }
+
+    // ---- recordDeclineAndRollOver: major only moves on a genuine finish, never on a decline --------
+    // Regression coverage for a real bug: a decline used to advance the SAME internal counter a finish
+    // does, so a declined-and-redone Pre-Delta 2 read as "Delta 3" everywhere (pre-check header,
+    // Approvals, history) -- indistinguishable from an actually-new Pre-Delta. Declining now only
+    // advances the minor ("redo count"); the major ("Delta N") is untouched until Finish is clicked.
+
+    @Test
+    void decliningRedoesTheSameMajorAndOnlyAdvancesTheMinor() {
+        combination.setCurrentDeltaMajor(2);
+        combination.setCurrentDeltaMinor(1);
+        combination.setCurrentDeltaType(DeltaType.PRE_DELTA);
+
+        service.recordDeclineAndRollOver(combination, SignOffRole.MIGRATION_LEAD, "mgr@cloudfuze.com",
+                "Missing evidence", SUBMITTED_AT);
+
+        assertThat(combination.getCurrentDeltaMajor()).isEqualTo(2);
+        assertThat(combination.getCurrentDeltaMinor()).isEqualTo(2);
+        // The internal bookkeeping key still advances (it always does, on every rollover) -- only the
+        // user-facing major/minor pair is what stays put on a decline.
+        assertThat(combination.getCurrentCycleNumber()).isEqualTo(2);
+    }
+
+    @Test
+    void repeatedDeclinesOfTheSamePreDeltaJustKeepAdvancingTheMinor() {
+        combination.setCurrentDeltaMajor(2);
+        combination.setCurrentDeltaMinor(1);
+        combination.setCurrentDeltaType(DeltaType.PRE_DELTA);
+
+        service.recordDeclineAndRollOver(combination, SignOffRole.MIGRATION_LEAD, "mgr@cloudfuze.com", "one", SUBMITTED_AT);
+        combination.setCurrentDeltaType(DeltaType.PRE_DELTA);
+        service.recordDeclineAndRollOver(combination, SignOffRole.DEV_LEAD, "dev@cloudfuze.com", "two", SUBMITTED_AT);
+
+        assertThat(combination.getCurrentDeltaMajor()).isEqualTo(2);
+        assertThat(combination.getCurrentDeltaMinor()).isEqualTo(3);
+    }
+
+    @Test
+    void theDeclinedCycleRowFreezesTheMajorMinorItWasDeclinedAtNotTheRolledOverOne() {
+        combination.setCurrentDeltaMajor(2);
+        combination.setCurrentDeltaMinor(1);
+        combination.setCurrentDeltaType(DeltaType.PRE_DELTA);
+
+        DeltaCycle cycle = service.recordDeclineAndRollOver(combination, SignOffRole.MIGRATION_LEAD,
+                "mgr@cloudfuze.com", "Missing evidence", SUBMITTED_AT);
+
+        // Frozen at "2.1" (what was actually declined), even though the rollover that immediately
+        // followed already bumped the LIVE combination on to minor 2.
+        assertThat(cycle.getDeltaMajor()).isEqualTo(2);
+        assertThat(cycle.getDeltaMinor()).isEqualTo(1);
+        assertThat(cycle.cycleLabel()).isEqualTo("2.1");
+        assertThat(cycle.getStatus()).isEqualTo(DeltaCycleStatus.DECLINED);
+    }
+
+    @Test
+    void aPreDeltaThatFinishesAfterBeingDeclinedTwiceMovesToTheNextMajorWithAFreshMinor() {
+        // The full lifecycle the bug report described: Pre-Delta 2 declined twice (2.1, 2.2), redone a
+        // third time and this time it finishes -- the NEXT Pre-Delta must read "3.1", not "2.4".
+        combination.setCurrentDeltaMajor(2);
+        combination.setCurrentDeltaMinor(1);
+        combination.setCurrentDeltaType(DeltaType.PRE_DELTA);
+        service.recordDeclineAndRollOver(combination, SignOffRole.MIGRATION_LEAD, "mgr@cloudfuze.com", "one", SUBMITTED_AT);
+        combination.setCurrentDeltaType(DeltaType.PRE_DELTA);
+        service.recordDeclineAndRollOver(combination, SignOffRole.MIGRATION_LEAD, "mgr@cloudfuze.com", "two", SUBMITTED_AT);
+        assertThat(combination.currentDeltaCycleLabel()).isEqualTo("2.3");
+
+        combination.setCurrentDeltaType(DeltaType.PRE_DELTA);
+        existingCycle(DeltaType.PRE_DELTA, combination.getCurrentCycleNumber());
+        service.completeCycle(combination, "eng@cloudfuze.com", FINISHED_AT);
+
+        assertThat(combination.currentDeltaCycleLabel()).isEqualTo("3.1");
     }
 
     // ---- rollover reconciles the checklist against the product type ----
@@ -342,7 +418,7 @@ class DeltaCycleServiceTest {
 
         var history = service.history(CID);
 
-        assertThat(history).extracting("label").containsExactly("Pre-Delta 1", "Final Delta");
+        assertThat(history).extracting("label").containsExactly("Pre-Delta 1.1", "Final Delta");
         assertThat(history.get(0).getSignOffs()).extracting("role")
                 .containsExactly(SignOffRole.MIGRATION_LEAD, SignOffRole.DEV_LEAD, SignOffRole.QA_LEAD);
     }
@@ -351,5 +427,63 @@ class DeltaCycleServiceTest {
         DeltaCycleSignOff snap = new DeltaCycleSignOff(cycle, signOff(role, SignOffStatus.APPROVED, "x@cloudfuze.com"));
         snap.setCycleId(cycle.getId());
         return snap;
+    }
+
+    // ---- findDeclinedAwaitingResubmission -----------------------------------------------------------
+    // Backs SignOffService.listApprovals' "keep a declined combination visible instead of it vanishing
+    // the instant the rollover deletes its live chain" behaviour.
+
+    @Test
+    void onlyTheLatestCycleCountsSoAResubmittedAndApprovedComboIsNotStillReportedDeclined() {
+        DeltaCycle declinedFirst = new DeltaCycle(combination, 1, DeltaType.PRE_DELTA);
+        declinedFirst.setId(201L);
+        declinedFirst.setCombinationId(CID);
+        declinedFirst.setStatus(DeltaCycleStatus.DECLINED);
+
+        DeltaCycle approvedSecond = new DeltaCycle(combination, 2, DeltaType.PRE_DELTA);
+        approvedSecond.setId(202L);
+        approvedSecond.setCombinationId(CID);
+        approvedSecond.setStatus(DeltaCycleStatus.APPROVED);
+
+        when(cycleRepository.findAll()).thenReturn(List.of(declinedFirst, approvedSecond));
+
+        assertThat(service.findDeclinedAwaitingResubmission()).isEmpty();
+    }
+
+    @Test
+    void aCombinationWhoseLatestCycleIsDeclinedIsReturned() {
+        DeltaCycle approvedFirst = new DeltaCycle(combination, 1, DeltaType.PRE_DELTA);
+        approvedFirst.setId(203L);
+        approvedFirst.setCombinationId(CID);
+        approvedFirst.setStatus(DeltaCycleStatus.APPROVED);
+
+        DeltaCycle declinedSecond = new DeltaCycle(combination, 2, DeltaType.PRE_DELTA);
+        declinedSecond.setId(204L);
+        declinedSecond.setCombinationId(CID);
+        declinedSecond.setStatus(DeltaCycleStatus.DECLINED);
+
+        when(cycleRepository.findAll()).thenReturn(List.of(approvedFirst, declinedSecond));
+
+        assertThat(service.findDeclinedAwaitingResubmission()).containsExactly(declinedSecond);
+    }
+
+    @Test
+    void eachCombinationIsConsideredIndependently() {
+        WorkspaceCombination otherCombination = new WorkspaceCombination(combination.getServer(), "Other combo");
+        otherCombination.setId(2L);
+
+        DeltaCycle declined = new DeltaCycle(combination, 1, DeltaType.PRE_DELTA);
+        declined.setId(205L);
+        declined.setCombinationId(CID);
+        declined.setStatus(DeltaCycleStatus.DECLINED);
+
+        DeltaCycle approved = new DeltaCycle(otherCombination, 1, DeltaType.PRE_DELTA);
+        approved.setId(206L);
+        approved.setCombinationId(2L);
+        approved.setStatus(DeltaCycleStatus.APPROVED);
+
+        when(cycleRepository.findAll()).thenReturn(List.of(declined, approved));
+
+        assertThat(service.findDeclinedAwaitingResubmission()).containsExactly(declined);
     }
 }

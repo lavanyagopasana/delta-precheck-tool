@@ -57,6 +57,7 @@ class ServerDecommissionTest {
     @Mock private DeltaCycleRepository deltaCycleRepository;
     @Mock private AppUserService appUserService;
     @Mock private ServerPurgeService serverPurgeService;
+    @Mock private TeamService teamService;
 
     private ServerService service;
     private Server server;
@@ -65,7 +66,7 @@ class ServerDecommissionTest {
     void setUp() {
         service = new ServerService(serverRepository, workspacePairRepository, workspaceCombinationRepository,
                 preCheckSubmissionRepository, ticketService, projectRepository, deltaCycleRepository, appUserService,
-                serverPurgeService);
+                serverPurgeService, teamService);
 
         server = new Server("SRV-1");
         server.setId(SID);

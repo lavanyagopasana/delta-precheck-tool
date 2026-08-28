@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { getSignOffApprovals, approveSignOff, declineSignOff } from "../api/client";
+import { getSignOffApprovals, approveSignOff, declineSignOff, getDeltaCycles } from "../api/client";
 import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
 import PreCheckPanel from "../components/PreCheckPanel";
+import { CycleSnapshot } from "../components/DeltaHistoryPanel";
 import DeltaBadge from "../components/DeltaBadge";
 import { useToast } from "../components/Toast";
 import { useConfirm } from "../components/ConfirmDialog";
@@ -33,6 +34,52 @@ function primaryRowFor(rows) {
     rows.find((r) => r.role === "QA_LEAD" && (r.status === "APPROVED" || r.status === "SKIPPED")) ||
     rows.find((r) => r.status === "DECLINED") ||
     rows[0]
+  );
+}
+
+// Straight to the frozen checklist for a still-declined row -- no click-through a cycle list first.
+// A DECLINED approval row is always the "awaiting resubmission" one (see SignOffService.listApprovals);
+// its live pre-check was already wiped blank by the rollover, so the only place the declined attempt's
+// answers/evidence still exist is this cycle's snapshot.
+function DeclinedChecklist({ combinationId }) {
+  const [cycle, setCycle] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getDeltaCycles(combinationId)
+      .then((cycles) => {
+        if (cancelled) return;
+        // history() returns cycles in cycleNumber order -- the last DECLINED one is the current,
+        // still-unresolved decline (an earlier declined cycle would mean it was since resubmitted
+        // and resolved, and this row wouldn't exist at all in that case).
+        const declined = [...(cycles || [])].reverse().find((c) => c.status === "DECLINED");
+        setCycle(declined || null);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.response?.data?.message || "Couldn't load the declined checklist.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [combinationId]);
+
+  if (error) return <div className="inline-hint">{error}</div>;
+  if (!cycle) return <p>Loading...</p>;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <span className="badge red">Declined</span>
+        <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
+          by {cycle.declinedByRoleLabel} ({emailLocalPart(cycle.declinedBy) || "—"})
+        </span>
+      </div>
+      {cycle.declineReason && (
+        <div style={{ fontSize: 13, marginBottom: 14 }}>“{cycle.declineReason}”</div>
+      )}
+      <CycleSnapshot cycle={cycle} />
+    </div>
   );
 }
 
@@ -439,7 +486,16 @@ export default function ApprovalsPage() {
           width={860}
           closeIcon
         >
-          <PreCheckPanel combinationId={preCheckFor.combinationId} showBackNav={false} showHeader={false} />
+          {/* A row reading DECLINED here is always the "still awaiting resubmission" one (see
+              SignOffService.listApprovals) -- its live pre-check was already wiped blank by the
+              rollover, so PreCheckPanel would show an empty form and no trace of why it was
+              declined. DeclinedChecklist reads the frozen cycle snapshot instead, straight to the
+              checklist as it stood at the moment of the decline. */}
+          {preCheckFor.status === "DECLINED" ? (
+            <DeclinedChecklist combinationId={preCheckFor.combinationId} />
+          ) : (
+            <PreCheckPanel combinationId={preCheckFor.combinationId} showBackNav={false} showHeader={false} />
+          )}
         </Modal>
       )}
     </div>

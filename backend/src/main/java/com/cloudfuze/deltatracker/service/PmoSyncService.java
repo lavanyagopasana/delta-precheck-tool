@@ -35,6 +35,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Mirrors the PMO tool's project list into this tracker so a project created there shows up here
  * without anybody re-typing it.
  *
+ * <p><b>As of the Delta-phase webhook ({@code PmoWebhookController} / {@link #ingestOne}), this
+ * class's batch poll ({@link #sync()} / {@link #scheduledSync()}) is dormant by default</b>
+ * ({@code pmo.auto-sync-enabled=false}). The webhook is the one path new projects arrive by now,
+ * firing the moment a project reaches Delta phase -- which is also the only phase this tool (a
+ * pre-Delta readiness checklist) has anything to do with. The batch machinery below is untouched and
+ * can be re-enabled ({@code PMO_AUTO_SYNC_ENABLED=true}) as a reconciliation fallback; both paths
+ * share the same per-record logic ({@link #upsert}), so a project is identical regardless of which
+ * one created it.
+ *
  * <p><b>This is a one-way pull, and deliberately not a full mirror.</b> PMO is the authority on which
  * projects exist and what they are called; this tool stays the authority on everything it owns
  * (servers, workspace pairs, checklists, sign-off chains, delta cycles). So the sync only ever creates
@@ -95,6 +104,7 @@ public class PmoSyncService {
     private final PmoProjectClient pmoProjectClient;
     private final ProjectRepository projectRepository;
     private final AppUserService appUserService;
+    private final TeamService teamService;
 
     /**
      * Which PMO statuses to import, comma-separated. Defaults to ACTIVE only, by product decision on
@@ -106,14 +116,15 @@ public class PmoSyncService {
     @Value("${pmo.import-statuses:ACTIVE}")
     private String importStatuses;
 
-    @Value("${pmo.auto-sync-enabled:true}")
+    @Value("${pmo.auto-sync-enabled:false}")
     private boolean autoSyncEnabled;
 
     public PmoSyncService(PmoProjectClient pmoProjectClient, ProjectRepository projectRepository,
-                           AppUserService appUserService) {
+                           AppUserService appUserService, TeamService teamService) {
         this.pmoProjectClient = pmoProjectClient;
         this.projectRepository = projectRepository;
         this.appUserService = appUserService;
+        this.teamService = teamService;
     }
 
     /**
@@ -180,12 +191,45 @@ public class PmoSyncService {
     }
 
     /**
-     * Background poll, so a project created in PMO turns up here on its own. Five minutes rather than
-     * TicketService's fifteen because "it should appear straight away" is the whole point of this
-     * feature; PMO's API is one cheap ~100KB GET, so the extra frequency costs little.
+     * Upserts ONE externally-supplied record -- the webhook path (see {@code PmoWebhookService}),
+     * as opposed to {@link #sync()}'s full-feed batch. Reuses the exact same {@link #upsert} logic
+     * (manager resolution, engineer-team sync, the name-collision guard) so a project delivered by
+     * the Delta-phase webhook is indistinguishable from one the poll would have produced -- there is
+     * just no batch to build a name-collision table against, so {@code assignNames}'s duplicate-name
+     * disambiguation is skipped; {@link #resolveAgainstExistingNames} still guards the DB-level
+     * collision on its own.
      *
-     * <p>There is no push/webhook option -- PMO offers a pull API only -- so five minutes is as close
-     * to instant as this can get without PMO calling us.
+     * <p>Ordinary {@code @Transactional} (unlike {@link #sync()}'s NOT_SUPPORTED): there is no slow
+     * external fetch in front of this, just the one row's worth of work a single webhook call implies.
+     */
+    @Transactional
+    public PmoSyncResultDto ingestOne(PmoProjectDto record) {
+        PmoSyncResultDto result = new PmoSyncResultDto();
+        if (!StringUtils.hasText(record.getExternalId()) || !StringUtils.hasText(record.getName())) {
+            result.addError("Webhook payload is missing a project id or name.");
+            return result;
+        }
+        result.setTotalRows(1);
+        ManagerIndex managers = buildManagerIndex();
+        Set<String> unresolved = new LinkedHashSet<>();
+        try {
+            upsert(record, truncate(record.getName().trim()), managers, unresolved, result);
+        } catch (Exception e) {
+            result.addError("Could not sync \"" + record.getName() + "\" (" + record.getExternalId()
+                    + "): " + e.getMessage());
+        }
+        result.setUnresolvedManagers(new ArrayList<>(unresolved));
+        return result;
+    }
+
+    /**
+     * Background poll, so a project created in PMO turns up here on its own. Defaults to OFF
+     * ({@code pmo.auto-sync-enabled=false}) as of the Delta-phase webhook going live
+     * ({@code PmoWebhookController}): that webhook is now the one way projects arrive from PMO, firing
+     * the instant a project moves into Delta phase rather than waiting on a poll that pulls in every
+     * ACTIVE project regardless of phase. Set {@code PMO_AUTO_SYNC_ENABLED=true} to re-enable this as
+     * a periodic reconciliation pass alongside the webhook -- the code is untouched, just dormant by
+     * default.
      */
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @Scheduled(fixedDelayString = "${pmo.sync-interval-ms:300000}",
@@ -277,8 +321,9 @@ public class PmoSyncService {
         if (isNew) {
             project.setCreatedBy(SYNC_CREATED_BY);
             project.setCreatedAt(LocalDateTime.now());
-            // engineerEmails stays empty: PMO knows nothing about who works a project here, and an
-            // engineer only sees a project once its Migration Manager assigns them to it.
+            // engineerEmails is already synced to whatever manager applyManager resolved above (empty
+            // if none did) -- PMO knows nothing about engineers directly, but the manager's whole team
+            // comes along automatically the moment a manager is resolved.
             projectRepository.save(project);
             result.setCreatedCount(result.getCreatedCount() + 1);
             return;
@@ -348,6 +393,7 @@ public class PmoSyncService {
         String current = project.getMigrationManagerName();
         if (!StringUtils.hasText(current)) {
             project.setMigrationManagerName(resolved);
+            project.setEngineerEmails(teamService.engineersOf(resolved));
             result.setManagersAssigned(result.getManagersAssigned() + 1);
             return;
         }
@@ -358,6 +404,7 @@ public class PmoSyncService {
         String previouslyResolved = resolveManagerEmail(previousPmoManager, managers);
         if (previouslyResolved != null && current.equalsIgnoreCase(previouslyResolved)) {
             project.setMigrationManagerName(resolved);
+            project.setEngineerEmails(teamService.engineersOf(resolved));
             result.setManagersAssigned(result.getManagersAssigned() + 1);
             return;
         }

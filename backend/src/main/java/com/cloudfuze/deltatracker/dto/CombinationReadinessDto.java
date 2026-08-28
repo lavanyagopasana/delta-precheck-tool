@@ -50,8 +50,13 @@ public class CombinationReadinessDto {
     private String readinessDetail;
 
     // --- Multi-cycle Delta state (see DeltaCycle) ---
-    // Which cycle is being filled/reviewed/run right now, 1-based.
+    // Internal bookkeeping/ordering key only -- NOT what to show a user (it advances on every
+    // rollover, decline included). currentDeltaCycleLabel below is the number a human should read.
     private int currentCycleNumber;
+    // "2.1" / "3.2" -- major only advances on a genuine Pre-Delta finish, minor on a decline-redo of
+    // the same one. This is the fallback the frontend shows before currentDeltaLabel exists (i.e.
+    // before the pre-check names this cycle's type).
+    private String currentDeltaCycleLabel;
     // The current cycle's declared type, settled at submit time. Null until the pre-check is
     // submitted -- nothing has decided this cycle's nature before then.
     private DeltaType currentDeltaType;

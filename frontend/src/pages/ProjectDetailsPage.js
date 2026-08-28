@@ -2,8 +2,6 @@ import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   getProjectDetail,
-  updateProjectAssignments,
-  getRoster,
   getMetabaseDatabases,
   setProjectMetabaseDatabase,
   getProjectMetabaseStatus,
@@ -12,27 +10,16 @@ import { useToast } from "../components/Toast";
 import { useConfirm } from "../components/ConfirmDialog";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
-import EngineerChecklist from "../components/EngineerChecklist";
 import ServerUrlsPanel from "../components/ServerUrlsPanel";
 import MetabaseStatusPanel from "../components/MetabaseStatusPanel";
 import SearchableSelect from "../components/SearchableSelect";
 import { PlusIcon, FolderIcon, EyeIcon, EditIcon } from "../components/Icons";
-
-const EMPTY_ROSTER = { migrationManagers: [], engineers: [], engineersByManager: {} };
 
 const initials = (email) => (email || "?").trim().charAt(0).toUpperCase();
 
 // "CONTENT" -> "Content". Title case so the product type reads as a value rather than as a second
 // uppercase heading next to "Metabase Database".
 const titleCase = (s) => (s ? s.charAt(0) + s.slice(1).toLowerCase() : s);
-
-// True once the current selection actually differs from what's saved -- order shouldn't count
-// as a change, only membership.
-function isDirty(current, saved) {
-  const a = [...current].sort();
-  const b = [...saved].sort();
-  return JSON.stringify(a) !== JSON.stringify(b);
-}
 
 /**
  * Which Metabase database holds this project's migration data, ONE ROW PER PRODUCT TYPE, plus the
@@ -247,72 +234,13 @@ function MetabaseDatabasePicker({ project, productType, savedValue, canManage, i
   );
 }
 
-// The whole project header: name + engineers on the top row, manager below. Owns the engineer
-// selection state, which is why the header lives here rather than being assembled in the page.
-function ProjectHeader({ project, roster, canManage, onSaved, onAddServer, metabaseRow }) {
-  const showToast = useToast();
-  const [engineerEmails, setEngineerEmails] = useState(project.engineerEmails || []);
-  const [savedEmails, setSavedEmails] = useState(project.engineerEmails || []);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
-
-  const dirty = isDirty(engineerEmails, savedEmails);
-
-  // Only the engineers on THIS project's Migration Manager's team may be assigned. The manager is
-  // stored as an email (despite the field name), so it keys straight into engineersByManager.
-  //
-  //   manager set + on a team  -> that team's engineers only
-  //   manager set + no team    -> every engineer, plus a notice (below)
-  //   no manager at all        -> every engineer, plus a notice
-  //
-  // Falling back to the full list rather than an empty one is deliberate: a strict filter would make
-  // assignment impossible until an admin fixed the team, with nothing on screen explaining why.
-  const managerEmail = (project.migrationManagerName || "").toLowerCase();
-  const teamScopedEngineers = managerEmail ? roster.engineersByManager?.[managerEmail] : undefined;
-  const engineerOptions = teamScopedEngineers ?? roster.engineers;
-  // Anyone already saved on the project stays visible even if they since left the team -- otherwise
-  // their chip would vanish from the picker while remaining assigned in the database.
-  // De-duplicated case-insensitively, keeping the roster's spelling. A plain Set is case-sensitive,
-  // so "pravallika.punumalli@..." from the roster and "Pravallika.Punumalli@..." saved on the project
-  // both survived it -- and the picker then listed the same person twice.
-  const optionsWithSaved = (() => {
-    const seen = new Set();
-    const out = [];
-    for (const email of [...(engineerOptions || []), ...savedEmails]) {
-      const key = email.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(email);
-    }
-    return out;
-  })();
-  const unscopedReason = !managerEmail
-    ? "No Migration Manager is assigned yet, so every engineer is listed."
-    : !teamScopedEngineers
-    ? `${project.migrationManagerName} isn't on a team yet, so every engineer is listed. An admin can set their team under Admin > Manage Access.`
-    : null;
-
-  const handleSave = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      await updateProjectAssignments(project.id, { engineerEmails });
-      setSavedEmails(engineerEmails);
-      showToast("Project assignments updated.");
-      onSaved();
-    } catch (err) {
-      setError(err.response?.data?.message || "Failed to update assignments.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // The people on this project, shown as the header's second row rather than a separate
-  // "Assignments" card. The heading was a label for two fields that already label themselves, and
-  // it pushed the project's own team below the fold of its own header.
+// The project header: name on the top row, manager beside it. The project's engineers (whoever is
+// on the Migration Manager's team) are no longer shown here -- see the Team page in the sidebar
+// instead. Third row is the Metabase database picker, unrelated to either.
+function ProjectHeader({ project, canManage, onAddServer, metabaseRow }) {
   return (
     <div className="detail-header">
-      {/* Top row: the project's name on the left, its engineers on the right, primary action last. */}
+      {/* Top row: the project's name on the left, its manager on the right, primary action last. */}
       <div className="detail-header-top detail-header-top--split">
         <span className="detail-header-icon">
           <FolderIcon size={20} style={{ marginRight: 0 }} />
@@ -339,48 +267,7 @@ function ProjectHeader({ project, roster, canManage, onSaved, onAddServer, metab
         )}
       </div>
 
-      {/* Second row: the engineers -- a chip list that grows, so it gets the full width. */}
-      <div className="project-people">
-        <div className="project-people-block project-people-block--grow">
-          <div className="assign-section-head">
-            <span className="detail-fact-label">Migration Engineers</span>
-            {canManage && (
-              <button
-                className="btn"
-                style={{ padding: "4px 12px", fontSize: 12 }}
-                onClick={handleSave}
-                disabled={saving || !dirty}
-              >
-                {saving ? "Saving..." : dirty ? "Save" : "Saved"}
-              </button>
-            )}
-          </div>
-          {canManage ? (
-            <>
-              <EngineerChecklist options={optionsWithSaved} selected={engineerEmails} onChange={setEngineerEmails} />
-              {unscopedReason && (
-                <div className="inline-hint" style={{ marginTop: 8 }}>{unscopedReason}</div>
-              )}
-            </>
-          ) : project.engineerEmails?.length ? (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {project.engineerEmails.map((email) => (
-                <span key={email} className="engineer-chip" style={{ cursor: "default" }}>
-                  <span className="person-avatar">{initials(email)}</span>
-                  {email}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <span style={{ fontSize: 13, color: "var(--color-text-faint)" }}>None yet</span>
-          )}
-          {error && <div className="inline-hint" style={{ marginTop: 10 }}>{error}</div>}
-        </div>
-      </div>
-
-      {/* Third row: the Metabase database this project reports against. Its own row rather than a
-          block beside the engineers -- the dropdown and its button need the width, and squeezing them
-          into the people row pushed the engineer chips into a column. */}
+      {/* Second row: the Metabase database this project reports against. */}
       {metabaseRow}
     </div>
   );
@@ -390,7 +277,6 @@ export default function ProjectDetailsPage() {
   const { id } = useParams();
   const currentUser = useCurrentUser();
   const [project, setProject] = useState(null);
-  const [roster, setRoster] = useState(EMPTY_ROSTER);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showAddServer, setShowAddServer] = useState(false);
@@ -436,11 +322,6 @@ export default function ProjectDetailsPage() {
   };
 
   useEffect(load, [id]);
-  useEffect(() => {
-    getRoster()
-      .then(setRoster)
-      .catch(() => {});
-  }, []);
 
   // Loaded once per page visit, not per keystroke -- the list changes when somebody adds a database
   // in Metabase, which is far rarer than opening a project. A failure here is recorded rather than
@@ -463,8 +344,8 @@ export default function ProjectDetailsPage() {
   if (loading) return <p>Loading project...</p>;
   if (!project) return <div className="inline-hint">{error || "Project not found."}</div>;
 
-  // Only this project's manager, its team members, its creator, or an admin can edit
-  // assignments or import a CSV -- not just anyone with the Migration Manager/Engineer role globally.
+  // Only this project's manager, its team members, its creator, or an admin can add a server or
+  // import a CSV -- not just anyone with the Migration Manager/Engineer role globally.
   const canManage =
     isAdmin ||
     (!!project.migrationManagerName && currentUserEmail.toLowerCase() === project.migrationManagerName.toLowerCase()) ||
@@ -477,9 +358,7 @@ export default function ProjectDetailsPage() {
 
       <ProjectHeader
         project={project}
-        roster={roster}
         canManage={canManage}
-        onSaved={load}
         onAddServer={() => setShowAddServer(true)}
         metabaseRow={
           <MetabaseDatabaseRow

@@ -48,7 +48,7 @@ public class DeltaCycleDto {
         dto.setId(cycle.getId());
         dto.setCycleNumber(cycle.getCycleNumber());
         dto.setDeltaType(cycle.getDeltaType());
-        dto.setLabel(cycle.getDeltaType().label(cycle.getCycleNumber()));
+        dto.setLabel(cycle.getDeltaType().label(cycle.cycleLabel()));
         dto.setStatus(cycle.getStatus());
         dto.setSubmittedBy(cycle.getSubmittedBy());
         dto.setSubmittedAt(cycle.getSubmittedAt());

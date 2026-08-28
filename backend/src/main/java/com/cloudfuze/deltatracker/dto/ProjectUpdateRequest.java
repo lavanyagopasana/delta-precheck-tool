@@ -7,7 +7,7 @@ import lombok.Setter;
 
 // Editing an existing project's details. migrationManagerName is nullable (blank clears it, only
 // allowed when no approval is in progress). createdBy/engineerEmails aren't edited here --
-// engineers are managed via ProjectAssignmentRequest.
+// engineerEmails is derived automatically from the (new) manager's team by ProjectService.
 @Getter
 @Setter
 public class ProjectUpdateRequest {

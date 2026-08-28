@@ -1,6 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import ProjectDetailsPage from "./ProjectDetailsPage";
 import { ToastProvider } from "../components/Toast";
@@ -44,107 +43,36 @@ function project(overrides = {}) {
   };
 }
 
-// Team 1's manager owns siva; Team 2's owns ramana. The whole point of the feature is that
-// picking a manager must not expose the other team's engineers.
-const ROSTER = {
-  migrationManagers: ["harika.velidi@cloudfuze.com", "raghu.yellani@cloudfuze.com"],
-  engineers: [
-    "siva.kota@cloudfuze.com",
-    "ramana.reddy@cloudfuze.com",
-    "swaroop@cloudfuze.com",
-  ],
-  engineersByManager: {
-    "harika.velidi@cloudfuze.com": ["siva.kota@cloudfuze.com"],
-    "raghu.yellani@cloudfuze.com": ["ramana.reddy@cloudfuze.com"],
-  },
-};
-
-// The picker only lists options once opened, so every assertion goes through this. Matched on the
-// exact aria-label: a loose /add/i also matches "Add Server" on this page and is ambiguous.
-async function openEngineerPicker() {
-  const addButton = await waitFor(() => screen.getByRole("button", { name: "Add engineer" }));
-  await userEvent.click(addButton);
-}
-
-describe("ProjectDetailsPage engineer scoping", () => {
+// Engineers moved to the Team page in the sidebar -- this page only shows the project's name and
+// its Migration Manager, with no engineer list and no way to assign one.
+describe("ProjectDetailsPage header", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    client.getRoster.mockResolvedValue(ROSTER);
-    // The page also loads Metabase's database list on mount for the Metabase Database dropdown.
-    // Stubbed empty here because these tests are about engineer scoping -- but it has to be a
-    // resolved promise, since an auto-mock returns undefined and the page would throw on .then().
+    // The page loads Metabase's database list on mount for the Metabase Database dropdown.
+    // Stubbed empty here because these tests are about the header, not that dropdown -- but it has
+    // to be a resolved promise, since an auto-mock returns undefined and the page would throw on
+    // .then().
     client.getMetabaseDatabases.mockResolvedValue([]);
   });
 
-  test("offers only the engineers on the project manager's team", async () => {
+  test("shows the project name and its Migration Manager, with no engineers section", async () => {
     client.getProjectDetail.mockResolvedValue(project());
 
     renderPage();
     await screen.findByText("Acme Migration");
-    await openEngineerPicker();
 
-    expect(await screen.findByText("siva.kota@cloudfuze.com")).toBeInTheDocument();
-    // Team 2's engineer and the team-less engineer must both be absent.
-    expect(screen.queryByText("ramana.reddy@cloudfuze.com")).not.toBeInTheDocument();
-    expect(screen.queryByText("swaroop@cloudfuze.com")).not.toBeInTheDocument();
+    expect(screen.getByText("harika.velidi@cloudfuze.com")).toBeInTheDocument();
+    expect(screen.queryByText(/Migration Engineers/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /add engineer/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^save$/i })).not.toBeInTheDocument();
   });
 
-  test("falls back to every engineer, with a notice, when the manager has no team", async () => {
-    // A manager who exists but is absent from engineersByManager. A strict filter would render an
-    // empty dropdown here and make assignment impossible with nothing explaining why.
-    client.getProjectDetail.mockResolvedValue(
-      project({ migrationManagerName: "unassigned.manager@cloudfuze.com" })
-    );
-
-    renderPage();
-    await screen.findByText("Acme Migration");
-
-    expect(await screen.findByText(/isn't on a team yet/i)).toBeInTheDocument();
-
-    await openEngineerPicker();
-    expect(await screen.findByText("siva.kota@cloudfuze.com")).toBeInTheDocument();
-    expect(screen.getByText("ramana.reddy@cloudfuze.com")).toBeInTheDocument();
-  });
-
-  test("explains the unfiltered list when no manager is assigned at all", async () => {
+  test("shows a placeholder when no manager is assigned", async () => {
     client.getProjectDetail.mockResolvedValue(project({ migrationManagerName: null }));
 
     renderPage();
     await screen.findByText("Acme Migration");
 
-    expect(await screen.findByText(/No Migration Manager is assigned yet/i)).toBeInTheDocument();
-  });
-
-  test("keeps an already-assigned engineer visible after they leave the team", async () => {
-    // ramana is saved on the project but belongs to Team 2, so the scoped list excludes them.
-    // Dropping them from the picker would hide a chip that is still assigned in the database.
-    client.getProjectDetail.mockResolvedValue(
-      project({ engineerEmails: ["ramana.reddy@cloudfuze.com"] })
-    );
-
-    renderPage();
-    await screen.findByText("Acme Migration");
-
-    expect(await screen.findByText("ramana.reddy@cloudfuze.com")).toBeInTheDocument();
-  });
-
-  test("does not offer an engineer who is already assigned under a different case", async () => {
-    // project_engineers keeps whatever case was saved, while the roster serves the lowercased
-    // app_users value. Comparing them exactly listed an already-assigned person as available, so the
-    // same engineer could be added twice under two spellings.
-    client.getProjectDetail.mockResolvedValue(
-      project({
-        migrationManagerName: "harika.velidi@cloudfuze.com",
-        engineerEmails: ["Siva.Kota@cloudfuze.com"],
-      })
-    );
-
-    renderPage();
-    await screen.findByText("Acme Migration");
-    await openEngineerPicker();
-
-    // Exactly one occurrence: the assigned chip. Not a second one in the dropdown.
-    const matches = await screen.findAllByText(/siva\.kota@cloudfuze\.com/i);
-    expect(matches).toHaveLength(1);
+    expect(screen.getByText("Not assigned yet")).toBeInTheDocument();
   });
 });

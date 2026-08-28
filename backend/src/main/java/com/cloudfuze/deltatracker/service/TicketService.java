@@ -39,13 +39,16 @@ public class TicketService {
     // Used only by create() to open one explicit transaction around just the DB work, after the
     // (session-free) tracker fetch -- see the comment on create() for why.
     private final TransactionTemplate transactionTemplate;
+    private final TeamService teamService;
 
     public TicketService(TicketRepository ticketRepository, WorkspaceCombinationRepository workspaceCombinationRepository,
-                          TicketLookupService ticketLookupService, PlatformTransactionManager transactionManager) {
+                          TicketLookupService ticketLookupService, PlatformTransactionManager transactionManager,
+                          TeamService teamService) {
         this.ticketRepository = ticketRepository;
         this.workspaceCombinationRepository = workspaceCombinationRepository;
         this.ticketLookupService = ticketLookupService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.teamService = teamService;
     }
 
     // Tickets are scoped to the team of the project the server belongs to -- same visibility model as
@@ -196,7 +199,7 @@ public class TicketService {
         }
         if (callerRole == AppUserRole.MIGRATION_ENGINEER) {
             return callerEmail.equalsIgnoreCase(project.getCreatedBy())
-                    || project.getEngineerEmails().stream().anyMatch(callerEmail::equalsIgnoreCase);
+                    || teamService.isCurrentlyOnManagersTeam(project.getMigrationManagerName(), callerEmail);
         }
         return false;
     }

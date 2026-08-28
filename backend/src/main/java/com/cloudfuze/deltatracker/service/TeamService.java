@@ -17,6 +17,7 @@ import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -154,6 +155,35 @@ public class TeamService {
         return teamRepository.findByNameIgnoreCase(name.trim())
                 .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST,
                         "\"" + name.trim() + "\" isn't a known team"));
+    }
+
+    /**
+     * The engineer emails on {@code managerEmail}'s team, or empty if they're on no team / unknown.
+     * Used to auto-populate a project's engineers from whoever manages it, instead of a manual pick.
+     */
+    public LinkedHashSet<String> engineersOf(String managerEmail) {
+        if (managerEmail == null || managerEmail.isBlank()) {
+            return new LinkedHashSet<>();
+        }
+        return new LinkedHashSet<>(engineersByManager().getOrDefault(managerEmail.toLowerCase(), List.of()));
+    }
+
+    /**
+     * Whether {@code callerEmail} is CURRENTLY on {@code managerEmail}'s team -- the live check every
+     * "is this engineer allowed to act on this project" test should use instead of trusting
+     * {@code Project.engineerEmails}, which is only ever a snapshot copied in at project-creation or
+     * manager-reassignment time (see {@code ProjectService.create}/{@code updateDetails}).
+     *
+     * <p>Moving an engineer to a different team (via {@link #assign}) does not touch any project's
+     * stored snapshot, so a check against that snapshot would keep granting access to the OLD team's
+     * projects forever and never grant it on the NEW team's -- this is what actually happened and is
+     * the reason this method exists rather than every caller re-deriving the same live lookup.
+     */
+    public boolean isCurrentlyOnManagersTeam(String managerEmail, String callerEmail) {
+        if (callerEmail == null || callerEmail.isBlank()) {
+            return false;
+        }
+        return engineersOf(managerEmail).stream().anyMatch(callerEmail::equalsIgnoreCase);
     }
 
     private List<String> emailsOf(Long teamId, AppUserRole role) {

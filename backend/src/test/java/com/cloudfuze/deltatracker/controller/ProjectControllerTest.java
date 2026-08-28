@@ -29,9 +29,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * Web-layer validation tests (Part 2) for {@link ProjectController} with the real {@link SecurityConfig}.
- * Covers the Bean Validation rejections added this pass: blank name on create (@NotBlank), blank name
- * on update (@NotBlank -- was @NotNull, which let "" through), and an invalid engineer email in the
- * assignments list (element-level @Email). Each must return 400 in the GlobalExceptionHandler shape.
+ * Covers the Bean Validation rejections added this pass: blank name on create (@NotBlank) and blank name
+ * on update (@NotBlank -- was @NotNull, which let "" through). Each must return 400 in the
+ * GlobalExceptionHandler shape.
  */
 @WebMvcTest(ProjectController.class)
 @Import(SecurityConfig.class)
@@ -79,19 +79,5 @@ class ProjectControllerTest {
                 .andExpect(jsonPath("$.status").value(400))
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("name")));
         verify(projectService, never()).updateDetails(any(), any(), any(), any());
-    }
-
-    @Test
-    void invalidEngineerEmailInAssignmentsReturns400() throws Exception {
-        // PATCH /api/projects/{id}/assignments falls through to allowlistRequired (two path segments).
-        when(appUserService.isAllowed(anyString())).thenReturn(true);
-
-        mockMvc.perform(asUser(patch("/api/projects/5/assignments"))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"engineerEmails\":[\"not-an-email\"]}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.status").value(400))
-                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("email")));
-        verify(projectService, never()).updateAssignments(any(), any());
     }
 }

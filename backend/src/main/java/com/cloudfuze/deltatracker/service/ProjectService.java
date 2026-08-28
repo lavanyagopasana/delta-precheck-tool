@@ -1,6 +1,5 @@
 package com.cloudfuze.deltatracker.service;
 
-import com.cloudfuze.deltatracker.dto.ProjectAssignmentRequest;
 import com.cloudfuze.deltatracker.dto.ProjectDetailDto;
 import com.cloudfuze.deltatracker.dto.ProjectMetabaseDatabaseDto;
 import com.cloudfuze.deltatracker.dto.ProjectMetabaseRequest;
@@ -67,6 +66,9 @@ public class ProjectService {
     private final AppUserService appUserService;
     // Owns the per-server cascade delete that delete() used to inline itself.
     private final ServerPurgeService serverPurgeService;
+    // Source of truth for "which engineers work for this manager" -- a project's engineers are
+    // derived from its Migration Manager's team, not picked by hand (see syncEngineersToManager).
+    private final TeamService teamService;
 
     public ProjectService(ProjectRepository projectRepository,
                            ProjectMetabaseDatabaseRepository projectMetabaseDatabaseRepository,
@@ -79,7 +81,8 @@ public class ProjectService {
                            ServerService serverService,
                            WorkspaceCombinationService workspaceCombinationService,
                            AppUserService appUserService,
-                           ServerPurgeService serverPurgeService) {
+                           ServerPurgeService serverPurgeService,
+                           TeamService teamService) {
         this.projectRepository = projectRepository;
         this.projectMetabaseDatabaseRepository = projectMetabaseDatabaseRepository;
         this.serverRepository = serverRepository;
@@ -92,6 +95,7 @@ public class ProjectService {
         this.workspaceCombinationService = workspaceCombinationService;
         this.appUserService = appUserService;
         this.serverPurgeService = serverPurgeService;
+        this.teamService = teamService;
     }
 
     // email == null means auth isn't configured (or caller identity is unknown) -- in that case
@@ -194,8 +198,10 @@ public class ProjectService {
 
     // A Migration Manager creating a project is automatically that project's manager -- no
     // selection needed. Anyone else (an engineer, an admin) must pick one from the roster.
-    // A Migration Engineer creating a project is likewise automatically one of its assigned
-    // engineers -- they're clearly going to be working on it, no separate assignment step needed.
+    // Engineers are never picked by hand: whoever is on the resulting manager's team
+    // (teamService.engineersOf) is automatically involved, plus the creator themselves when
+    // they're an engineer -- they're clearly going to be working on it, even if their manager
+    // differs.
     public ProjectSummaryDto create(String name, String createdBy,
                                      String migrationManagerName) {
         String trimmed = name.trim();
@@ -210,16 +216,13 @@ public class ProjectService {
         boolean creatorIsManager = creatorRole == AppUserRole.MIGRATION_MANAGER;
         boolean creatorIsEngineer = creatorRole == AppUserRole.MIGRATION_ENGINEER;
         String effectiveManager = creatorIsManager ? createdBy : blankToNull(migrationManagerName);
-        Set<String> initialEngineers = creatorIsEngineer ? new LinkedHashSet<>(Set.of(createdBy)) : null;
+
+        Set<String> initialEngineers = teamService.engineersOf(effectiveManager);
+        if (creatorIsEngineer) {
+            initialEngineers.add(createdBy);
+        }
 
         Project project = new Project(trimmed, createdBy, effectiveManager, initialEngineers);
-        Project saved = projectRepository.save(project);
-        return buildSummary(saved, serverRepository.findAll());
-    }
-
-    public ProjectSummaryDto updateAssignments(Long id, ProjectAssignmentRequest request) {
-        Project project = findOrThrow(id);
-        project.setEngineerEmails(toSet(request.getEngineerEmails()));
         Project saved = projectRepository.save(project);
         return buildSummary(saved, serverRepository.findAll());
     }
@@ -288,6 +291,9 @@ public class ProjectService {
                 }
             }
             project.setMigrationManagerName(newManager);
+            // The engineer list follows the manager: reassigning to a new manager swaps in that
+            // manager's whole team, since engineers are never picked by hand (see create()).
+            project.setEngineerEmails(teamService.engineersOf(newManager));
         }
 
         project.setName(trimmedName);
@@ -412,7 +418,7 @@ public class ProjectService {
             case ADMIN -> true;
             case MIGRATION_MANAGER -> callerEmail.equalsIgnoreCase(project.getMigrationManagerName());
             case MIGRATION_ENGINEER -> callerEmail.equalsIgnoreCase(project.getCreatedBy())
-                    || project.getEngineerEmails().stream().anyMatch(callerEmail::equalsIgnoreCase);
+                    || teamService.isCurrentlyOnManagersTeam(project.getMigrationManagerName(), callerEmail);
             case DEV_LEAD, QA_LEAD -> false;
         };
     }
@@ -514,20 +520,12 @@ public class ProjectService {
             case ADMIN, DEV_LEAD, QA_LEAD -> true;
             case MIGRATION_MANAGER -> callerEmail.equalsIgnoreCase(project.getMigrationManagerName());
             case MIGRATION_ENGINEER -> callerEmail.equalsIgnoreCase(project.getCreatedBy())
-                    || project.getEngineerEmails().stream().anyMatch(callerEmail::equalsIgnoreCase);
+                    || teamService.isCurrentlyOnManagersTeam(project.getMigrationManagerName(), callerEmail);
         };
     }
 
     private static String blankToNull(String value) {
         return value != null && !value.isBlank() ? value.trim() : null;
-    }
-
-    private static LinkedHashSet<String> toSet(List<String> emails) {
-        LinkedHashSet<String> set = new LinkedHashSet<>();
-        if (emails != null) {
-            emails.stream().filter(Objects::nonNull).map(String::trim).filter(s -> !s.isEmpty()).forEach(set::add);
-        }
-        return set;
     }
 
     private static void copySummary(ProjectSummaryDto from, ProjectSummaryDto to) {
@@ -674,7 +672,12 @@ public class ProjectService {
         dto.setOpenEscalationCount(openEscalations);
         dto.setMigrationManagers(migrationManagers);
         dto.setMigrationManagerName(project.getMigrationManagerName());
-        dto.setEngineerEmails(List.copyOf(project.getEngineerEmails()));
+        // Live team membership, NOT the stored Project.engineerEmails snapshot -- that field is only
+        // ever a copy taken when the project was created or its manager last reassigned, so an admin
+        // moving an engineer to a different team afterwards would never be reflected here (or in the
+        // frontend's canManage check, which reads this same field) until something re-triggers the
+        // snapshot. See TeamService.isCurrentlyOnManagersTeam's javadoc for the incident this fixed.
+        dto.setEngineerEmails(new java.util.ArrayList<>(teamService.engineersOf(project.getMigrationManagerName())));
         dto.setDevApprovalsDone(devDone);
         dto.setDevApprovalsPending(devPending);
         dto.setMigrationManagerApprovalsDone(migrationManagerDone);

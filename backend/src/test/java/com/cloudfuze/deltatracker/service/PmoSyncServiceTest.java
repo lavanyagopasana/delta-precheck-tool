@@ -16,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 
@@ -53,6 +54,9 @@ class PmoSyncServiceTest {
     @Mock
     private AppUserService appUserService;
 
+    @Mock
+    private TeamService teamService;
+
     /** The real MIGRATION_MANAGER roster (docs/seed/teams-roster.sql), so matching is tested for real. */
     private static final List<String> MANAGERS = List.of(
             "harika.velidi@cloudfuze.com",
@@ -68,7 +72,7 @@ class PmoSyncServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PmoSyncService(pmoProjectClient, projectRepository, appUserService);
+        service = new PmoSyncService(pmoProjectClient, projectRepository, appUserService, teamService);
         ReflectionTestUtils.setField(service, "importStatuses", "ACTIVE");
         ReflectionTestUtils.setField(service, "autoSyncEnabled", true);
         // Default: nothing already in the database, and save() hands the entity straight back.
@@ -76,6 +80,8 @@ class PmoSyncServiceTest {
         when(projectRepository.findByNameIgnoreCase(anyString())).thenReturn(Optional.empty());
         when(projectRepository.save(any(Project.class))).thenAnswer(i -> i.getArgument(0));
         when(appUserService.emailsForRole(AppUserRole.MIGRATION_MANAGER)).thenReturn(MANAGERS);
+        // No teams set up in these tests -- a resolved manager simply brings an empty engineer set.
+        when(teamService.engineersOf(anyString())).thenReturn(new LinkedHashSet<>());
     }
 
     private static PmoProjectDto withManager(String id, String name, String pmoManager) {
@@ -525,6 +531,48 @@ class PmoSyncServiceTest {
 
         service.scheduledSync();  // must not propagate -- a thrown exception would kill the schedule
 
+        verify(projectRepository, never()).save(any(Project.class));
+    }
+
+    // ---- ingestOne: the single-record path the Delta-phase webhook uses (PmoWebhookService) --------
+
+    @Test
+    void ingestOneCreatesAProjectWithManagerAndEngineersResolvedJustLikeTheBatchPoll() {
+        PmoProjectDto record = withManager("ext-1", "acme", "Harika");
+
+        PmoSyncResultDto result = service.ingestOne(record);
+
+        assertThat(result.getErrors()).isEmpty();
+        assertThat(result.getCreatedCount()).isEqualTo(1);
+        assertThat(savedProjects()).singleElement().satisfies(p -> {
+            assertThat(p.getExternalId()).isEqualTo("ext-1");
+            assertThat(p.getMigrationManagerName()).isEqualTo("harika.velidi@cloudfuze.com");
+            assertThat(p.getCreatedBy()).isEqualTo(PmoSyncService.SYNC_CREATED_BY);
+        });
+    }
+
+    @Test
+    void ingestOneUpdatesAnAlreadySyncedProjectMatchedByExternalId() {
+        Project existing = new Project();
+        existing.setId(9L);
+        existing.setExternalId("ext-1");
+        existing.setName("acme");
+        when(projectRepository.findByExternalId("ext-1")).thenReturn(Optional.of(existing));
+
+        PmoSyncResultDto result = service.ingestOne(withManager("ext-1", "acme", "Harika"));
+
+        assertThat(result.getUpdatedCount()).isEqualTo(1);
+        assertThat(result.getCreatedCount()).isZero();
+        assertThat(savedProjects()).singleElement().satisfies(p -> assertThat(p.getId()).isEqualTo(9L));
+    }
+
+    @Test
+    void ingestOneReportsAnErrorForAPayloadMissingIdOrNameRatherThanThrowing() {
+        PmoProjectDto noId = record(null, "no id here", "ACTIVE", "Gmail - Gmail");
+
+        PmoSyncResultDto result = service.ingestOne(noId);
+
+        assertThat(result.getErrors()).isNotEmpty();
         verify(projectRepository, never()).save(any(Project.class));
     }
 }

@@ -108,7 +108,7 @@ export default function CombinationOverview({ readiness, preCheckAction, startAc
               ? `Closed after ${readiness.completedCycleCount} delta cycle${
                   readiness.completedCycleCount === 1 ? "" : "s"
                 }${readiness.finalDeltaCompletedBy ? ` · ${emailLocalPart(readiness.finalDeltaCompletedBy)}` : ""}`
-              : `${readiness.currentDeltaLabel || `Delta ${readiness.currentCycleNumber}`}${previousDeltasDoneLabel(readiness)}`}
+              : `${readiness.currentDeltaLabel || `Delta ${readiness.currentDeltaCycleLabel}`}${previousDeltasDoneLabel(readiness)}`}
           </div>
         </div>
 

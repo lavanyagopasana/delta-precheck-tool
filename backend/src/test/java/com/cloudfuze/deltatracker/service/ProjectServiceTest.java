@@ -1,0 +1,202 @@
+package com.cloudfuze.deltatracker.service;
+
+import com.cloudfuze.deltatracker.dto.ProjectSummaryDto;
+import com.cloudfuze.deltatracker.dto.ProjectUpdateRequest;
+import com.cloudfuze.deltatracker.entity.AppUserRole;
+import com.cloudfuze.deltatracker.entity.Project;
+import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
+import com.cloudfuze.deltatracker.repository.ProjectMetabaseDatabaseRepository;
+import com.cloudfuze.deltatracker.repository.ProjectRepository;
+import com.cloudfuze.deltatracker.repository.ServerRepository;
+import com.cloudfuze.deltatracker.repository.SignOffRepository;
+import com.cloudfuze.deltatracker.repository.TicketRepository;
+import com.cloudfuze.deltatracker.repository.WorkspaceCombinationRepository;
+import com.cloudfuze.deltatracker.repository.WorkspacePairRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * Unit tests for {@link ProjectService}'s manager -> engineer auto-assignment: a project's
+ * engineers are never picked by hand, they're always whoever is on the (current) Migration
+ * Manager's team, per TeamService. This is the behaviour that replaced the old manual "add
+ * engineer" picker on the project details page.
+ */
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class ProjectServiceTest {
+
+    @Mock private ProjectRepository projectRepository;
+    @Mock private ProjectMetabaseDatabaseRepository projectMetabaseDatabaseRepository;
+    @Mock private ServerRepository serverRepository;
+    @Mock private WorkspacePairRepository workspacePairRepository;
+    @Mock private WorkspaceCombinationRepository workspaceCombinationRepository;
+    @Mock private SignOffRepository signOffRepository;
+    @Mock private PreCheckSubmissionRepository preCheckSubmissionRepository;
+    @Mock private TicketRepository ticketRepository;
+    @Mock private ServerService serverService;
+    @Mock private WorkspaceCombinationService workspaceCombinationService;
+    @Mock private AppUserService appUserService;
+    @Mock private ServerPurgeService serverPurgeService;
+    @Mock private TeamService teamService;
+
+    private ProjectService service;
+
+    @BeforeEach
+    void setUp() {
+        service = new ProjectService(projectRepository, projectMetabaseDatabaseRepository, serverRepository,
+                workspacePairRepository, workspaceCombinationRepository, signOffRepository,
+                preCheckSubmissionRepository, ticketRepository, serverService, workspaceCombinationService,
+                appUserService, serverPurgeService, teamService);
+        when(projectRepository.existsByNameIgnoreCase(anyString())).thenReturn(false);
+        when(projectRepository.save(any(Project.class))).thenAnswer(i -> i.getArgument(0));
+        when(serverRepository.findAll()).thenReturn(List.of());
+    }
+
+    private Project savedProject() {
+        ArgumentCaptor<Project> captor = ArgumentCaptor.forClass(Project.class);
+        verify(projectRepository).save(captor.capture());
+        return captor.getValue();
+    }
+
+    @Test
+    void createDrawsEngineersFromTheManagersTeamRatherThanLeavingThemEmpty() {
+        when(appUserService.roleOf("mgr@cloudfuze.com")).thenReturn(Optional.of(AppUserRole.MIGRATION_MANAGER));
+        when(teamService.engineersOf("mgr@cloudfuze.com"))
+                .thenReturn(new LinkedHashSet<>(List.of("eng1@cloudfuze.com", "eng2@cloudfuze.com")));
+
+        ProjectSummaryDto result = service.create("Acme", "mgr@cloudfuze.com", null);
+
+        assertThat(result.getEngineerEmails()).containsExactlyInAnyOrder("eng1@cloudfuze.com", "eng2@cloudfuze.com");
+        assertThat(savedProject().getEngineerEmails())
+                .containsExactlyInAnyOrder("eng1@cloudfuze.com", "eng2@cloudfuze.com");
+    }
+
+    @Test
+    void anEngineerCreatingAProjectIsIncludedEvenWhenNotOnTheChosenManagersTeam() {
+        when(appUserService.roleOf("eng@cloudfuze.com")).thenReturn(Optional.of(AppUserRole.MIGRATION_ENGINEER));
+        when(teamService.engineersOf("mgr@cloudfuze.com"))
+                .thenReturn(new LinkedHashSet<>(List.of("teammate@cloudfuze.com")));
+
+        service.create("Acme", "eng@cloudfuze.com", "mgr@cloudfuze.com");
+
+        assertThat(savedProject().getEngineerEmails())
+                .containsExactlyInAnyOrder("teammate@cloudfuze.com", "eng@cloudfuze.com");
+    }
+
+    @Test
+    void aProjectWithNoResolvedManagerGetsNoEngineersEither() {
+        when(appUserService.roleOf("admin@cloudfuze.com")).thenReturn(Optional.of(AppUserRole.ADMIN));
+        when(teamService.engineersOf(null)).thenReturn(new LinkedHashSet<>());
+
+        service.create("Acme", "admin@cloudfuze.com", null);
+
+        assertThat(savedProject().getEngineerEmails()).isEmpty();
+    }
+
+    @Test
+    void reassigningTheManagerSwapsInTheNewManagersWholeTeam() {
+        Project existing = new Project("Acme", "admin@cloudfuze.com", "old.mgr@cloudfuze.com",
+                new LinkedHashSet<>(List.of("old.engineer@cloudfuze.com")));
+        existing.setId(1L);
+        when(projectRepository.findById(1L)).thenReturn(Optional.of(existing));
+        when(teamService.engineersOf("new.mgr@cloudfuze.com"))
+                .thenReturn(new LinkedHashSet<>(List.of("new.engineer@cloudfuze.com")));
+
+        ProjectUpdateRequest request = new ProjectUpdateRequest();
+        request.setName("Acme");
+        request.setMigrationManagerName("new.mgr@cloudfuze.com");
+
+        service.updateDetails(1L, request, "admin@cloudfuze.com", AppUserRole.ADMIN);
+
+        assertThat(savedProject().getEngineerEmails()).containsExactly("new.engineer@cloudfuze.com");
+    }
+
+    @Test
+    void leavingTheManagerUnchangedLeavesTheEngineerListUntouched() {
+        Project existing = new Project("Acme", "admin@cloudfuze.com", "mgr@cloudfuze.com",
+                new LinkedHashSet<>(List.of("kept.engineer@cloudfuze.com")));
+        existing.setId(1L);
+        when(projectRepository.findById(1L)).thenReturn(Optional.of(existing));
+
+        ProjectUpdateRequest request = new ProjectUpdateRequest();
+        request.setName("Acme renamed");
+        request.setMigrationManagerName("mgr@cloudfuze.com");
+
+        service.updateDetails(1L, request, "admin@cloudfuze.com", AppUserRole.ADMIN);
+
+        assertThat(savedProject().getEngineerEmails()).containsExactly("kept.engineer@cloudfuze.com");
+    }
+
+    // ---- Visibility follows LIVE team membership, not the stored engineerEmails snapshot ----------
+    // Regression coverage for a real incident: an admin moved an engineer ("dan") from one
+    // Migration Manager's team to another's. The Team page correctly showed the new team, but dan
+    // still only saw the OLD manager's projects and never gained access to the NEW manager's --
+    // because every visibility/permission check compared against Project.engineerEmails, a snapshot
+    // frozen at whatever moment the project's manager was last set, never touched by TeamService.assign.
+
+    @Test
+    void anEngineerMovedToTheManagersTeamCanSeeTheProjectEvenThoughTheStoredSnapshotNeverIncludedThem() {
+        // The project's persisted engineerEmails snapshot is stale/empty -- "dan" joined the
+        // manager's team only AFTER this project was created, so the snapshot never had him. Only
+        // TeamService (live) knows he's on the team now.
+        Project project = new Project("Acme", "admin@cloudfuze.com", "mgr@cloudfuze.com", new LinkedHashSet<>());
+        project.setId(1L);
+        when(projectRepository.findAllByOrderByNameAsc()).thenReturn(List.of(project));
+        when(teamService.isCurrentlyOnManagersTeam("mgr@cloudfuze.com", "dan@fuzebot.io")).thenReturn(true);
+
+        List<ProjectSummaryDto> visible = service.list("dan@fuzebot.io", AppUserRole.MIGRATION_ENGINEER);
+
+        assertThat(visible).extracting(ProjectSummaryDto::getName).containsExactly("Acme");
+    }
+
+    @Test
+    void anEngineerMovedAwayFromTheManagersTeamLosesAccessEvenThoughTheStoredSnapshotStillNamesThem() {
+        // The exact inverse of the incident: the persisted snapshot still lists "dan" (from back when
+        // he was on this team), but TeamService says he has since moved to a different team.
+        Project project = new Project("Acme", "admin@cloudfuze.com", "mgr@cloudfuze.com",
+                new LinkedHashSet<>(List.of("dan@fuzebot.io")));
+        project.setId(1L);
+        when(projectRepository.findAllByOrderByNameAsc()).thenReturn(List.of(project));
+        when(teamService.isCurrentlyOnManagersTeam("mgr@cloudfuze.com", "dan@fuzebot.io")).thenReturn(false);
+
+        List<ProjectSummaryDto> visible = service.list("dan@fuzebot.io", AppUserRole.MIGRATION_ENGINEER);
+
+        assertThat(visible).isEmpty();
+    }
+
+    @Test
+    void theProjectsEngineerEmailsInTheResponseReflectLiveTeamMembershipNotTheStoredSnapshot() {
+        // The DTO's engineerEmails (what the frontend's canManage check and any display reads) must
+        // also be live -- otherwise the frontend keeps showing/hiding controls based on stale data
+        // even after the backend's own authorization is correct.
+        Project project = new Project("Acme", "admin@cloudfuze.com", "mgr@cloudfuze.com",
+                new LinkedHashSet<>(List.of("old.stale.snapshot@cloudfuze.com")));
+        project.setId(1L);
+        when(projectRepository.findAllByOrderByNameAsc()).thenReturn(List.of(project));
+        when(teamService.engineersOf("mgr@cloudfuze.com"))
+                .thenReturn(new LinkedHashSet<>(List.of("current.teammate@cloudfuze.com")));
+
+        List<ProjectSummaryDto> all = service.list("admin@cloudfuze.com", AppUserRole.ADMIN);
+
+        assertThat(all).singleElement().satisfies(d -> {
+            assertThat(d.getEngineerEmails()).containsExactly("current.teammate@cloudfuze.com");
+            assertThat(d.getEngineerEmails()).doesNotContain("old.stale.snapshot@cloudfuze.com");
+        });
+    }
+}

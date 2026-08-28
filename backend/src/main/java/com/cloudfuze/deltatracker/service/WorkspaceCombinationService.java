@@ -358,12 +358,13 @@ public class WorkspaceCombinationService {
         dto.setDeltaFinishedAt(combination.getDeltaFinishedAt());
         dto.setDeltaFinishedBy(combination.getDeltaFinishedBy());
         dto.setCurrentCycleNumber(combination.getCurrentCycleNumber());
+        dto.setCurrentDeltaCycleLabel(combination.currentDeltaCycleLabel());
         dto.setCurrentDeltaType(combination.getCurrentDeltaType());
         DeltaPhase phase = DeltaPhase.of(combination);
         dto.setDeltaPhase(phase);
         dto.setCurrentDeltaLabel(combination.getCurrentDeltaType() == null
                 ? null
-                : combination.getCurrentDeltaType().labelWithPhase(combination.getCurrentCycleNumber(), phase));
+                : combination.getCurrentDeltaType().labelWithPhase(combination.currentDeltaCycleLabel(), phase));
         dto.setCompletedCycleCount(deltaCycleService.completedCycleCount(combination.getId()));
         dto.setFinalDeltaCompletedAt(combination.getFinalDeltaCompletedAt());
         dto.setFinalDeltaCompletedBy(combination.getFinalDeltaCompletedBy());

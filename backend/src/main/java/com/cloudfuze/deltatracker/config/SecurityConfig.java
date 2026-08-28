@@ -172,6 +172,11 @@ public class SecurityConfig {
         http.authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/uploads/**").permitAll()
+                        // PMO's server calls this directly -- there is no Azure AD token to check, so
+                        // this route is permitAll here and instead guarded by PmoWebhookService's own
+                        // X-API-Key check. Deliberately NOT under /api/pmo/** (that's ADMIN-JWT-gated
+                        // below, for the human-triggered manual sync).
+                        .requestMatchers(HttpMethod.POST, "/api/webhooks/pmo/delta-phase").permitAll()
                         .requestMatchers("/api/me").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/combinations/*/signoffs/**", "/api/signoff-approvals")
                                 .access(allowlistRequired())

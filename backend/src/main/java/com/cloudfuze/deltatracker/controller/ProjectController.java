@@ -1,7 +1,6 @@
 package com.cloudfuze.deltatracker.controller;
 
 import com.cloudfuze.deltatracker.dto.CreateServerRequest;
-import com.cloudfuze.deltatracker.dto.ProjectAssignmentRequest;
 import com.cloudfuze.deltatracker.dto.ProjectCreateRequest;
 import com.cloudfuze.deltatracker.dto.ProjectDetailDto;
 import com.cloudfuze.deltatracker.dto.MetabaseStatusDto;
@@ -66,11 +65,6 @@ public class ProjectController {
                                             @AuthenticationPrincipal Jwt jwt) {
         String email = JwtEmailUtil.extractEmail(jwt);
         return serverService.createForProject(id, request.getName(), request.getProductType(), email, appUserService.isAdmin(email));
-    }
-
-    @PatchMapping("/{id}/assignments")
-    public ProjectSummaryDto updateAssignments(@PathVariable Long id, @Valid @RequestBody ProjectAssignmentRequest request) {
-        return projectService.updateAssignments(id, request);
     }
 
     // Edit project details (name, product type, Migration Manager). Per-project permission

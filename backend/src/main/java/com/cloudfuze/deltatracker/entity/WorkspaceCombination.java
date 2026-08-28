@@ -61,11 +61,25 @@ public class WorkspaceCombination {
     @Column(name = "delta_finished_by")
     private String deltaFinishedBy;
 
-    // Which cycle is being filled out / reviewed / run right now. 1-based, incremented by
-    // DeltaCycleService.rollOver once a PRE_DELTA cycle finishes. Defaulted at both the Java and
-    // column level so rows predating this feature read as cycle 1 rather than 0 under ddl-auto=update.
+    // Which cycle is being filled out / reviewed / run right now. 1-based, ALWAYS increments on every
+    // rollover (decline or finish) -- this is purely an internal bookkeeping/ordering key (the
+    // delta_cycles unique constraint is keyed on it), never shown to a user directly. Defaulted at
+    // both the Java and column level so rows predating this feature read as cycle 1 rather than 0
+    // under ddl-auto=update.
     @Column(name = "current_cycle_number", nullable = false, columnDefinition = "int default 1")
     private int currentCycleNumber = 1;
+
+    // The user-facing "Delta N.M" pair -- separate from currentCycleNumber above on purpose. Major
+    // only advances when a Pre-Delta is genuinely approved and FINISHED; minor advances on every
+    // decline-triggered redo of the SAME Pre-Delta and resets to 1 whenever major advances. Without
+    // this split, a declined-and-redone Pre-Delta 2 read as "Delta 3" on the live pre-check form (and
+    // everywhere else this number is shown) the moment it rolled over, indistinguishable from an
+    // actually-new Pre-Delta -- see DeltaCycleService.rollOver.
+    @Column(name = "current_delta_major", nullable = false, columnDefinition = "int default 1")
+    private int currentDeltaMajor = 1;
+
+    @Column(name = "current_delta_minor", nullable = false, columnDefinition = "int default 1")
+    private int currentDeltaMinor = 1;
 
     // The current cycle's declared type, copied from the "Delta Type" checklist item at submit time
     // (PreCheckSubmissionService.submit) and cleared on withdrawal or rollover. Denormalized onto the
@@ -95,5 +109,10 @@ public class WorkspaceCombination {
     // True once the FINAL_DELTA cycle has been marked finished -- the combination is locked from here.
     public boolean isFinalDeltaComplete() {
         return finalDeltaCompletedAt != null;
+    }
+
+    // "2.1" / "3.2" -- the number a human reads, as opposed to currentCycleNumber's internal bookkeeping.
+    public String currentDeltaCycleLabel() {
+        return currentDeltaMajor + "." + currentDeltaMinor;
     }
 }

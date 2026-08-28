@@ -45,11 +45,13 @@ public class SignOffService {
     private final PreCheckSubmissionRepository preCheckSubmissionRepository;
     private final TicketService ticketService;
     private final DeltaCycleService deltaCycleService;
+    private final TeamService teamService;
 
     public SignOffService(SignOffRepository signOffRepository, WorkspaceCombinationService combinationService,
                            EmailService emailService, AppUserService appUserService,
                            PreCheckSubmissionRepository preCheckSubmissionRepository,
-                           TicketService ticketService, DeltaCycleService deltaCycleService) {
+                           TicketService ticketService, DeltaCycleService deltaCycleService,
+                           TeamService teamService) {
         this.signOffRepository = signOffRepository;
         this.combinationService = combinationService;
         this.emailService = emailService;
@@ -57,6 +59,7 @@ public class SignOffService {
         this.preCheckSubmissionRepository = preCheckSubmissionRepository;
         this.ticketService = ticketService;
         this.deltaCycleService = deltaCycleService;
+        this.teamService = teamService;
     }
 
     // Kicks off the Migration Manager -> Dev Lead -> QA Lead approval chain the moment a
@@ -214,8 +217,13 @@ public class SignOffService {
                 computeCombinationStats(combination));
     }
 
-    // Only combinations whose pre-check has actually been submitted show up here -- a combination
-    // with no SignOff rows yet (pre-check not submitted) simply isn't part of this list.
+    // Combinations with a live sign-off chain (pre-check submitted, awaiting/settled this cycle) show
+    // up via their SignOff rows below. A combination currently sitting DECLINED -- rolled over, live
+    // chain deleted, blank checklist awaiting resubmission -- would otherwise vanish from this list the
+    // instant that happens; it stays visible instead (status-only, nothing to act on) via
+    // DeltaCycleService.findDeclinedAwaitingResubmission, until either resubmitted (a fresh live chain
+    // replaces this entry) or the combination/server/project is deleted (ServerPurgeService cascades
+    // delta_cycles away, so there's nothing left to surface).
     public List<SignOffApprovalDto> listApprovals(String callerEmail, AppUserRole callerRole) {
         List<SignOff> all = signOffRepository.findAll();
         Map<Long, List<SignOff>> byCombination = all.stream()
@@ -224,7 +232,7 @@ public class SignOffService {
         // once per combination instead of once per sign-off row (3x redundant otherwise).
         Map<Long, CombinationStats> statsByCombination = new HashMap<>();
 
-        return all.stream()
+        List<SignOffApprovalDto> live = all.stream()
                 .filter(s -> isVisible(s.getCombination(), callerEmail, callerRole))
                 .sorted(Comparator
                         .comparing((SignOff s) -> s.getStatus() == SignOffStatus.PENDING ? 0 : 1)
@@ -236,6 +244,22 @@ public class SignOffService {
                     return toApprovalDto(s, combination, byCombination.get(combination.getId()), callerEmail, stats);
                 })
                 .toList();
+
+        List<SignOffApprovalDto> declined = deltaCycleService.findDeclinedAwaitingResubmission().stream()
+                // Defensive: a combination with a live chain already came through above. In practice
+                // these are mutually exclusive (decline deletes the live chain in the same transaction
+                // that writes the cycle row), but never double-list if that ever stops being true.
+                .filter(cycle -> !byCombination.containsKey(cycle.getCombinationId()))
+                .filter(cycle -> isVisible(cycle.getCombination(), callerEmail, callerRole))
+                .map(cycle -> {
+                    WorkspaceCombination combination = cycle.getCombination();
+                    CombinationStats stats = statsByCombination.computeIfAbsent(combination.getId(),
+                            k -> computeCombinationStats(combination));
+                    return toDeclinedApprovalDto(cycle, stats);
+                })
+                .toList();
+
+        return java.util.stream.Stream.concat(live.stream(), declined.stream()).toList();
     }
 
     // Admins and Dev/QA Leads see every approval request (Dev/QA involvement isn't scoped to one
@@ -257,7 +281,7 @@ public class SignOffService {
         }
         if (callerRole == AppUserRole.MIGRATION_ENGINEER) {
             return callerEmail.equalsIgnoreCase(project.getCreatedBy())
-                    || project.getEngineerEmails().stream().anyMatch(callerEmail::equalsIgnoreCase);
+                    || teamService.isCurrentlyOnManagersTeam(project.getMigrationManagerName(), callerEmail);
         }
         return false;
     }
@@ -527,7 +551,7 @@ public class SignOffService {
         // nature), so there's no honest label to show -- the frontend renders a dash for it.
         dto.setDeltaLabel(combination.getCurrentDeltaType() == null
                 ? null
-                : combination.getCurrentDeltaType().label(combination.getCurrentCycleNumber()));
+                : combination.getCurrentDeltaType().label(combination.currentDeltaCycleLabel()));
 
         if (server.getProject() != null) {
             dto.setProjectId(server.getProject().getId());
@@ -561,6 +585,42 @@ public class SignOffService {
         dto.setTurnReady(signOff.getRole() == turn);
         dto.setCanAct(signOff.getStatus() == SignOffStatus.PENDING && signOff.getRole() == turn
                 && isEligible(signOff.getRole(), actorEmail, combination));
+        return dto;
+    }
+
+    // A combination that's declined and still awaiting resubmission -- no live SignOff row exists to
+    // build from (the rollover already deleted it), so this reads entirely off the frozen DeltaCycle
+    // instead. Deliberately uses the CYCLE's own frozen deltaMajor/deltaMinor, not the combination's
+    // current ones: the rollover already bumped the live minor forward past what this cycle recorded,
+    // and showing that would make a redone "Pre-Delta 2.1" read as "Pre-Delta 2.2" while it's still
+    // just awaiting the same redo. canAct is always false -- this is a status display, not something
+    // to act on; the only way forward is refilling the checklist on the combination's own page.
+    private SignOffApprovalDto toDeclinedApprovalDto(com.cloudfuze.deltatracker.entity.DeltaCycle cycle,
+                                                       CombinationStats stats) {
+        WorkspaceCombination combination = cycle.getCombination();
+        SignOffApprovalDto dto = new SignOffApprovalDto();
+        dto.setId(-cycle.getId());
+        applyCombinationStats(dto, combination, stats);
+        // Overrides the live-cycle numbering applyCombinationStats just set, per the comment above.
+        dto.setCycleNumber(cycle.getCycleNumber());
+        dto.setDeltaType(cycle.getDeltaType());
+        dto.setDeltaLabel(cycle.getDeltaType() == null ? null : cycle.getDeltaType().label(cycle.cycleLabel()));
+
+        dto.setRole(cycle.getDeclinedByRole());
+        dto.setAssignedName(cycle.getDeclinedByRole() == null ? null : roleLabel(cycle.getDeclinedByRole()));
+        dto.setStatus(SignOffStatus.DECLINED);
+        dto.setSubmittedBy(cycle.getSubmittedBy());
+        dto.setSubmittedAt(cycle.getSubmittedAt());
+        dto.setApprovedBy(cycle.getDeclinedBy());
+        dto.setOverallStatus("Pending with Migration Engineer");
+        dto.setCurrentStatus(cycle.getDeclinedByRole() == null
+                ? "Declined"
+                : "Declined by " + roleLabel(cycle.getDeclinedByRole()));
+        dto.setDeclineReason(cycle.getDeclineReason());
+        dto.setDeclinedByRoleLabel(cycle.getDeclinedByRole() == null ? null : roleLabel(cycle.getDeclinedByRole()));
+        dto.setDeclinedBy(cycle.getDeclinedBy());
+        dto.setTurnReady(false);
+        dto.setCanAct(false);
         return dto;
     }
 }

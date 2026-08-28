@@ -66,6 +66,7 @@ class ProjectServiceMetabaseTest {
     @Mock private WorkspaceCombinationService workspaceCombinationService;
     @Mock private AppUserService appUserService;
     @Mock private ServerPurgeService serverPurgeService;
+    @Mock private TeamService teamService;
 
     @InjectMocks private ProjectService projectService;
 
@@ -80,6 +81,9 @@ class ProjectServiceMetabaseTest {
         project = new Project("Acme Migration", "PMO sync", MANAGER, Set.of(ENGINEER));
         project.setId(1L);
         stored.clear();
+        // canEditMetabaseDatabase's engineer branch checks LIVE team membership now (TeamService),
+        // not the Project.engineerEmails snapshot -- ENGINEER stands in for "on MANAGER's team".
+        when(teamService.isCurrentlyOnManagersTeam(MANAGER, ENGINEER)).thenReturn(true);
         when(projectRepository.findById(1L)).thenReturn(Optional.of(project));
         when(projectRepository.save(any(Project.class))).thenAnswer(i -> i.getArgument(0));
         when(projectMetabaseDatabaseRepository.findByProjectIdAndProductType(any(), any()))

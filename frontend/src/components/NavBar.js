@@ -40,6 +40,14 @@ const ICONS = {
       <path d="M12 3 4 6v6c0 5 3.5 7.5 8 9 4.5-1.5 8-4 8-9V6l-8-3Z" />
     </svg>
   ),
+  team: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="9" cy="8" r="3" />
+      <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+      <circle cx="17" cy="8" r="2.5" />
+      <path d="M17 14.2c2.3.5 4 2.6 4 5.8" />
+    </svg>
+  ),
 };
 
 const BASE_LINKS = [
@@ -47,6 +55,7 @@ const BASE_LINKS = [
   { to: "/projects", icon: "projects", label: "Projects" },
   { to: "/approvals", icon: "approvals", label: "Approvals" },
   { to: "/tickets", icon: "escalations", label: "Ticket Tracker" },
+  { to: "/team", icon: "team", label: "Team" },
 ];
 
 const ADMIN_LINK = { to: "/admin", icon: "admin", label: "Admin" };

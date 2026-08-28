@@ -107,8 +107,6 @@ export const deleteServer = (serverId) =>
 export const getProjects = () => client.get("/projects").then((r) => r.data);
 export const getProjectDetail = (id) => client.get(`/projects/${id}`).then((r) => r.data);
 export const createProject = (payload) => client.post("/projects", payload).then((r) => r.data);
-export const updateProjectAssignments = (id, payload) =>
-  client.patch(`/projects/${id}/assignments`, payload).then((r) => r.data);
 export const updateProjectDetails = (id, payload) =>
   client.patch(`/projects/${id}`, payload).then((r) => r.data);
 export const removeProject = (id) => client.delete(`/projects/${id}`).then((r) => r.data);
@@ -126,12 +124,6 @@ export const getProjectMetabaseStatus = (id) =>
 // Rejects (503) when Metabase isn't configured, which the caller treats as "fall back to a text
 // field" rather than as a hard error -- the database name is still settable by hand without it.
 export const getMetabaseDatabases = () => client.get("/metabase/databases").then((r) => r.data);
-
-// Pulls the project list from the PMO tool on demand (ADMIN only). A background poll already does
-// this every 5 minutes -- this is for an admin who has just created a project over there and doesn't
-// want to wait. Returns { totalRows, createdCount, updatedCount, unchangedCount,
-// skippedByStatusCount, errors }.
-export const syncPmoProjects = () => client.post("/pmo/sync").then((r) => r.data);
 
 export const getRoster = () => client.get("/roster").then((r) => r.data);
 

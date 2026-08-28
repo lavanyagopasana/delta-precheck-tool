@@ -56,6 +56,8 @@ class SignOffServiceTest {
     private TicketService ticketService;
     @Mock
     private DeltaCycleService deltaCycleService;
+    @Mock
+    private TeamService teamService;
 
     private SignOffService signOffService;
 
@@ -67,7 +69,7 @@ class SignOffServiceTest {
     @BeforeEach
     void setUp() {
         signOffService = new SignOffService(signOffRepository, combinationService, emailService, appUserService,
-                preCheckSubmissionRepository, ticketService, deltaCycleService);
+                preCheckSubmissionRepository, ticketService, deltaCycleService, teamService);
 
         Project project = new Project("Acme", "creator@cloudfuze.com", "manager@cloudfuze.com", null);
         Server server = new Server("box.com");
@@ -88,7 +90,9 @@ class SignOffServiceTest {
         qaLeadSignOff = new SignOff(combination, SignOffRole.QA_LEAD, "Any QA Lead");
         qaLeadSignOff.setStatus(SignOffStatus.PENDING);
 
-        when(combinationService.findOrThrow(10L)).thenReturn(combination);
+        // lenient(): decline()-based tests use this; the listApprovals()-based ones below never call
+        // combinationService.findOrThrow at all.
+        lenient().when(combinationService.findOrThrow(10L)).thenReturn(combination);
         // Only reached on the success path (toApprovalDto/computeCombinationStats) -- the
         // missing-reason test throws before any of this, so these are lenient rather than shared.
         lenient().when(combinationService.pairCount(any())).thenReturn(3);
@@ -171,5 +175,77 @@ class SignOffServiceTest {
                 eq(List.of("engineer@cloudfuze.com")));
         verify(emailService, never()).notifyMigrationManagerApprovalDeclined(anyString(), anyString(), anyString(),
                 anyInt(), anyString(), anyString(), anyString(), anyString());
+    }
+
+    // ---- listApprovals: a declined combination stays visible (status-only) until resubmitted -------
+    // The rollover deletes the live sign-off chain in the same transaction as the decline, so without
+    // this a combination would vanish from Approvals the instant it's declined. It should instead stay
+    // there, reading "Declined", until either resubmitted (a fresh live chain takes over) or the
+    // combination/server/project is deleted.
+
+    private com.cloudfuze.deltatracker.entity.DeltaCycle declinedCycle(int cycleNumber) {
+        com.cloudfuze.deltatracker.entity.DeltaCycle cycle = new com.cloudfuze.deltatracker.entity.DeltaCycle(
+                combination, cycleNumber, com.cloudfuze.deltatracker.entity.DeltaType.PRE_DELTA);
+        cycle.setId(100L + cycleNumber);
+        // combinationId is a shadow (insertable=false/updatable=false) column Hibernate populates from
+        // the FK on a real row load -- a bare `new DeltaCycle(...)` in a unit test needs it set by
+        // hand, or SignOffService's "does this combination already have a live chain?" filter (which
+        // keys off this field) silently never matches.
+        cycle.setCombinationId(combination.getId());
+        cycle.setStatus(com.cloudfuze.deltatracker.entity.DeltaCycleStatus.DECLINED);
+        cycle.setDeclinedByRole(SignOffRole.DEV_LEAD);
+        cycle.setDeclinedBy("dev@cloudfuze.com");
+        cycle.setDeclineReason("Missing evidence");
+        cycle.setSubmittedBy("engineer@cloudfuze.com");
+        cycle.setSubmittedAt(LocalDateTime.now().minusHours(2));
+        return cycle;
+    }
+
+    @Test
+    void aDeclinedCombinationWithNoLiveChainStillAppearsInApprovalsAsDeclined() {
+        when(signOffRepository.findAll()).thenReturn(List.of());
+        when(deltaCycleService.findDeclinedAwaitingResubmission()).thenReturn(List.of(declinedCycle(1)));
+
+        List<SignOffApprovalDto> approvals = signOffService.listApprovals(null, AppUserRole.ADMIN);
+
+        assertThat(approvals).singleElement().satisfies(dto -> {
+            assertThat(dto.getStatus()).isEqualTo(SignOffStatus.DECLINED);
+            assertThat(dto.getCombinationId()).isEqualTo(10L);
+            assertThat(dto.getDeclineReason()).isEqualTo("Missing evidence");
+            assertThat(dto.getDeclinedByRoleLabel()).isEqualTo("Dev Lead");
+            assertThat(dto.getDeclinedBy()).isEqualTo("dev@cloudfuze.com");
+            // Frozen at the declined cycle's own numbering, NOT whatever the combination's live
+            // (blank, not-yet-resubmitted) currentCycleNumber has since advanced to.
+            assertThat(dto.getCycleNumber()).isEqualTo(1);
+            assertThat(dto.getDeltaLabel()).isEqualTo("Pre-Delta 1.1");
+            // Status-only: nothing to act on from this list.
+            assertThat(dto.isCanAct()).isFalse();
+        });
+    }
+
+    @Test
+    void aCombinationAlreadyResubmittedIsNotAlsoShownAsDeclined() {
+        // A live chain exists again (resubmitted) -- the declined-awaiting-resubmission entry for the
+        // SAME combination must not also appear, or it would double-list the one combination.
+        when(signOffRepository.findAll()).thenReturn(List.of(migrationLeadSignOff, devLeadSignOff, qaLeadSignOff));
+        when(deltaCycleService.findDeclinedAwaitingResubmission()).thenReturn(List.of(declinedCycle(1)));
+
+        List<SignOffApprovalDto> approvals = signOffService.listApprovals(null, AppUserRole.ADMIN);
+
+        assertThat(approvals).extracting(SignOffApprovalDto::getStatus)
+                .doesNotContain(SignOffStatus.DECLINED);
+    }
+
+    @Test
+    void anEngineerOutsideTheProjectDoesNotSeeADeclinedCombinationEitherWayViaTeamService() {
+        when(signOffRepository.findAll()).thenReturn(List.of());
+        when(deltaCycleService.findDeclinedAwaitingResubmission()).thenReturn(List.of(declinedCycle(1)));
+        when(teamService.isCurrentlyOnManagersTeam("manager@cloudfuze.com", "outsider@cloudfuze.com"))
+                .thenReturn(false);
+
+        List<SignOffApprovalDto> approvals =
+                signOffService.listApprovals("outsider@cloudfuze.com", AppUserRole.MIGRATION_ENGINEER);
+
+        assertThat(approvals).isEmpty();
     }
 }

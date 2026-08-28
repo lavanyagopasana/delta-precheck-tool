@@ -268,12 +268,12 @@ export default function WorkspacePairsPanel({
                     // it, "not submitted yet" on a combination with prior completed cycles reads as
                     // "nothing has ever been submitted here," not "this cycle hasn't started."
                     ? activeCombinationSummary.currentCycleNumber > 1
-                    ? `Not Submitted Yet · Delta ${activeCombinationSummary.currentCycleNumber}`
+                    ? `Not Submitted Yet · Delta ${activeCombinationSummary.currentDeltaCycleLabel}`
                     : "Pre-Check Not Submitted Yet"
                     : activeCombinationSummary.submissionStatus === "DRAFT"
                     ? "Continue Pre-Check Form"
                     : activeCombinationSummary.currentCycleNumber > 1
-                    ? `Start Pre-Check · Delta ${activeCombinationSummary.currentCycleNumber}`
+                    ? `Start Pre-Check · Delta ${activeCombinationSummary.currentDeltaCycleLabel}`
                     : "Start Pre-Check Form"}
                 </button>
                 {/* Same visibility as the panel it scrolls to (every role, not gated by
@@ -366,7 +366,7 @@ export default function WorkspacePairsPanel({
           title={
             activeCombinationSummary.currentDeltaLabel
               || (activeCombinationSummary.currentCycleNumber > 1
-                ? `Pre-Check · Delta ${activeCombinationSummary.currentCycleNumber}`
+                ? `Pre-Check · Delta ${activeCombinationSummary.currentDeltaCycleLabel}`
                 : "Pre-Check")
           }
           onClose={() => setPreCheckOpen(false)}

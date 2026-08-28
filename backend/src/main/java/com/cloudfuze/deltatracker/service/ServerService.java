@@ -143,6 +143,7 @@ public class ServerService {
     private final DeltaCycleRepository deltaCycleRepository;
     private final AppUserService appUserService;
     private final ServerPurgeService serverPurgeService;
+    private final TeamService teamService;
 
     public ServerService(ServerRepository serverRepository,
                           WorkspacePairRepository workspacePairRepository,
@@ -152,7 +153,8 @@ public class ServerService {
                           ProjectRepository projectRepository,
                           DeltaCycleRepository deltaCycleRepository,
                           AppUserService appUserService,
-                          ServerPurgeService serverPurgeService) {
+                          ServerPurgeService serverPurgeService,
+                          TeamService teamService) {
         this.serverRepository = serverRepository;
         this.workspacePairRepository = workspacePairRepository;
         this.workspaceCombinationRepository = workspaceCombinationRepository;
@@ -162,6 +164,7 @@ public class ServerService {
         this.deltaCycleRepository = deltaCycleRepository;
         this.appUserService = appUserService;
         this.serverPurgeService = serverPurgeService;
+        this.teamService = teamService;
     }
 
     public Server findOrThrow(Long id) {
@@ -186,7 +189,7 @@ public class ServerService {
 
         if (callerEmail != null && !isAdmin) {
             boolean isManager = callerEmail.equalsIgnoreCase(project.getMigrationManagerName());
-            boolean isTeamMember = project.getEngineerEmails().stream().anyMatch(callerEmail::equalsIgnoreCase);
+            boolean isTeamMember = teamService.isCurrentlyOnManagersTeam(project.getMigrationManagerName(), callerEmail);
             if (!isManager && !isTeamMember) {
                 throw new ApiException(HttpStatus.FORBIDDEN,
                         "Only this project's Migration Manager or team members can add a server here.");
@@ -394,6 +397,7 @@ public class ServerService {
                                     .map(PreCheckSubmission::getStartedByEmail)
                                     .orElse(null));
                     summary.setCurrentCycleNumber(c.getCurrentCycleNumber());
+                    summary.setCurrentDeltaCycleLabel(c.currentDeltaCycleLabel());
                     summary.setCurrentDeltaType(c.getCurrentDeltaType());
                     // Phase-aware label: "Pre-Delta 1 started" rather than a bare "Pre-Delta 1", which
                     // read identically whether the cycle was awaiting approval, running, or done.
@@ -402,7 +406,7 @@ public class ServerService {
                     summary.setDeltaPhase(phase);
                     summary.setCurrentDeltaLabel(c.getCurrentDeltaType() == null
                             ? null
-                            : c.getCurrentDeltaType().labelWithPhase(c.getCurrentCycleNumber(), phase));
+                            : c.getCurrentDeltaType().labelWithPhase(c.currentDeltaCycleLabel(), phase));
                     // Prior fully finished cycles only — Pre-Delta 1 after approval is never "1 done".
                     long priorCompleted = 0L;
                     if (c.getCurrentCycleNumber() > 1) {

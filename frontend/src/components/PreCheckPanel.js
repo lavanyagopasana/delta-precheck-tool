@@ -670,7 +670,7 @@ export default function PreCheckPanel({
                 deltaType={combination.currentDeltaType}
                 deltaPhase={combination.deltaPhase}
                 label={combination.currentDeltaLabel}
-                fallback={`Delta ${combination.currentCycleNumber}`}
+                fallback={`Delta ${combination.currentDeltaCycleLabel}`}
               />
             )}
           </PreCheckHeader>
@@ -742,7 +742,7 @@ export default function PreCheckPanel({
           {!combination.finalDeltaComplete && combination.currentCycleNumber > 1 && (
             <span style={{ color: "var(--color-text-muted)", fontWeight: 500, fontSize: 13 }}>
               {" "}
-              · Delta cycle {combination.currentCycleNumber}
+              · Delta cycle {combination.currentDeltaCycleLabel}
             </span>
           )}
         </h3>

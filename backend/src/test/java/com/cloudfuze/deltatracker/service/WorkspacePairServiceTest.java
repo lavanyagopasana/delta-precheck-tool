@@ -49,6 +49,7 @@ class WorkspacePairServiceTest {
     @Mock private WorkspaceCombinationRepository workspaceCombinationRepository;
     @Mock private ServerPurgeService serverPurgeService;
     @Mock private ServerService serverService;
+    @Mock private TeamService teamService;
 
     private WorkspacePairService service;
     private Server server;
@@ -56,7 +57,7 @@ class WorkspacePairServiceTest {
     @BeforeEach
     void setUp() {
         service = new WorkspacePairService(workspacePairRepository, serverRepository, workspaceCombinationService,
-                projectRepository, workspaceCombinationRepository, serverPurgeService, serverService);
+                projectRepository, workspaceCombinationRepository, serverPurgeService, serverService, teamService);
         server = new Server("SRV-1");
         server.setId(SID);
 

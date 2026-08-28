@@ -70,6 +70,7 @@ public class WorkspacePairService {
     private final WorkspaceCombinationRepository workspaceCombinationRepository;
     private final ServerPurgeService serverPurgeService;
     private final ServerService serverService;
+    private final TeamService teamService;
 
     public WorkspacePairService(WorkspacePairRepository workspacePairRepository,
                                  ServerRepository serverRepository,
@@ -77,7 +78,8 @@ public class WorkspacePairService {
                                  ProjectRepository projectRepository,
                                  WorkspaceCombinationRepository workspaceCombinationRepository,
                                  ServerPurgeService serverPurgeService,
-                                 ServerService serverService) {
+                                 ServerService serverService,
+                                 TeamService teamService) {
         this.workspacePairRepository = workspacePairRepository;
         this.serverRepository = serverRepository;
         this.workspaceCombinationService = workspaceCombinationService;
@@ -85,6 +87,7 @@ public class WorkspacePairService {
         this.workspaceCombinationRepository = workspaceCombinationRepository;
         this.serverPurgeService = serverPurgeService;
         this.serverService = serverService;
+        this.teamService = teamService;
     }
 
     public List<WorkspacePairDto> listByServer(Long serverId) {
@@ -228,7 +231,7 @@ public class WorkspacePairService {
 
         if (callerEmail != null && !isAdmin) {
             boolean isManager = callerEmail.equalsIgnoreCase(project.getMigrationManagerName());
-            boolean isTeamMember = project.getEngineerEmails().stream().anyMatch(callerEmail::equalsIgnoreCase);
+            boolean isTeamMember = teamService.isCurrentlyOnManagersTeam(project.getMigrationManagerName(), callerEmail);
             if (!isManager && !isTeamMember) {
                 throw new ApiException(HttpStatus.FORBIDDEN,
                         "Only this project's Migration Manager or team members can import a CSV here.");

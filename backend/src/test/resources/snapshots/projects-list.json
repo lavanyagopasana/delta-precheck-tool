@@ -9,7 +9,7 @@
   "openEscalationCount" : 1,
   "migrationManagers" : [ "mgr@cloudfuze.com" ],
   "migrationManagerName" : "mgr@cloudfuze.com",
-  "engineerEmails" : [ "alice@cloudfuze.com" ],
+  "engineerEmails" : [ ],
   "devApprovalsDone" : 1,
   "devApprovalsPending" : 1,
   "migrationManagerApprovalsDone" : 2,

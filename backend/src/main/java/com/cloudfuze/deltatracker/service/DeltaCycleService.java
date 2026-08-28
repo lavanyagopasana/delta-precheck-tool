@@ -101,6 +101,10 @@ public class DeltaCycleService {
         cycle.setSubmittedAt(submittedAt);
         cycle.setDeltaInitiatedAt(combination.getDeltaInitiatedAt());
         cycle.setDeltaInitiatedBy(combination.getDeltaInitiatedBy());
+        // Always re-stamped (not just on first creation): idempotent re-approval must still reflect
+        // whatever major.minor is CURRENT, in case something about the combination changed since.
+        cycle.setDeltaMajor(combination.getCurrentDeltaMajor());
+        cycle.setDeltaMinor(combination.getCurrentDeltaMinor());
         cycle = cycleRepository.save(cycle);
 
         snapshotItems(cycle, combination);
@@ -165,12 +169,18 @@ public class DeltaCycleService {
         cycle.setDeclinedByRole(declinedByRole);
         cycle.setDeclinedBy(declinedBy);
         cycle.setDeclineReason(reason);
+        // Frozen BEFORE rollOver bumps the minor -- this row records the attempt that just got
+        // declined, not the fresh one it's about to roll over into.
+        cycle.setDeltaMajor(combination.getCurrentDeltaMajor());
+        cycle.setDeltaMinor(combination.getCurrentDeltaMinor());
         cycle = cycleRepository.save(cycle);
 
         snapshotItems(cycle, combination);
         snapshotSignOffs(cycle, combination);
 
-        rollOver(combination);
+        // false: a decline redoes the SAME Pre-Delta, so only the minor ("redo count") advances --
+        // the major ("Delta N") only moves on a genuine finish. See rollOver's javadoc.
+        rollOver(combination, false);
         return cycle;
     }
 
@@ -222,7 +232,9 @@ public class DeltaCycleService {
             combination.setFinalDeltaCompletedBy(actorEmail);
             return true;
         }
-        rollOver(combination);
+        // true: this Pre-Delta genuinely finished, so the NEXT one gets a new major number (and its
+        // own minor starts back at 1) -- unlike a decline's rollOver(combination, false) above.
+        rollOver(combination, true);
         return false;
     }
 
@@ -237,8 +249,11 @@ public class DeltaCycleService {
      *
      * <p>Evidence files under uploads/ are never touched -- only the live pointer to them is cleared,
      * so each snapshot's evidence stays viewable indefinitely.
+     *
+     * @param advanceMajor true on a genuine Pre-Delta finish (the next attempt gets a new "Delta N",
+     *                     minor resets to 1); false on a decline (redoes the SAME Delta N, minor +1).
      */
-    private void rollOver(WorkspaceCombination combination) {
+    private void rollOver(WorkspaceCombination combination, boolean advanceMajor) {
         resetChecklist(combination);
 
         preCheckSubmissionRepository.findByCombinationId(combination.getId()).ifPresent(submission -> {
@@ -261,7 +276,15 @@ public class DeltaCycleService {
         combination.setDeltaFinishedAt(null);
         combination.setDeltaFinishedBy(null);
         combination.setCurrentDeltaType(null);
+        // Internal bookkeeping key -- always advances, regardless of advanceMajor. See its javadoc on
+        // WorkspaceCombination.
         combination.setCurrentCycleNumber(combination.getCurrentCycleNumber() + 1);
+        if (advanceMajor) {
+            combination.setCurrentDeltaMajor(combination.getCurrentDeltaMajor() + 1);
+            combination.setCurrentDeltaMinor(1);
+        } else {
+            combination.setCurrentDeltaMinor(combination.getCurrentDeltaMinor() + 1);
+        }
     }
 
     /**
@@ -361,5 +384,28 @@ public class DeltaCycleService {
         return cycleRepository.findByCombinationIdOrderByCycleNumberAsc(combinationId).stream()
                 .filter(cycle -> cycle.getStatus() == DeltaCycleStatus.COMPLETED)
                 .count();
+    }
+
+    /**
+     * Every combination whose MOST RECENT cycle was a decline that nobody has resubmitted yet -- used
+     * by {@code SignOffService.listApprovals} to keep a declined combination visible there (as a
+     * status-only entry, nothing to act on) instead of it vanishing the instant the live sign-off
+     * chain is deleted by {@link #recordDeclineAndRollOver}.
+     *
+     * <p>"Most recent" matters: a combination declined once, then resubmitted and either approved or
+     * declined again, has moved on -- only the LATEST cycle per combination is considered, never an
+     * older superseded one. One {@code findAll()} + in-memory grouping rather than one query per
+     * combination; this table holds a handful of rows per combination, so the whole thing is small.
+     */
+    @Transactional(readOnly = true)
+    public List<DeltaCycle> findDeclinedAwaitingResubmission() {
+        Map<Long, DeltaCycle> latestByCombination = new java.util.HashMap<>();
+        for (DeltaCycle cycle : cycleRepository.findAll()) {
+            latestByCombination.merge(cycle.getCombinationId(), cycle,
+                    (a, b) -> a.getCycleNumber() >= b.getCycleNumber() ? a : b);
+        }
+        return latestByCombination.values().stream()
+                .filter(cycle -> cycle.getStatus() == DeltaCycleStatus.DECLINED)
+                .toList();
     }
 }

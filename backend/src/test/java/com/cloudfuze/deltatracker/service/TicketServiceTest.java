@@ -64,13 +64,17 @@ class TicketServiceTest {
     @Mock
     private PlatformTransactionManager transactionManager;
 
+    @Mock
+    private TeamService teamService;
+
     private TicketService service;
 
     private WorkspaceCombination combination;
 
     @BeforeEach
     void setUp() {
-        service = new TicketService(ticketRepository, workspaceCombinationRepository, ticketLookupService, transactionManager);
+        service = new TicketService(ticketRepository, workspaceCombinationRepository, ticketLookupService,
+                transactionManager, teamService);
         Project project = new Project("Alpha", "eng@cloudfuze.com", "mgr@cloudfuze.com", null);
         Server server = new Server("SRV-1");
         server.setId(1L);

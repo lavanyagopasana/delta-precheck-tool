@@ -56,9 +56,20 @@ public class DeltaCycle {
     private Long combinationId;
 
     // 1-based, per combination. Mirrors WorkspaceCombination.currentCycleNumber at the moment the
-    // chain resolved.
+    // chain resolved. Internal bookkeeping/ordering key only (also what the unique constraint above is
+    // keyed on) -- never shown to a user directly; see deltaMajor/deltaMinor below for that.
     @Column(name = "cycle_number", nullable = false)
     private int cycleNumber;
+
+    // The frozen "Delta N.M" this cycle was recorded under -- mirrors
+    // WorkspaceCombination.currentDeltaMajor/Minor at the moment this row was written, so a redone
+    // Pre-Delta's history entries keep reading e.g. "Pre-Delta 2.1", "Pre-Delta 2.2" instead of
+    // jumping numbers the way cycleNumber (above) does on every rollover.
+    @Column(name = "delta_major", nullable = false, columnDefinition = "int default 1")
+    private int deltaMajor = 1;
+
+    @Column(name = "delta_minor", nullable = false, columnDefinition = "int default 1")
+    private int deltaMinor = 1;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "delta_type", nullable = false)
@@ -110,5 +121,10 @@ public class DeltaCycle {
         this.cycleNumber = cycleNumber;
         this.deltaType = deltaType;
         this.status = DeltaCycleStatus.APPROVED;
+    }
+
+    // "2.1" / "3.2" -- the number a human reads, as opposed to cycleNumber's internal bookkeeping.
+    public String cycleLabel() {
+        return deltaMajor + "." + deltaMinor;
     }
 }
