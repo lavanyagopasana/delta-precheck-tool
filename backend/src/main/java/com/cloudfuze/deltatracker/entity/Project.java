@@ -77,13 +77,14 @@ public class Project {
     @Column(name = "external_migration_types", length = 1000)
     private String externalMigrationTypes;
 
-    // Which database in Metabase (https://metabase.cloudfuze.com/browse/databases) holds this
-    // project's migration data. Entered by hand because nothing links a Metabase database back to a
-    // PMO project: the databases are named per customer/engagement by whoever provisioned them, and
-    // neither PMO's project id nor its name is derivable from that. Null until somebody fills it in,
-    // which is also what the "Get process status" button treats as "not configured yet".
-    @Column(name = "metabase_database_name")
-    private String metabaseDatabaseName;
+    // Which Metabase database holds this project's migration data now lives in
+    // ProjectMetabaseDatabase -- ONE ROW PER PRODUCT TYPE, because a Metabase database only ever
+    // contains one product type's data (verified across 14 databases: each holds exactly one of
+    // MessageWorkSpace / MoveWorkSpaces / emailWorkSpace, never two). A single column here could not
+    // serve a project whose servers span product types.
+    //
+    // The old metabase_database_name column is left behind in the database by ddl-auto=update (it
+    // drops nothing) and is deliberately no longer mapped. Nothing reads it.
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();

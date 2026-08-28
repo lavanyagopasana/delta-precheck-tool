@@ -2542,10 +2542,87 @@ input[type="checkbox"]:disabled {
   margin-bottom: 10px;
 }
 
+/* Third row of the project header: the Metabase database + its "Get process status" button. Same
+   hairline separator as .project-people so the header reads as stacked rows rather than one block. */
+.project-metabase {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+/* One row: the per-product-type pickers on the left, the single project-level action on the right,
+   centred against each other. align-items:center is what puts "Get process status" on the same line as
+   the picker instead of at the top of the block. */
+.project-metabase-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* The pickers stack (one per product type) and own the spacing between themselves, so an individual
+   row carries no margin of its own -- otherwise the first row sits lower than the button beside it. */
+.project-metabase-pickers {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 /* MESSAGE / EMAIL / CONTENT is a LABEL -- which of the project's product types this row is about.
    The database name next to it is a VALUE. Styling both as pills made them read as one thing, so the
    label is a quiet uppercase caption in a fixed-width gutter and the value is a monospace chip: two
    different roles, told apart at a glance rather than by reading. */
+/* THREE things sit on this row and all three must look different:
+     "Metabase Database"  section heading  -- faint uppercase caption (.detail-fact-label), matching
+                                             "Migration Engineers" above it
+     "Content"            product type     -- soft blue pill, Title case (below)
+     "bakkt"              database name    -- monospace grey chip (.metabase-db-name)
+   The product type was styled as another faint uppercase caption, which made it read as a second
+   heading rather than as a value belonging under the first. A tinted pill in Title case cannot be
+   mistaken for either the heading or the identifier. */
+.metabase-type {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  border-radius: 999px;
+  padding: 4px 12px;
+  white-space: nowrap;
+}
+
+/* A Metabase database name is a machine identifier ("bakktmsg", "azaleawangcnt"), not prose --
+   monospace makes it legible and unmistakably a value. */
+.metabase-db-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text);
+  background: var(--color-gray-soft);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+
+/* The collection the figures came from -- traceability, not something to read first. */
+.metabase-collection {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 11.5px;
+  color: var(--color-text-faint);
+}
+
+/* One product type's block inside the status panel, separated from the next by a hairline so three
+   product types don't run together. */
+.metabase-status-block + .metabase-status-block {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-border);
+}
 
 /* One server, as its own bordered white block on the page background -- replaces the grey
    .subpanel, so the combination rows inside it no longer need a surface of their own to be legible. */
@@ -2817,6 +2894,135 @@ input[type="checkbox"]:disabled {
 .users-table td:nth-child(3) { width: 24%; }
 .users-table th:nth-child(4),
 .users-table td:nth-child(4) { width: 16%; }
+
+/* Searchable single-select (SearchableSelect.js). Same interaction idiom as the .engineer-select-*
+   rules above -- a trigger, a search input, an absolutely-positioned option list -- but named
+   neutrally, because it picks Metabase databases, not engineers. Kept adjacent so the two stay
+   visually identical if either is restyled. */
+.searchable-select {
+  position: relative;
+  flex: 0 1 auto;
+}
+
+.searchable-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 260px;
+  max-width: 100%;
+  padding: 8px 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.searchable-select-trigger:hover:not(:disabled) {
+  border-color: var(--color-primary);
+}
+
+.searchable-select-trigger:disabled {
+  cursor: default;
+  background: var(--color-gray-soft);
+  color: var(--color-text-faint);
+}
+
+/* Monospace, matching .metabase-db-name: a chosen database name is the same kind of identifier
+   whether it is sitting in the trigger or displayed as a saved value. */
+.searchable-select-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchable-select-placeholder {
+  color: var(--color-text-faint);
+}
+
+.searchable-select-caret {
+  color: var(--color-text-faint);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.searchable-select-panel {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  margin-top: 6px;
+  min-width: 100%;
+  width: max-content;
+  max-width: 360px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  z-index: 20;
+  padding: 8px;
+}
+
+.searchable-select-input {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  outline: none;
+  font-size: 13px;
+  padding: 6px 14px;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.searchable-select-input:focus {
+  border-color: var(--color-primary);
+}
+
+.searchable-select-count {
+  font-size: 11px;
+  color: var(--color-text-faint);
+  padding: 6px 4px 4px;
+}
+
+.searchable-select-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.searchable-select-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
+  color: var(--color-text);
+}
+
+.searchable-select-option:hover {
+  background: var(--color-primary-soft);
+}
+
+.searchable-select-option.is-selected {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
+.searchable-select-empty {
+  padding: 10px;
+  font-size: 12.5px;
+  color: var(--color-text-faint);
+}
 
 /* Outlined coloured actions: the icon carries the meaning, the border carries the affordance.
    Used for destructive/approving actions that live IN the page (Approve, Reject, Delete server,

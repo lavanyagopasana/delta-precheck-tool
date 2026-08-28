@@ -244,6 +244,9 @@ frontend/src/
 | `PMO_IMPORT_STATUSES` | `ACTIVE` | Comma-separated PMO statuses to import. ACTIVE only by product decision — of 190 PMO projects 105 are `COMPLETED` and 1 `CANCELLED`, which can never need a pre-check. Blank imports every status |
 | `PMO_AUTO_SYNC_ENABLED` | `true` | `false` leaves only the admin-triggered `POST /api/pmo/sync` |
 | `PMO_SYNC_INTERVAL_MS` / `PMO_SYNC_INITIAL_DELAY_MS` | `300000` / `60000` | Poll every 5 min, first run 1 min after boot. PMO offers no webhook, so a poll is as close to instant as this gets |
+| `METABASE_BASE_URL` | `https://metabase.cloudfuze.com` | Root of the Metabase site, no path. The migration data itself lives here, one database per customer engagement (`/browse/databases`) |
+| `METABASE_API_KEY` | *(blank)* | Sent as the `x-api-key` header. **A real secret** — environment only. Metabase 0.49+, created under Admin → Authentication → API keys. Preferred over username/password: scoped, revocable, and keeps a human's password out of the environment |
+| `METABASE_USERNAME` / `METABASE_PASSWORD` | *(blank)* | Fallback auth — posted to `/api/session` for a token sent as `X-Metabase-Session` (cached in memory, re-fetched on a 401). **Real secrets.** Only needed because API keys are an admin-enabled feature that may be off; if `METABASE_API_KEY` is set, it wins. Will not work for an SSO-only or MFA-enabled account — use an API key there |
 | `APP_FRONTEND_URL` | `http://localhost:3000` | Used to build links in outgoing emails |
 | `APP_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated CORS allowlist for `/api/**` (`SecurityConfig`) — add the deployed frontend's origin here |
 | (frontend) `REACT_APP_AZURE_CLIENT_ID` | — | Set in `frontend/.env.local`, same value as backend's `AZURE_CLIENT_ID` |
