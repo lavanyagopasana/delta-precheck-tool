@@ -49,10 +49,17 @@ public class ProjectSummaryDto {
     private String externalManagerName;
     private String externalStatus;
     private String externalPhase;
-    // The Metabase database this project's migration data lives in, or null if nobody has set it yet.
-    // Null is what the frontend reads as "Get process status has nothing to query" -- see
-    // Project.metabaseDatabaseName for why this can't be derived from the PMO record.
-    private String metabaseDatabaseName;
+    // The product types this project covers, so the page knows how many Metabase databases it needs
+    // without waiting for servers to exist. Taken from the project's servers when it has any, and
+    // otherwise derived from PMO's migrationTypes string -- a freshly synced project already states
+    // its product type in its own name ("bakkt llc (Gmail - Gmail, Outlook - Gmail)"), so requiring a
+    // server first would gate a decision PMO has already made.
+    private List<String> productTypes;
+    // Which Metabase database holds this project's migration data, ONE ENTRY PER PRODUCT TYPE.
+    // Empty until somebody fixes one, which is what the frontend reads as "Get process status has
+    // nothing to query". A list rather than a single name because a Metabase database only ever holds
+    // one product type's data -- see ProjectMetabaseDatabase.
+    private List<ProjectMetabaseDatabaseDto> metabaseDatabases;
     // True when the project has servers and every one of them has completed its FINAL Delta -- the
     // whole project's migration is done. Note decommissioning is actioned per server now, so this is a
     // rollup for the Projects list rather than something you can act on directly.

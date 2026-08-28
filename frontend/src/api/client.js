@@ -112,11 +112,20 @@ export const updateProjectAssignments = (id, payload) =>
 export const updateProjectDetails = (id, payload) =>
   client.patch(`/projects/${id}`, payload).then((r) => r.data);
 export const removeProject = (id) => client.delete(`/projects/${id}`).then((r) => r.data);
-// Which Metabase database holds this project's migration data. Its own endpoint rather than part of
-// updateProjectDetails, because that one only lets a non-admin edit a project with no servers yet and
-// this field is needed once servers exist. Send "" to clear it.
-export const updateProjectMetabaseDatabase = (id, metabaseDatabaseName) =>
-  client.patch(`/projects/${id}/metabase`, { metabaseDatabaseName }).then((r) => r.data);
+// Fix which Metabase database holds ONE product type's data for a project. Per product type because a
+// Metabase database only ever holds one type's data. Send "" as databaseName to clear it (admin only
+// once fixed). Rejects 409 when already fixed and the caller isn't an admin.
+export const setProjectMetabaseDatabase = (id, productType, databaseName) =>
+  client.patch(`/projects/${id}/metabase`, { productType, databaseName }).then((r) => r.data);
+// The live processStatus breakdown, one entry per product type the project has a database for.
+// Fetched on demand (the "Get process status" button), never on page load -- it is several round
+// trips to Metabase and a project usually doesn't need it.
+export const getProjectMetabaseStatus = (id) =>
+  client.get(`/projects/${id}/metabase-status`).then((r) => r.data);
+// The databases Metabase can see, for the project page's dropdown. Returns [{id, name, engine}].
+// Rejects (503) when Metabase isn't configured, which the caller treats as "fall back to a text
+// field" rather than as a hard error -- the database name is still settable by hand without it.
+export const getMetabaseDatabases = () => client.get("/metabase/databases").then((r) => r.data);
 
 // Pulls the project list from the PMO tool on demand (ADMIN only). A background poll already does
 // this every 5 minutes -- this is for an admin who has just created a project over there and doesn't

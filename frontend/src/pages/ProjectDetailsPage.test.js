@@ -70,6 +70,10 @@ describe("ProjectDetailsPage engineer scoping", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     client.getRoster.mockResolvedValue(ROSTER);
+    // The page also loads Metabase's database list on mount for the Metabase Database dropdown.
+    // Stubbed empty here because these tests are about engineer scoping -- but it has to be a
+    // resolved promise, since an auto-mock returns undefined and the page would throw on .then().
+    client.getMetabaseDatabases.mockResolvedValue([]);
   });
 
   test("offers only the engineers on the project manager's team", async () => {

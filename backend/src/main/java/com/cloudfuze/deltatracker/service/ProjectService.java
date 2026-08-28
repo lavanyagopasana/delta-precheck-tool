@@ -2,6 +2,7 @@ package com.cloudfuze.deltatracker.service;
 
 import com.cloudfuze.deltatracker.dto.ProjectAssignmentRequest;
 import com.cloudfuze.deltatracker.dto.ProjectDetailDto;
+import com.cloudfuze.deltatracker.dto.ProjectMetabaseDatabaseDto;
 import com.cloudfuze.deltatracker.dto.ProjectMetabaseRequest;
 import com.cloudfuze.deltatracker.dto.ProjectUpdateRequest;
 import com.cloudfuze.deltatracker.dto.ProjectSummaryDto;
@@ -9,6 +10,8 @@ import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
 import com.cloudfuze.deltatracker.entity.AppUserRole;
 import com.cloudfuze.deltatracker.entity.PairStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
+import com.cloudfuze.deltatracker.entity.ProductType;
+import com.cloudfuze.deltatracker.entity.ProjectMetabaseDatabase;
 import com.cloudfuze.deltatracker.entity.WorkspacePair;
 import com.cloudfuze.deltatracker.entity.Project;
 import com.cloudfuze.deltatracker.entity.Server;
@@ -22,6 +25,7 @@ import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.ResourceNotFoundException;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
+import com.cloudfuze.deltatracker.repository.ProjectMetabaseDatabaseRepository;
 import com.cloudfuze.deltatracker.repository.ProjectRepository;
 import com.cloudfuze.deltatracker.repository.ServerRepository;
 import com.cloudfuze.deltatracker.repository.SignOffRepository;
@@ -51,6 +55,7 @@ public class ProjectService {
     private static final List<SignOffRole> APPROVAL_SEQUENCE = SignOffRole.APPROVAL_SEQUENCE;
 
     private final ProjectRepository projectRepository;
+    private final ProjectMetabaseDatabaseRepository projectMetabaseDatabaseRepository;
     private final ServerRepository serverRepository;
     private final WorkspacePairRepository workspacePairRepository;
     private final WorkspaceCombinationRepository workspaceCombinationRepository;
@@ -64,6 +69,7 @@ public class ProjectService {
     private final ServerPurgeService serverPurgeService;
 
     public ProjectService(ProjectRepository projectRepository,
+                           ProjectMetabaseDatabaseRepository projectMetabaseDatabaseRepository,
                            ServerRepository serverRepository,
                            WorkspacePairRepository workspacePairRepository,
                            WorkspaceCombinationRepository workspaceCombinationRepository,
@@ -75,6 +81,7 @@ public class ProjectService {
                            AppUserService appUserService,
                            ServerPurgeService serverPurgeService) {
         this.projectRepository = projectRepository;
+        this.projectMetabaseDatabaseRepository = projectMetabaseDatabaseRepository;
         this.serverRepository = serverRepository;
         this.workspacePairRepository = workspacePairRepository;
         this.workspaceCombinationRepository = workspaceCombinationRepository;
@@ -288,7 +295,10 @@ public class ProjectService {
         return buildSummary(saved, serverRepository.findAll());
     }
 
-    // Set (or clear) the Metabase database this project's migration data lives in.
+    // Fix (or clear) which Metabase database holds ONE PRODUCT TYPE's migration data for this project.
+    //
+    // Per product type, not per project: a Metabase database only ever contains one product type's
+    // data, so a project whose servers span types needs one name per type. See ProjectMetabaseDatabase.
     //
     // Separate from updateDetails on purpose. updateDetails is gated by canDelete, which lets a
     // non-admin edit only a project with NO servers yet -- exactly backwards for this field, which is
@@ -296,19 +306,98 @@ public class ProjectService {
     // the admin, the project's own Migration Manager, or an engineer on the project. DEV_LEAD and
     // QA_LEAD can read it (it rides along on the project DTO) but not set it -- they are approvers,
     // and pointing the tool at a different database is a change to what they are approving against.
-    //
-    // Blank clears it back to "not configured", which is the state the frontend's "Get process
-    // status" button refuses to act on.
-    public ProjectSummaryDto updateMetabaseDatabaseName(Long id, ProjectMetabaseRequest request,
-                                                        String callerEmail, AppUserRole callerRole) {
+    public ProjectSummaryDto setMetabaseDatabase(Long id, ProjectMetabaseRequest request,
+                                                  String callerEmail, AppUserRole callerRole) {
         Project project = findOrThrow(id);
         if (!canEditMetabaseDatabase(project, callerEmail, callerRole)) {
             throw new ApiException(HttpStatus.FORBIDDEN,
                     "Only this project's Migration Manager, an assigned engineer, or an admin can set its Metabase database.");
         }
-        project.setMetabaseDatabaseName(blankToNull(request.getMetabaseDatabaseName()));
-        Project saved = projectRepository.save(project);
-        return buildSummary(saved, serverRepository.findAll());
+
+        ProductType productType = parseProductType(request.getProductType());
+        String next = blankToNull(request.getDatabaseName());
+        Optional<ProjectMetabaseDatabase> existing =
+                projectMetabaseDatabaseRepository.findByProjectIdAndProductType(id, productType);
+        String current = existing.map(ProjectMetabaseDatabase::getDatabaseName).orElse(null);
+
+        // Confirming the database is a ONE-WAY action for everyone except an admin. Whoever sets it is
+        // fixing which database this product type's processed/conflict figures are read from, and those
+        // figures are what a Delta gets approved against -- so quietly re-pointing it later would change
+        // the meaning of an approval nobody re-examined. First set: the manager or an assigned engineer.
+        // Every change after that: admin only, which is also the unblock path for a wrong first choice.
+        //
+        // Clearing counts as a change. Otherwise the lock is one blank submit away from being reset and
+        // then re-set to anything.
+        //
+        // callerEmail == null means auth isn't configured, and the whole app runs open in that mode
+        // (see isVisible) -- the lock would otherwise make local dev unusable.
+        boolean isAdmin = callerRole == AppUserRole.ADMIN;
+        if (current != null && !isAdmin && callerEmail != null && !current.equals(next)) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "This project's " + productType + " Metabase database is already set to \"" + current
+                            + "\". Only an admin can change it.");
+        }
+
+        if (next == null) {
+            existing.ifPresent(projectMetabaseDatabaseRepository::delete);
+        } else if (existing.isPresent()) {
+            ProjectMetabaseDatabase row = existing.get();
+            row.setDatabaseName(next);
+            row.setSetBy(callerEmail);
+            row.setSetAt(LocalDateTime.now());
+            projectMetabaseDatabaseRepository.save(row);
+        } else {
+            projectMetabaseDatabaseRepository.save(
+                    new ProjectMetabaseDatabase(project, productType, next, callerEmail));
+        }
+        return buildSummary(project, serverRepository.findAll());
+    }
+
+    // The product types this project actually needs a Metabase database for.
+    //
+    // Servers first, since productType lives on Server and a server is the concrete statement of what
+    // is being migrated. But a synced PMO project has no servers yet and ALREADY names its product
+    // type -- "bakkt llc (Gmail - Gmail, Outlook - Gmail)" is an email migration and PMO says so in
+    // externalMigrationTypes. Falling back to that means the Metabase database can be chosen during
+    // project setup instead of being blocked behind creating a server first.
+    //
+    // Servers win when both exist: somebody adding a MESSAGE server to a project PMO labelled EMAIL is
+    // making a statement about this tool's data, and this tool is the authority on everything it owns.
+    Set<ProductType> productTypesOf(Project project, List<Server> allServers) {
+        Set<ProductType> fromServers = allServers.stream()
+                .filter(server -> server.getProject() != null
+                        && server.getProject().getId().equals(project.getId()))
+                .map(Server::getProductType)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (!fromServers.isEmpty()) {
+            return fromServers;
+        }
+        return ProductType.fromMigrationTypes(project.getExternalMigrationTypes());
+    }
+
+    List<ProjectMetabaseDatabaseDto> metabaseDatabasesOf(Long projectId) {
+        return projectMetabaseDatabaseRepository.findByProjectId(projectId).stream()
+                .map(row -> {
+                    ProjectMetabaseDatabaseDto dto = new ProjectMetabaseDatabaseDto();
+                    dto.setProductType(row.getProductType().name());
+                    dto.setDatabaseName(row.getDatabaseName());
+                    dto.setSetBy(row.getSetBy());
+                    dto.setSetAt(row.getSetAt());
+                    return dto;
+                })
+                // Stable order so the page doesn't reshuffle its rows between loads.
+                .sorted(java.util.Comparator.comparing(ProjectMetabaseDatabaseDto::getProductType))
+                .toList();
+    }
+
+    private ProductType parseProductType(String raw) {
+        try {
+            return ProductType.valueOf(raw.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (RuntimeException e) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "Unknown product type \"" + raw + "\" -- expected MESSAGE, EMAIL or CONTENT.");
+        }
     }
 
     private boolean canEditMetabaseDatabase(Project project, String callerEmail, AppUserRole callerRole) {
@@ -363,6 +452,11 @@ public class ProjectService {
         // (the previous inline version predated Delta cycles and never deleted them, so deleting a
         // project with any Delta cycle failed on a foreign-key constraint).
         servers.forEach(serverPurgeService::purge);
+        // The per-product-type Metabase rows hang off this project by FK, so they go first --
+
+        // otherwise the delete fails on a constraint rather than on anything a user did wrong.
+
+        projectMetabaseDatabaseRepository.deleteByProjectId(id);
         projectRepository.delete(project);
     }
 
@@ -463,7 +557,8 @@ public class ProjectService {
         to.setExternalManagerName(from.getExternalManagerName());
         to.setExternalStatus(from.getExternalStatus());
         to.setExternalPhase(from.getExternalPhase());
-        to.setMetabaseDatabaseName(from.getMetabaseDatabaseName());
+        to.setProductTypes(from.getProductTypes());
+        to.setMetabaseDatabases(from.getMetabaseDatabases());
     }
 
     private ProjectSummaryDto buildSummary(Project project, List<Server> allServers) {
@@ -595,7 +690,8 @@ public class ProjectService {
         dto.setExternalManagerName(project.getExternalManagerName());
         dto.setExternalStatus(project.getExternalStatus());
         dto.setExternalPhase(project.getExternalPhase());
-        dto.setMetabaseDatabaseName(project.getMetabaseDatabaseName());
+        dto.setProductTypes(productTypesOf(project, allServers).stream().map(ProductType::name).sorted().toList());
+        dto.setMetabaseDatabases(metabaseDatabasesOf(project.getId()));
         // Ready to decommission once the project has servers, every one of them has at least one
         // combination, and every combination has completed its FINAL Delta.
         //

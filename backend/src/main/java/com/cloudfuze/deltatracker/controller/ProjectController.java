@@ -4,11 +4,13 @@ import com.cloudfuze.deltatracker.dto.CreateServerRequest;
 import com.cloudfuze.deltatracker.dto.ProjectAssignmentRequest;
 import com.cloudfuze.deltatracker.dto.ProjectCreateRequest;
 import com.cloudfuze.deltatracker.dto.ProjectDetailDto;
+import com.cloudfuze.deltatracker.dto.MetabaseStatusDto;
 import com.cloudfuze.deltatracker.dto.ProjectMetabaseRequest;
 import com.cloudfuze.deltatracker.dto.ProjectSummaryDto;
 import com.cloudfuze.deltatracker.dto.ProjectUpdateRequest;
 import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
 import com.cloudfuze.deltatracker.service.AppUserService;
+import com.cloudfuze.deltatracker.service.MetabaseStatusService;
 import com.cloudfuze.deltatracker.service.ProjectService;
 import com.cloudfuze.deltatracker.service.ServerService;
 import com.cloudfuze.deltatracker.util.JwtEmailUtil;
@@ -27,11 +29,14 @@ public class ProjectController {
     private final ProjectService projectService;
     private final AppUserService appUserService;
     private final ServerService serverService;
+    private final MetabaseStatusService metabaseStatusService;
 
-    public ProjectController(ProjectService projectService, AppUserService appUserService, ServerService serverService) {
+    public ProjectController(ProjectService projectService, AppUserService appUserService, ServerService serverService,
+                              MetabaseStatusService metabaseStatusService) {
         this.projectService = projectService;
         this.appUserService = appUserService;
         this.serverService = serverService;
+        this.metabaseStatusService = metabaseStatusService;
     }
 
     @GetMapping
@@ -78,17 +83,33 @@ public class ProjectController {
         return projectService.updateDetails(id, request, email, appUserService.roleOf(email).orElse(null));
     }
 
-    // Set which Metabase database holds this project's migration data. Its own route rather than a
-    // field on PATCH /api/projects/{id}, because that endpoint only lets a non-admin edit a project
-    // with no servers yet -- and this field is only useful once servers exist. Permission (admin /
-    // this project's MM / an assigned engineer) is in ProjectService.updateMetabaseDatabaseName.
+    // Fix which Metabase database holds ONE PRODUCT TYPE's migration data for this project. Its own
+    // route rather than a field on PATCH /api/projects/{id}, because that endpoint only lets a
+    // non-admin edit a project with no servers yet -- and this is only useful once servers exist.
+    // Permission (admin / this project's MM / an assigned engineer, and admin-only once fixed) is in
+    // ProjectService.setMetabaseDatabase.
     @PatchMapping("/{id}/metabase")
-    public ProjectSummaryDto updateMetabaseDatabase(@PathVariable Long id,
-                                                    @Valid @RequestBody ProjectMetabaseRequest request,
-                                                    @AuthenticationPrincipal Jwt jwt) {
+    public ProjectSummaryDto setMetabaseDatabase(@PathVariable Long id,
+                                                  @Valid @RequestBody ProjectMetabaseRequest request,
+                                                  @AuthenticationPrincipal Jwt jwt) {
         String email = JwtEmailUtil.extractEmail(jwt);
-        return projectService.updateMetabaseDatabaseName(id, request, email,
+        return projectService.setMetabaseDatabase(id, request, email,
                 appUserService.roleOf(email).orElse(null));
+    }
+
+    // The processStatus breakdown per product type, read live from Metabase. Not cached: it is fetched
+    // only when somebody presses "Get process status", and a stale migration figure is worse than a
+    // slow one -- this is what a Delta gets approved against.
+    //
+    // Read-only, so it is allowlist-gated in SecurityConfig rather than role-gated: the DEV_LEAD and
+    // QA_LEAD approvers who may not CHOOSE the database are exactly the people who need to read it.
+    @GetMapping("/{id}/metabase-status")
+    public List<MetabaseStatusDto> metabaseStatus(@PathVariable Long id, @AuthenticationPrincipal Jwt jwt) {
+        String email = JwtEmailUtil.extractEmail(jwt);
+        // Visibility is enforced by loading the project through the same path the page uses -- a caller
+        // who can't see the project gets its 404, not a status report about it.
+        projectService.getDetail(id, email, appUserService.roleOf(email).orElse(null));
+        return metabaseStatusService.statusForProject(id);
     }
 
     // Fine-grained authorization (creator / managing MM / admin, and the Delta-initiated audit

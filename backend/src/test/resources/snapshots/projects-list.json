@@ -25,7 +25,8 @@
   "externalManagerName" : null,
   "externalStatus" : null,
   "externalPhase" : null,
-  "metabaseDatabaseName" : null,
+  "productTypes" : [ ],
+  "metabaseDatabases" : [ ],
   "decommissionReady" : false,
   "serversReadyToDecommission" : 0,
   "serversDecommissioned" : 0
@@ -56,7 +57,8 @@
   "externalManagerName" : null,
   "externalStatus" : null,
   "externalPhase" : null,
-  "metabaseDatabaseName" : null,
+  "productTypes" : [ ],
+  "metabaseDatabases" : [ ],
   "decommissionReady" : false,
   "serversReadyToDecommission" : 0,
   "serversDecommissioned" : 0

@@ -217,6 +217,19 @@ public class SecurityConfig {
                         // Delta-initiated audit guard are enforced in ProjectService.delete.
                         .requestMatchers(HttpMethod.DELETE, "/api/projects/*").access(roleRequired(
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER, AppUserRole.MIGRATION_ENGINEER))
+                        // Reading Metabase's database list (what the project page's dropdown offers).
+                        // Any allowlisted caller: it is a list of database names, every caller is
+                        // internal staff, and the DEV_LEAD/QA_LEAD approvers who may not SET a
+                        // project's database still see it on the project page. Stated explicitly
+                        // rather than left to the anyRequest() default, per
+                        // .claude/rules/api-conventions.md.
+                        .requestMatchers(HttpMethod.GET, "/api/metabase/databases")
+                                .access(allowlistRequired())
+                        // Reading a project's Metabase status. Read-only, so any allowlisted caller --
+                        // the DEV_LEAD/QA_LEAD approvers who may not CHOOSE the database are exactly
+                        // the people who need to read the figures they are approving against.
+                        .requestMatchers(HttpMethod.GET, "/api/projects/*/metabase-status")
+                                .access(allowlistRequired())
                         // Setting a project's Metabase database name. Needs its own matcher: a single
                         // "*" matches one path segment, so the /api/projects/* rule below never covers
                         // /api/projects/{id}/metabase and this would otherwise fall through to the
