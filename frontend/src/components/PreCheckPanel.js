@@ -506,7 +506,7 @@ export default function PreCheckPanel({
     load();
   }, [load]);
 
-  if (loading) return <p>Loading pre-check form...</p>;
+  if (loading && !combination) return <p>Loading pre-check form...</p>;
   if (!combination || !submission) {
     return (
       <div>

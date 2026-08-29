@@ -189,7 +189,7 @@ export default function WorkspacePairsPanel({
     if (onCombinationReadiness) onCombinationReadiness(readiness);
   };
 
-  if (loading) return <p>Loading migration pairs...</p>;
+  if (loading && !data) return <p>Loading migration pairs...</p>;
 
   const activeGroup = groups.find((g) => g.combination === selectedCombination) || groups[0];
   // Pre-check/Delta lifecycle are per-combination now -- resolve the WorkspaceCombination id for

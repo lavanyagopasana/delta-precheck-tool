@@ -209,6 +209,11 @@ public class DashboardService {
             // Matches ProjectService.buildSummary's readyServerCount exactly -- the tile this list
             // sits under counts servers in this state, so any other rule here would put a popup and
             // the number above it in disagreement.
+            List<WorkspaceCombination> own = combinationsByServer.getOrDefault(server.getId(), List.of());
+            dto.setCombinations(own.stream()
+                    .map(WorkspaceCombination::getName)
+                    .filter(Objects::nonNull)
+                    .toList());
             dto.setDeltaReady(server.getStatus() == PairStatus.DELTA_READY);
             dto.setDeltaReadyCombinations(combinationsByServer.getOrDefault(server.getId(), List.of()).stream()
                     .filter(c -> c.getStatus() == PairStatus.DELTA_READY)

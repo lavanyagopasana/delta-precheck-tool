@@ -23,7 +23,7 @@ const KPI_TONES = {
  *
  * Clicking a row opens that project, which is the action somebody reading this list wants next.
  */
-function ServerListModal({ title, rows, emptyText, showCombinations, onClose, onOpenProject }) {
+function ServerListModal({ title, rows, emptyText, combinationsOf, combinationTone, onClose, onOpenProject }) {
   return (
     <Modal title={title} onClose={onClose} width={720} closeIcon>
       {rows.length === 0 ? (
@@ -46,11 +46,12 @@ function ServerListModal({ title, rows, emptyText, showCombinations, onClose, on
               </div>
               <div className="dashboard-server-row__meta">
                 {row.projectName || "No project"}
-                {/* Only on the Delta Ready list: on the full Servers list most rows have none,
-                    and a column that is blank for nine rows in ten is noise rather than data. */}
-                {showCombinations && row.deltaReadyCombinations?.length > 0 && (
-                  <span className="dashboard-server-row__combos">
-                    {row.deltaReadyCombinations.join(", ")}
+                {/* Which combinations to name differs by list: the Servers list names all of them,
+                    the Delta Ready list only the ready ones -- naming all there would imply a server
+                    is ready in combinations that are still mid-chain. */}
+                {combinationsOf(row).length > 0 && (
+                  <span className={`dashboard-server-row__combos${combinationTone ? " " + combinationTone : ""}`}>
+                    {combinationsOf(row).join(", ")}
                   </span>
                 )}
               </div>
@@ -245,6 +246,7 @@ export default function Dashboard() {
               ? "No servers yet."
               : "This list needs a newer backend than the one currently running -- the count above is still correct."
           }
+          combinationsOf={(row) => row.combinations || []}
           onClose={() => setOpenList(null)}
           onOpenProject={(id) => id && navigate(`/projects/${id}`)}
         />
@@ -258,7 +260,8 @@ export default function Dashboard() {
               ? "No server is Delta Ready yet."
               : "This list needs a newer backend than the one currently running -- the count above is still correct."
           }
-          showCombinations
+          combinationsOf={(row) => row.deltaReadyCombinations || []}
+          combinationTone="is-ready"
           onClose={() => setOpenList(null)}
           onOpenProject={(id) => id && navigate(`/projects/${id}`)}
         />

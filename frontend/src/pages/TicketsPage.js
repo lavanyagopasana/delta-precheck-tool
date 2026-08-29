@@ -402,14 +402,16 @@ export default function TicketsPage() {
     if (!ok) return;
     try {
       await removeTicket(ticket.id);
+      // Same as the other deletes: remove the row locally instead of reloading the page to be told
+      // the row is gone.
+      setTickets((current) => current.filter((t) => t.id !== ticket.id));
       showToast("Ticket deleted.", "success");
-      reloadTickets();
     } catch (err) {
       showToast(apiErrorMessage(err, "Failed to delete ticket."), "error");
     }
   };
 
-  if (loading) return <p>Loading tickets...</p>;
+  if (loading && tickets.length === 0) return <p>Loading tickets...</p>;
 
   if (loadError) {
     return (

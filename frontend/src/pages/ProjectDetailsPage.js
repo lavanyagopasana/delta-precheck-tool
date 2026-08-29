@@ -341,7 +341,7 @@ export default function ProjectDetailsPage() {
       });
   }, []);
 
-  if (loading) return <p>Loading project...</p>;
+  if (loading && !project) return <p>Loading project...</p>;
   if (!project) return <div className="inline-hint">{error || "Project not found."}</div>;
 
   // Only this project's manager, its team members, its creator, or an admin can add a server or

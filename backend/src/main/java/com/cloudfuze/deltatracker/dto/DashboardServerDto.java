@@ -39,7 +39,16 @@ public class DashboardServerDto {
     private boolean deltaReady;
 
     /**
-     * Names of this server's combinations that are individually DELTA_READY. A server holds several
+     * Every combination on this server, ready or not. A server is only a container -- the actual unit
+     * of work is the combination ("Teams to Slack"), which is what carries the checklist and the
+     * sign-off chain. So a list of bare server names tells the reader less than it appears to.
+     */
+    private List<String> combinations = new ArrayList<>();
+
+    /**
+     * Names of this server's combinations that are individually DELTA_READY. A subset of
+     * {@link #combinations}, kept separate because the Delta Ready tile must show only the ready ones
+     * while the Servers tile shows all of them. A server holds several
      * combinations, each running its own pre-check and sign-off chain, so "which combination" is a
      * real question the server name alone cannot answer.
      */

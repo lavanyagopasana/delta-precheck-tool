@@ -319,7 +319,7 @@ export default function ApprovalsPage() {
 
   useEffect(load, []);
 
-  if (loading) return <p>Loading approvals...</p>;
+  if (loading && approvals.length === 0) return <p>Loading approvals...</p>;
 
   if (loadError) {
     return (

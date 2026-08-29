@@ -92,8 +92,13 @@ export default function ProjectsPage() {
     if (!ok) return;
     try {
       await removeProject(p.id);
+      // Drop the row from state rather than refetching the whole list. The delete has already
+      // succeeded by this point, and its effect on this page is exactly "this row is gone" -- so a
+      // round trip to be told that buys nothing and costs a visible reload. Anything the server
+      // recomputed (counts on other rows) is untouched by removing one project, and the next
+      // natural load picks up anything else.
+      setProjects((current) => current.filter((row) => row.id !== p.id));
       showToast(`Project "${p.name}" deleted.`);
-      load();
     } catch (err) {
       showToast(err.response?.data?.message || "Failed to delete project.");
     }
@@ -147,7 +152,12 @@ export default function ProjectsPage() {
     }
   };
 
-  if (loading) return <p>Loading projects...</p>;
+  // Only blanks the screen before there is anything to show. A plain `if (loading)` replaced the
+  // entire rendered page on EVERY refresh, so any action that reloaded -- deleting a project most
+  // visibly -- flashed the heading, filters and table out to a bare "Loading..." line and back.
+  // Once data is on screen it stays there while the next fetch runs. Matches Dashboard.js, which
+  // already guarded with `loading && !summary`.
+  if (loading && projects.length === 0) return <p>Loading projects...</p>;
 
   return (
     <div>

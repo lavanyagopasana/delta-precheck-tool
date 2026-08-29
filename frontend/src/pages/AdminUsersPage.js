@@ -215,6 +215,10 @@ export default function AdminUsersPage() {
     try {
       await removeTeam(team.id);
       showToast(`Team "${team.name}" deleted.`, "success");
+      // Deliberately still a refetch, unlike the row deletes elsewhere on this page. Removing a team
+      // also clears AppUser.team for every member, and this page has no way to know which users those
+      // were without asking -- an optimistic update would leave stale team names beside people who no
+      // longer have one. The reload no longer blanks the page, so the cost is just a brief stale view.
       await Promise.all([loadTeams(), getAllowedUsers().then(setUsers).catch(() => {})]);
     } catch (err) {
       showToast(err.response?.data?.message || "Failed to delete team.", "error");
@@ -389,8 +393,12 @@ export default function AdminUsersPage() {
     setError(null);
     try {
       await removeAllowedUser(user.email);
+      // Drop the row rather than refetching: the removal has succeeded, and its effect on this list
+      // is exactly "this row is gone". Emails are the identity key here and are matched
+      // case-insensitively everywhere else, so this comparison is too -- app_users keeps whatever
+      // case was entered, and an exact match would leave the row on screen after a successful delete.
+      setUsers((current) => current.filter((u) => u.email.toLowerCase() !== user.email.toLowerCase()));
       showToast(`${user.email} removed.`);
-      load();
     } catch (err) {
       setError(err.response?.data?.message || "Failed to remove user.");
     } finally {
@@ -398,7 +406,7 @@ export default function AdminUsersPage() {
     }
   };
 
-  if (loading) return <p>Loading users...</p>;
+  if (loading && users.length === 0) return <p>Loading users...</p>;
 
   return (
     <div>

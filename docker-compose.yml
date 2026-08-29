@@ -75,6 +75,13 @@ services:
       AZURE_AUTO_PROVISION_DOMAIN: ${AZURE_AUTO_PROVISION_DOMAIN:-cloudfuze.com}
       APP_FIRST_ADMIN_EMAIL: ${APP_FIRST_ADMIN_EMAIL}
 
+      # Demo data ("Demo prjct" and friends) -- OFF unless deliberately switched on. Without this
+      # line the value never reaches the container whatever is configured in GitHub, which is how
+      # invented projects, tickets and approvals kept arriving in production on every deploy.
+      APP_SEED_SAMPLE_PROJECTS: ${APP_SEED_SAMPLE_PROJECTS:-false}
+      # The real manager/engineer roster, not demo data -- this one stays on.
+      APP_SEED_TEAM_ROSTER: ${APP_SEED_TEAM_ROSTER:-true}
+
       # Same origin as the frontend now that the proxy fronts both, so CORS never comes into play.
       # Set anyway so a future split origin fails visibly rather than silently.
       APP_ALLOWED_ORIGINS: https://${APP_DOMAIN}
