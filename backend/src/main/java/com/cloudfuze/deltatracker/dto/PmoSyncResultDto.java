@@ -15,7 +15,7 @@ import java.util.List;
 @Setter
 public class PmoSyncResultDto {
 
-    /** Records returned by PMO that matched the configured import statuses. */
+    /** Records returned by PMO that survived the configured status and phase filters. */
     private int totalRows;
     private int createdCount;
     private int updatedCount;
@@ -23,6 +23,14 @@ public class PmoSyncResultDto {
     private int unchangedCount;
     /** Returned by PMO but filtered out by pmo.import-statuses (e.g. COMPLETED). */
     private int skippedByStatusCount;
+
+    /**
+     * Returned by PMO, passed the status filter, but filtered out by pmo.import-phases -- a live
+     * project that has not reached Delta yet, or one that never will. Counted separately from
+     * skippedByStatusCount because they mean different things: a COMPLETED project is finished work,
+     * while a KICKOFF one is expected to arrive here later of its own accord.
+     */
+    private int skippedByPhaseCount;
 
     /** Projects whose Migration Manager was set from PMO's project manager this run. */
     private int managersAssigned;

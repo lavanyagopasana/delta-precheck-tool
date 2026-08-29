@@ -49,7 +49,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * (servers, workspace pairs, checklists, sign-off chains, delta cycles). So the sync only ever creates
  * a project or refreshes its display fields -- it never deletes and never touches assignments.
  *
- * <p>Three decisions here that look arbitrary but are not:
+ * <p><b>The poll imports only projects PMO reports as being in the DELTA phase</b> ({@code
+ * pmo.import-phases}, on top of the ACTIVE-only status filter). Before 2026-08-29 it took every ACTIVE
+ * project regardless of phase, which is why the deployed database holds projects in phases this tool
+ * has nothing to do with. The filter gates creation only -- see {@link #runSync} -- and this class
+ * still never deletes, so pre-existing rows are left for a human to remove deliberately.
+ *
+ * <p>Three further decisions here that look arbitrary but are not:
  * <ul>
  *   <li><b>Matching is by {@code externalId}, never by name.</b> PMO's UUID is the only stable key. A
  *       project renamed in PMO must update the row we already have; matching by name would instead
@@ -116,6 +122,20 @@ public class PmoSyncService {
     @Value("${pmo.import-statuses:ACTIVE}")
     private String importStatuses;
 
+    /**
+     * Which PMO phases to import, comma-separated. DELTA only: this tool is a pre-Delta readiness
+     * checklist, so a project still in KICKOFF or PILOT_MIGRATION has nothing here to fill in yet and
+     * only pads every list and count on the Projects page. It arrives on its own the first poll after
+     * PMO advances it. PMO's phases are KICKOFF, PILOT_MIGRATION, ONETIME_MIGRATION, DELTA,
+     * FINAL_VALIDATION, CLOSURE, COMPLETED. Blank imports every phase, which is what the poll did
+     * before 2026-08-29 -- and why the deployed database holds projects in every phase.
+     *
+     * <p><b>The filter gates creation only.</b> A project already mirrored here keeps syncing whatever
+     * phase PMO now reports -- see the phase check in {@link #runSync}.
+     */
+    @Value("${pmo.import-phases:DELTA}")
+    private String importPhases;
+
     @Value("${pmo.auto-sync-enabled:false}")
     private boolean autoSyncEnabled;
 
@@ -151,12 +171,30 @@ public class PmoSyncService {
         List<PmoProjectDto> all = pmoProjectClient.fetchProjects();
         PmoSyncResultDto result = new PmoSyncResultDto();
 
-        Set<String> wanted = parseStatuses(importStatuses);
+        Set<String> wantedStatuses = parseFilter(importStatuses);
+        Set<String> wantedPhases = parseFilter(importPhases);
+        // Read once per run rather than per record, and only when the phase filter is actually on.
+        Set<String> alreadyMirrored = wantedPhases.isEmpty() ? new HashSet<>() : mirroredExternalIds();
+
         List<PmoProjectDto> importable = new ArrayList<>();
         for (PmoProjectDto record : all) {
-            if (!wanted.isEmpty() && (record.getStatus() == null
-                    || !wanted.contains(record.getStatus().trim().toUpperCase(Locale.ROOT)))) {
+            if (!matchesFilter(wantedStatuses, record.getStatus())) {
                 result.setSkippedByStatusCount(result.getSkippedByStatusCount() + 1);
+                continue;
+            }
+            // Deliberately does NOT apply to a project we already hold, for two reasons. Phases run
+            // forwards (... -> DELTA -> FINAL_VALIDATION -> CLOSURE), so a strict filter would stop
+            // syncing a project the moment it moved past Delta: its PMO Phase on the Projects page
+            // would freeze at "DELTA" forever, and that label is exactly what an admin reads to decide
+            // which rows are stale. Second, projects here carry servers, checklists and running
+            // sign-off chains that this sync must never disturb -- refreshing a row costs nothing,
+            // while dropping it from the run makes a live project look abandoned.
+            //
+            // Note this does NOT resurrect a deleted project: once its row is gone it is no longer
+            // mirrored, so a non-Delta project stays deleted on every subsequent poll.
+            if (!matchesFilter(wantedPhases, record.getPhase())
+                    && !alreadyMirrored.contains(record.getExternalId())) {
+                result.setSkippedByPhaseCount(result.getSkippedByPhaseCount() + 1);
                 continue;
             }
             if (!StringUtils.hasText(record.getExternalId())) {
@@ -247,9 +285,11 @@ public class PmoSyncService {
             // Only worth a line in the log when something actually changed; an unchanged poll every
             // five minutes would bury everything else.
             if (result.getCreatedCount() > 0 || result.getUpdatedCount() > 0 || !result.getErrors().isEmpty()) {
-                log.info("PMO sync: {} created, {} updated, {} unchanged, {} skipped by status, {} error(s).",
+                log.info("PMO sync: {} created, {} updated, {} unchanged, {} skipped by status, "
+                                + "{} skipped by phase, {} error(s).",
                         result.getCreatedCount(), result.getUpdatedCount(), result.getUnchangedCount(),
-                        result.getSkippedByStatusCount(), result.getErrors().size());
+                        result.getSkippedByStatusCount(), result.getSkippedByPhaseCount(),
+                        result.getErrors().size());
                 result.getErrors().forEach(e -> log.warn("PMO sync: {}", e));
             }
         } catch (Exception e) {
@@ -500,18 +540,35 @@ public class PmoSyncService {
                 String.valueOf(project.getExternalMigrationTypes()));
     }
 
-    private static Set<String> parseStatuses(String raw) {
-        Set<String> statuses = new LinkedHashSet<>();
+    /** Parses a comma-separated allowlist. Blank means "no filter" -- import whatever PMO returns. */
+    private static Set<String> parseFilter(String raw) {
+        Set<String> values = new LinkedHashSet<>();
         if (raw == null || raw.isBlank()) {
-            // Blank means "no status filter" -- import whatever PMO returns.
-            return statuses;
+            return values;
         }
         Arrays.stream(raw.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .map(s -> s.toUpperCase(Locale.ROOT))
-                .forEach(statuses::add);
-        return statuses;
+                .forEach(values::add);
+        return values;
+    }
+
+    /**
+     * True when the filter is off entirely, or when PMO's value is in it. A record whose value is null
+     * fails an active filter rather than passing it: PMO not telling us the phase is not evidence that
+     * it is the one we want.
+     */
+    private static boolean matchesFilter(Set<String> wanted, String value) {
+        return wanted.isEmpty()
+                || (value != null && wanted.contains(value.trim().toUpperCase(Locale.ROOT)));
+    }
+
+    /** External ids of every PMO project this tool already mirrors. */
+    private Set<String> mirroredExternalIds() {
+        Set<String> ids = new HashSet<>();
+        projectRepository.findByExternalIdIsNotNull().forEach(p -> ids.add(p.getExternalId()));
+        return ids;
     }
 
     private static String normalize(String name) {
