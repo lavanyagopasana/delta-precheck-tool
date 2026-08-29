@@ -12,7 +12,9 @@
 The deploy job declares `needs` on the other three, so GitHub itself blocks a deploy whose tests
 failed.
 
-**Tests are automatic; deploys are not.** Nothing deploys on a push or a merge — not even to `main`.
+**Tests and deploys are both automatic on `main`.** A merged PR is a push to `main`, and that deploys once the three test jobs pass. Every other branch and every PR runs the tests only.
+
+**This means any merge restarts production**, including a docs-only one, because the stack rebuilds images on the server and recreates containers. A red test suite still blocks the deploy (`needs`), a failed health check still rolls back automatically, and adding required reviewers to the `production` environment under Settings → Environments puts a human click back in front of every deploy without a code change.
 Continuous deployment on every merge is the usual default and it is the wrong default here: this
 stack rebuilds images on the server and takes the site through a container recreation, so a docs typo
 merged at 6pm would restart production. Deploying is a decision somebody makes.

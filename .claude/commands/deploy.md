@@ -4,9 +4,15 @@ description: Deploy this project to production — triggers the CI/CD workflow, 
 
 # Deploy
 
-Trigger a production deploy of delta-precheck-tool. **Nothing deploys on a push or a merge** — the
-`deploy` job in `.github/workflows/ci-cd.yml` only runs on an explicit manual trigger, and this
-command is that trigger.
+Trigger a production deploy of delta-precheck-tool **out of band**.
+
+**A merge to `main` already deploys on its own** (changed 2026-08-29). So the usual way to ship is
+to merge the PR and let the workflow run; this command is for redeploying the current `main`
+without a new commit — re-running after a failed deploy, or picking up an environment/secret change
+that needs a container restart to take effect.
+
+If you are about to merge anyway, merge instead of running this: the merge deploys the same commit
+and running both just recreates the containers twice.
 
 Read `deploy/CI-CD.md` before running this the first time in a session if you haven't already.
 

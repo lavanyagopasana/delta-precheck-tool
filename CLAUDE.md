@@ -61,7 +61,7 @@ Inside any Claude Code session, run `/gstack-upgrade`.
 - **File storage**: local filesystem (`backend/uploads`), served at `/uploads/**`
 - **Email**: SMTP via Spring Mail, defaults to Office 365's relay (`smtp.office365.com`)
 - **Tests**: a real suite exists on both sides — **backend 22 files / 156 tests** (`mvn -o test`, JUnit 5 + Mockito + `@SpringBootTest`, H2 via `application-test.properties`) and **frontend 4 files / 26 tests** (`CI=true npx react-scripts test --watchAll=false`, Jest + React Testing Library). Both were green as of 2026-08-12. Note the characterization gate: `EndpointCharacterizationTest` STRICT-compares endpoint JSON against committed golden files in `backend/src/test/resources/snapshots/`. When you intentionally add a DTO field, that test fails with `Unexpected: <field>` — delete the affected snapshot, re-run to regenerate the baseline (it fails loudly the first time by design), **review the diff to confirm it's purely additive**, then re-run to lock it in.
-- **CI/CD**: none configured (no `.github/workflows`), so nothing runs those suites automatically — run both locally before opening a PR.
+- **CI/CD**: `.github/workflows/ci-cd.yml`. Every push and PR runs both suites plus a Docker build. **A push to `main` — i.e. any merged PR — also deploys to production**, gated by `needs` on those three jobs so a red suite never reaches the server (changed from manual-only on 2026-08-29). A manual `workflow_dispatch` run still defaults to test-only; tick "Also deploy" to redeploy the current `main` without a new commit. This line previously read "none configured", which stopped being true when that workflow landed. Still run both suites locally before opening a PR — a merge now restarts production.
 
 ## Architecture Summary
 

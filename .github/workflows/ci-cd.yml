@@ -9,9 +9,9 @@
 # Nothing ran these suites automatically before this file existed, so a red X here is the first
 # automated signal this project has ever had. Treat it as real rather than as noise to re-run.
 #
-# TESTS are automatic; DEPLOYS are not. Every push and PR runs the three test jobs. Nothing ever
-# deploys on a push -- not even to main. The deploy job runs only on an explicit manual trigger, so
-# a merge is never also a production restart. See the comment on that job.
+# TESTS and DEPLOYS are both automatic on main. Every push and PR runs the three test jobs; a push
+# to main (which is what a merged PR is) then deploys, gated by `needs` on those jobs so a red
+# suite stops it. A manual run still works and still defaults to test-only. See the deploy job.
 
 name: CI/CD
 
@@ -135,16 +135,26 @@ jobs:
   deploy:
     name: Deploy to production
     needs: [backend-tests, frontend-tests, docker-build]
-    # Manual only, deliberately. A push to main runs the three test jobs and stops there -- it does
-    # NOT deploy. Continuous deployment on every merge is the usual default, but it is the wrong
-    # default here: this stack rebuilds images on the server and takes the site through a container
-    # recreation, so a docs typo merged at 6pm would restart production. Deploying is a decision
-    # somebody makes, not a side effect of merging.
+    # Runs on every push to main -- i.e. on every merged PR -- and on a manual run with the deploy
+    # box ticked. Changed from manual-only on 2026-08-29 at the maintainer's request.
     #
-    # Trigger it with the /deploy skill (.claude/commands/deploy.md), or from the Actions tab:
-    # Run workflow -> tick "Also deploy to production after tests pass". The tests still run first
-    # either way; `needs` below is what enforces that.
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy
+    # The tradeoff that was previously recorded here still applies and is now accepted rather than
+    # avoided: this stack rebuilds images ON the server and takes the site through a container
+    # recreation, so ANY merge restarts production -- including one that only touches a README.
+    # Three things keep that bounded, and none should be removed casually:
+    #   * `needs` on the three test jobs, so a red suite never reaches the server;
+    #   * the health check further down, which rolls back automatically on a bad revision;
+    #   * the `production` environment below, where adding required reviewers under repo
+    #     Settings -> Environments puts a human click back in front of every deploy without
+    #     touching this file.
+    # If merge-restarts-production becomes a problem, the narrower fix is a path filter that skips
+    # the deploy for docs-only changes -- not turning the test gate off.
+    #
+    # A manual run still defaults to test-only, so "Run workflow" without ticking the box remains a
+    # safe way to run the suite against a branch.
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || (github.event_name == 'workflow_dispatch' && inputs.deploy)
     runs-on: ubuntu-latest
 
     # Add required reviewers (or a deployment branch rule) to this environment under repo
