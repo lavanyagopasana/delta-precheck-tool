@@ -30,4 +30,8 @@ public class DashboardSummaryDto {
     // currently mid-cycle on a pre-delta.
     private long preDeltaCyclesCompleted;
     private long preDeltasInFlight;
+
+    // The servers behind the "Servers" and "Delta Ready" tiles, so clicking either opens a real
+    // list instead of a bare number. Scoped to the caller like every count above it.
+    private List<DashboardServerDto> servers;
 }

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getDashboardSummary, getProjects } from "../api/client";
 import DashboardCharts from "../components/DashboardCharts";
+import Modal from "../components/Modal";
 
 const PRODUCT_TYPE_LABELS = { MESSAGE: "Message", EMAIL: "Email", CONTENT: "Content" };
 
@@ -11,6 +12,55 @@ const KPI_TONES = {
   red: "var(--color-red)",
   purple: "var(--color-purple)",
 };
+
+/**
+ * The rows behind the Servers and Delta Ready tiles.
+ *
+ * Server names alone were not enough to act on: the same name recurs across projects, and a
+ * server carries several combinations each running its own sign-off chain. So every row names its
+ * project and product type, and a Delta Ready row names which combinations are actually ready --
+ * "server X is ready" is otherwise ambiguous when only two of its four combinations are.
+ *
+ * Clicking a row opens that project, which is the action somebody reading this list wants next.
+ */
+function ServerListModal({ title, rows, emptyText, showCombinations, onClose, onOpenProject }) {
+  return (
+    <Modal title={title} onClose={onClose} width={720} closeIcon>
+      {rows.length === 0 ? (
+        <p className="empty-state">{emptyText}</p>
+      ) : (
+        <div className="dashboard-server-list">
+          {rows.map((row) => (
+            <button
+              type="button"
+              key={row.serverId}
+              className="dashboard-server-row"
+              onClick={() => onOpenProject(row.projectId)}
+              title={row.projectName ? `Open ${row.projectName}` : undefined}
+            >
+              <div className="dashboard-server-row__main">
+                <span className="dashboard-server-row__name">{row.serverName}</span>
+                <span className="dashboard-server-row__type">
+                  {PRODUCT_TYPE_LABELS[row.productType] || row.productType || "--"}
+                </span>
+              </div>
+              <div className="dashboard-server-row__meta">
+                {row.projectName || "No project"}
+                {/* Only on the Delta Ready list: on the full Servers list most rows have none,
+                    and a column that is blank for nine rows in ten is noise rather than data. */}
+                {showCombinations && row.deltaReadyCombinations?.length > 0 && (
+                  <span className="dashboard-server-row__combos">
+                    {row.deltaReadyCombinations.join(", ")}
+                  </span>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
 
 /**
  * One dashboard metric.
@@ -45,6 +95,8 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const decommissionSectionRef = useRef(null);
+  // Which list popup is open, if any: "servers" | "deltaReady" | null.
+  const [openList, setOpenList] = useState(null);
 
   const scrollToDecommissionSection = () => {
     decommissionSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -64,16 +116,17 @@ export default function Dashboard() {
 
   useEffect(load, []);
 
-  // Derived dashboard aggregates -- memoized so they only recompute when `projects` changes, not on
-  // every render. Expressions are unchanged from their previous inline form.
-  const totalServers = useMemo(
-    () => projects.reduce((sum, p) => sum + (p.serverCount || 0), 0),
-    [projects]
-  );
-  const readyServers = useMemo(
-    () => projects.reduce((sum, p) => sum + (p.readyServerCount || 0), 0),
-    [projects]
-  );
+  // Derived dashboard aggregates -- memoized so they only recompute when their input changes, not
+  // on every render.
+  //
+  // Servers and Delta Ready now count the backend's own scoped server list rather than summing
+  // per-project counts. Both were correct, but they were two derivations of the same number, and
+  // the popup lists these very rows -- so counting the list itself is what guarantees the tile and
+  // the list it opens can never disagree.
+  const serverRows = useMemo(() => summary?.servers || [], [summary]);
+  const deltaReadyRows = useMemo(() => serverRows.filter((s) => s.deltaReady), [serverRows]);
+  const totalServers = serverRows.length;
+  const readyServers = deltaReadyRows.length;
   const openEscalations = useMemo(
     () => projects.reduce((sum, p) => sum + (p.openEscalationCount || 0), 0),
     [projects]
@@ -137,11 +190,29 @@ export default function Dashboard() {
           Each metric's secondary fact goes in `meta` (its own line) rather than being appended to the
           label with a "·", which is what produced four-line labels. */}
       <div className="kpi-grid">
-        <Kpi label="Projects" value={projects.length} />
-        <Kpi label="Servers" value={totalServers} />
-        <Kpi label="Delta Ready" value={readyServers} tone="green" />
-        <Kpi label="Pending Approvals" value={summary.totalApprovalRequests} tone="yellow" />
-        <Kpi label="Open Tickets" value={openEscalations} tone="red" />
+        <Kpi label="Projects" value={projects.length} onClick={() => navigate("/projects")} />
+        <Kpi label="Servers" value={totalServers} onClick={() => setOpenList("servers")} />
+        <Kpi
+          label="Delta Ready"
+          value={readyServers}
+          tone="green"
+          onClick={() => setOpenList("deltaReady")}
+        />
+        {/* Straight to the filtered view rather than the whole page -- ApprovalsPage and
+            TicketsPage already read ?status= (see their useSearchParams), so the click lands on
+            exactly the rows the number counted. */}
+        <Kpi
+          label="Pending Approvals"
+          value={summary.totalApprovalRequests}
+          tone="yellow"
+          onClick={() => navigate("/approvals?status=PENDING")}
+        />
+        <Kpi
+          label="Open Tickets"
+          value={openEscalations}
+          tone="red"
+          onClick={() => navigate("/tickets?status=OPEN")}
+        />
         {/* "Servers" is in the label deliberately. Shortened to just "To Decommission" it read as a
             project count -- the number has always been servers (DashboardService iterates servers and
             counts those whose every combination has completed its Final Delta). */}
@@ -153,6 +224,26 @@ export default function Dashboard() {
           onClick={scrollToDecommissionSection}
         />
       </div>
+
+      {openList === "servers" && (
+        <ServerListModal
+          title={`Servers (${serverRows.length})`}
+          rows={serverRows}
+          emptyText="No servers yet."
+          onClose={() => setOpenList(null)}
+          onOpenProject={(id) => id && navigate(`/projects/${id}`)}
+        />
+      )}
+      {openList === "deltaReady" && (
+        <ServerListModal
+          title={`Delta Ready (${deltaReadyRows.length})`}
+          rows={deltaReadyRows}
+          emptyText="No server is Delta Ready yet."
+          showCombinations
+          onClose={() => setOpenList(null)}
+          onOpenProject={(id) => id && navigate(`/projects/${id}`)}
+        />
+      )}
 
       <div className="card" style={{ marginTop: 6 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>

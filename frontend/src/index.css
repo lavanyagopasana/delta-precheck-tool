@@ -3064,3 +3064,81 @@ input[type="checkbox"]:disabled {
   background: var(--color-surface);
   box-shadow: none;
 }
+
+/* ---------- Dashboard tile popups ---------- */
+
+/* The Servers and Delta Ready tiles open a list of the very rows they counted. Rows are <button>
+   rather than <div> so they are reachable by keyboard without re-implementing focus and Enter
+   handling -- the same reason the ticket/decline badges on Needs Attention are buttons. */
+.dashboard-server-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.dashboard-server-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 8px;
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.dashboard-server-row:last-child {
+  border-bottom: none;
+}
+
+.dashboard-server-row:hover,
+.dashboard-server-row:focus-visible {
+  background: rgba(1, 41, 172, 0.05);
+}
+
+.dashboard-server-row__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dashboard-server-row__name {
+  font-weight: 600;
+  font-size: 13.5px;
+  /* A server name is a URL here and can be long; wrap rather than push the product type off-row. */
+  overflow-wrap: anywhere;
+}
+
+.dashboard-server-row__type {
+  flex: none;
+  padding: 1px 7px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.dashboard-server-row__meta {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* The ready combinations, set apart from the project name so the row reads as
+   "project -- and these combinations of it are ready" rather than one run-on line. */
+.dashboard-server-row__combos {
+  color: var(--color-green);
+}
+
+.dashboard-server-row__combos::before {
+  content: " · ";
+  color: var(--color-text-muted);
+}
