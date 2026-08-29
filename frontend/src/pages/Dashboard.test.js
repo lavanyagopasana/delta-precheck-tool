@@ -32,6 +32,7 @@ function serverRow(overrides = {}) {
     productType: "MESSAGE",
     projectId: 7,
     projectName: "Acme Migration",
+    combinations: ["Teams to Slack", "Drive to Drive"],
     deltaReady: false,
     deltaReadyCombinations: [],
     ...overrides,
@@ -128,6 +129,43 @@ describe("Dashboard server popups", () => {
     expect(within(dialog).getByText("https://beta.example.com")).toBeInTheDocument();
     expect(within(dialog).getAllByText("Message")).toHaveLength(2);
     expect(within(dialog).getAllByText(/Acme Migration/)).toHaveLength(2);
+  });
+
+  test("the Servers list names every combination on each server", async () => {
+    // A server is only a container -- the combination is the actual unit of work, carrying the
+    // checklist and the sign-off chain. A list of bare server names says less than it appears to.
+    client.getDashboardSummary.mockResolvedValue(summary({ servers: [serverRow()] }));
+    renderDashboard();
+    await screen.findByText("Dashboard");
+
+    await userEvent.click(tile("Servers"));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Teams to Slack, Drive to Drive")).toBeInTheDocument();
+  });
+
+  test("the Delta Ready list names only the ready combinations, not all of them", async () => {
+    // Naming all of them here would state that a server is ready in combinations that are still
+    // mid-chain -- the opposite of what this tile means.
+    client.getDashboardSummary.mockResolvedValue(
+      summary({
+        servers: [
+          serverRow({
+            deltaReady: true,
+            combinations: ["Teams to Slack", "Drive to Drive"],
+            deltaReadyCombinations: ["Teams to Slack"],
+          }),
+        ],
+      })
+    );
+    renderDashboard();
+    await screen.findByText("Dashboard");
+
+    await userEvent.click(tile("Delta Ready"));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Teams to Slack")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Drive to Drive/)).not.toBeInTheDocument();
   });
 
   test("the Delta Ready tile lists only ready servers, and names which combinations are ready", async () => {

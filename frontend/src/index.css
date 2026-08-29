@@ -3132,9 +3132,16 @@ input[type="checkbox"]:disabled {
   color: var(--color-text-muted);
 }
 
-/* The ready combinations, set apart from the project name so the row reads as
-   "project -- and these combinations of it are ready" rather than one run-on line. */
+/* The combinations, set apart from the project name so the row reads as
+   "project -- and these are its combinations" rather than one run-on line. Neutral by default: on
+   the Servers list these are simply what the server contains, and colouring them green there would
+   imply a readiness the list is not claiming. */
 .dashboard-server-row__combos {
+  color: var(--color-text-muted);
+}
+
+/* Only on the Delta Ready list, where naming a combination IS a statement that it is ready. */
+.dashboard-server-row__combos.is-ready {
   color: var(--color-green);
 }
 
