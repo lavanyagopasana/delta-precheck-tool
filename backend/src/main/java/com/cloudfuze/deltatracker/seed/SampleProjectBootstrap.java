@@ -73,7 +73,13 @@ public class SampleProjectBootstrap implements CommandLineRunner {
     private final DeltaCycleRepository deltaCycleRepository;
     private final DeltaCycleSignOffRepository deltaCycleSignOffRepository;
 
-    @Value("${app.seed-sample-projects:true}")
+    // Defaults to FALSE. This writes invented projects, tickets and sign-off history into whatever
+    // database it is pointed at, and it defaulted to true with no way to turn it off from the
+    // environment -- the property was in no properties file, no compose file and no workflow, so
+    // APP_SEED_SAMPLE_PROJECTS=false could not reach the container and demo rows arrived on every
+    // production deploy. Fake data appearing unasked is the worse failure, so it is now opt-in:
+    // set app.seed-sample-projects=true for a demo or a fresh local database.
+    @Value("${app.seed-sample-projects:false}")
     private boolean enabled;
 
     public SampleProjectBootstrap(ProjectRepository projectRepository, ServerRepository serverRepository,
