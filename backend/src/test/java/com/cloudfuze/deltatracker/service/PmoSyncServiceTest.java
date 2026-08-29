@@ -74,10 +74,15 @@ class PmoSyncServiceTest {
     void setUp() {
         service = new PmoSyncService(pmoProjectClient, projectRepository, appUserService, teamService);
         ReflectionTestUtils.setField(service, "importStatuses", "ACTIVE");
+        // Mirrors the pmo.import-phases default. Set explicitly because ReflectionTestUtils builds the
+        // service by hand, so @Value defaults never apply -- leaving it null would silently disable the
+        // phase filter and every assertion about it would pass for the wrong reason.
+        ReflectionTestUtils.setField(service, "importPhases", "DELTA");
         ReflectionTestUtils.setField(service, "autoSyncEnabled", true);
         // Default: nothing already in the database, and save() hands the entity straight back.
         when(projectRepository.findByExternalId(anyString())).thenReturn(Optional.empty());
         when(projectRepository.findByNameIgnoreCase(anyString())).thenReturn(Optional.empty());
+        when(projectRepository.findByExternalIdIsNotNull()).thenReturn(List.of());
         when(projectRepository.save(any(Project.class))).thenAnswer(i -> i.getArgument(0));
         when(appUserService.emailsForRole(AppUserRole.MIGRATION_MANAGER)).thenReturn(MANAGERS);
         // No teams set up in these tests -- a resolved manager simply brings an empty engineer set.
@@ -87,6 +92,12 @@ class PmoSyncServiceTest {
     private static PmoProjectDto withManager(String id, String name, String pmoManager) {
         PmoProjectDto dto = record(id, name, "ACTIVE", "Gmail - Gmail");
         dto.setManagerName(pmoManager);
+        return dto;
+    }
+
+    private static PmoProjectDto inPhase(String id, String name, String phase) {
+        PmoProjectDto dto = record(id, name, "ACTIVE", "Gmail - Gmail");
+        dto.setPhase(phase);
         return dto;
     }
 
@@ -574,5 +585,128 @@ class PmoSyncServiceTest {
 
         assertThat(result.getErrors()).isNotEmpty();
         verify(projectRepository, never()).save(any(Project.class));
+    }
+
+    // --- phase filter -----------------------------------------------------------------------------
+
+    @Test
+    void importsOnlyProjectsPmoReportsAsBeingInTheDeltaPhase() {
+        // This tool is a pre-Delta readiness checklist, so a project that has not reached Delta has no
+        // checklist to fill in and only pads the Projects page. Before this filter the poll took every
+        // ACTIVE project regardless of phase.
+        when(pmoProjectClient.fetchProjects()).thenReturn(List.of(
+                inPhase("id-kickoff", "not started yet", "KICKOFF"),
+                inPhase("id-pilot", "piloting", "PILOT_MIGRATION"),
+                inPhase("id-onetime", "one time", "ONETIME_MIGRATION"),
+                inPhase("id-delta", "ready for delta", "DELTA"),
+                inPhase("id-validation", "past delta", "FINAL_VALIDATION")));
+
+        PmoSyncResultDto result = service.sync();
+
+        assertThat(result.getTotalRows()).isEqualTo(1);
+        assertThat(result.getCreatedCount()).isEqualTo(1);
+        assertThat(result.getSkippedByPhaseCount()).isEqualTo(4);
+        // Skipped by phase must not also be counted as skipped by status -- they mean different things.
+        assertThat(result.getSkippedByStatusCount()).isZero();
+        assertThat(savedProjects()).singleElement()
+                .satisfies(p -> assertThat(p.getName()).isEqualTo("ready for delta"));
+    }
+
+    @Test
+    void aProjectDeletedByHandIsNotReimportedByTheNextPoll() {
+        // The property the manual cleanup of pre-filter imports depends on: once an admin removes a
+        // non-Delta project, nothing is mirroring it any more, so the phase filter skips it on every
+        // subsequent poll. If this ever broke, deleted projects would silently reappear.
+        when(projectRepository.findByExternalIdIsNotNull()).thenReturn(List.of());
+        when(pmoProjectClient.fetchProjects()).thenReturn(List.of(
+                inPhase("id-deleted", "removed by an admin", "ONETIME_MIGRATION")));
+
+        PmoSyncResultDto result = service.sync();
+
+        assertThat(result.getSkippedByPhaseCount()).isEqualTo(1);
+        assertThat(result.getCreatedCount()).isZero();
+        verify(projectRepository, never()).save(any(Project.class));
+    }
+
+    @Test
+    void keepsSyncingAProjectAlreadyHeldHereAfterItMovesPastDelta() {
+        // Phases run forwards, so every imported project eventually stops matching. Dropping it then
+        // would freeze the PMO Phase shown on the Projects page at "DELTA" for the rest of its life --
+        // and that label is exactly what an admin reads to decide which rows are stale. The project
+        // also carries servers, checklists and possibly a running sign-off chain; refreshing costs
+        // nothing, while dropping it from the run makes live work look abandoned.
+        Project existing = new Project();
+        existing.setId(7L);
+        existing.setExternalId("id-moved-on");
+        existing.setName("past delta");
+        existing.setExternalPhase("DELTA");
+        when(projectRepository.findByExternalIdIsNotNull()).thenReturn(List.of(existing));
+        when(projectRepository.findByExternalId("id-moved-on")).thenReturn(Optional.of(existing));
+        when(pmoProjectClient.fetchProjects()).thenReturn(List.of(
+                inPhase("id-moved-on", "past delta", "FINAL_VALIDATION")));
+
+        PmoSyncResultDto result = service.sync();
+
+        assertThat(result.getSkippedByPhaseCount()).isZero();
+        assertThat(result.getUpdatedCount()).isEqualTo(1);
+        assertThat(savedProjects()).singleElement()
+                .satisfies(p -> assertThat(p.getExternalPhase()).isEqualTo("FINAL_VALIDATION"));
+    }
+
+    @Test
+    void doesNotCreateAnUnseenProjectJustBecauseAnotherOneIsAlreadyMirrored() {
+        // Guards the obvious way to get the exception above wrong: exempting every record once any
+        // project is mirrored, rather than only the one whose externalId we actually hold.
+        Project existing = new Project();
+        existing.setId(7L);
+        existing.setExternalId("id-known");
+        existing.setName("known");
+        when(projectRepository.findByExternalIdIsNotNull()).thenReturn(List.of(existing));
+        when(projectRepository.findByExternalId("id-known")).thenReturn(Optional.of(existing));
+        when(pmoProjectClient.fetchProjects()).thenReturn(List.of(
+                inPhase("id-known", "known", "CLOSURE"),
+                inPhase("id-new", "brand new kickoff", "KICKOFF")));
+
+        PmoSyncResultDto result = service.sync();
+
+        assertThat(result.getSkippedByPhaseCount()).isEqualTo(1);
+        assertThat(result.getCreatedCount()).isZero();
+        assertThat(savedProjects()).extracting(Project::getName).containsExactly("known");
+    }
+
+    @Test
+    void skipsARecordWhosePhasePmoDidNotReport() {
+        // A missing phase is not evidence that it is the one we want. Importing on absence would let a
+        // PMO field rename quietly restore the old import-everything behaviour.
+        when(pmoProjectClient.fetchProjects()).thenReturn(List.of(
+                inPhase("id-null", "no phase given", null)));
+
+        PmoSyncResultDto result = service.sync();
+
+        assertThat(result.getSkippedByPhaseCount()).isEqualTo(1);
+        assertThat(result.getCreatedCount()).isZero();
+    }
+
+    @Test
+    void blankPhaseFilterImportsEveryPhase() {
+        ReflectionTestUtils.setField(service, "importPhases", "");
+        when(pmoProjectClient.fetchProjects()).thenReturn(List.of(
+                inPhase("id-a", "one", "KICKOFF"),
+                inPhase("id-b", "two", "DELTA")));
+
+        PmoSyncResultDto result = service.sync();
+
+        assertThat(result.getTotalRows()).isEqualTo(2);
+        assertThat(result.getSkippedByPhaseCount()).isZero();
+    }
+
+    @Test
+    void phaseMatchingIgnoresCaseAndSurroundingSpace() {
+        when(pmoProjectClient.fetchProjects()).thenReturn(List.of(
+                inPhase("id-a", "lowercase", " delta ")));
+
+        PmoSyncResultDto result = service.sync();
+
+        assertThat(result.getCreatedCount()).isEqualTo(1);
     }
 }

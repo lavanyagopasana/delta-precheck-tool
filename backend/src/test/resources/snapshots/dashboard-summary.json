@@ -9,5 +9,22 @@
   "decommissionReadyServers" : [ ],
   "finalDeltasComplete" : 0,
   "preDeltaCyclesCompleted" : 0,
-  "preDeltasInFlight" : 0
+  "preDeltasInFlight" : 0,
+  "servers" : [ {
+    "serverId" : 1,
+    "serverName" : "SRV-ALPHA-1",
+    "productType" : null,
+    "projectId" : 1,
+    "projectName" : "Alpha Project",
+    "deltaReady" : true,
+    "deltaReadyCombinations" : [ ]
+  }, {
+    "serverId" : 2,
+    "serverName" : "SRV-ALPHA-2",
+    "productType" : null,
+    "projectId" : 1,
+    "projectName" : "Alpha Project",
+    "deltaReady" : true,
+    "deltaReadyCombinations" : [ ]
+  } ]
 }

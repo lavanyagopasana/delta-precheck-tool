@@ -102,9 +102,21 @@ public class ProjectService {
     // every project stays visible, matching how the rest of the app degrades when auth is off.
     public List<ProjectSummaryDto> list(String callerEmail, AppUserRole callerRole) {
         List<Server> allServers = serverRepository.findAll();
+        return visibleProjects(callerEmail, callerRole).stream()
+                .map(project -> buildSummary(project, allServers))
+                .toList();
+    }
+
+    /**
+     * Every project this caller may see. Public so other services can scope their own rollups to
+     * exactly what the Projects page would show, rather than each reimplementing {@link #isVisible}
+     * and drifting from it -- DashboardService uses it so a tile can never count work the caller
+     * cannot open. Returns entities on purpose: this is a service-to-service call, and the DTO
+     * boundary is at the controller (see .claude/rules/architecture-boundaries.md).
+     */
+    public List<Project> visibleProjects(String callerEmail, AppUserRole callerRole) {
         return projectRepository.findAllByOrderByNameAsc().stream()
                 .filter(project -> isVisible(project, callerEmail, callerRole))
-                .map(project -> buildSummary(project, allServers))
                 .toList();
     }
 
