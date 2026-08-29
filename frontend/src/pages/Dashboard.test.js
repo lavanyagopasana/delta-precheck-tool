@@ -187,6 +187,38 @@ describe("Dashboard server popups", () => {
     expect(mockNavigate).toHaveBeenCalledWith("/projects/7");
   });
 
+  test("falls back to the project counts when the backend sends no server list", async () => {
+    // A backend older than the `servers` field returns a summary without it. Reading .length off a
+    // missing array turned a real count into 0 -- a metric tile showing a confident wrong number,
+    // which is worse than showing nothing. Caught on a running app: Servers read 0 while the one
+    // project on screen plainly had 3.
+    const { servers, ...withoutServers } = summary();
+    client.getDashboardSummary.mockResolvedValue(withoutServers);
+    client.getProjects.mockResolvedValue([
+      { id: 7, name: "Demo prjct", serverCount: 3, readyServerCount: 1 },
+    ]);
+    renderDashboard();
+    await screen.findByText("Dashboard");
+
+    expect(tile("Servers")).toHaveTextContent("3");
+    expect(tile("Delta Ready")).toHaveTextContent("1");
+  });
+
+  test("the popup explains itself when the backend sent no list, instead of claiming none exist", async () => {
+    // "No servers yet." under a tile reading 3 would be a straight contradiction.
+    const { servers, ...withoutServers } = summary();
+    client.getDashboardSummary.mockResolvedValue(withoutServers);
+    client.getProjects.mockResolvedValue([{ id: 7, name: "Demo prjct", serverCount: 3 }]);
+    renderDashboard();
+    await screen.findByText("Dashboard");
+
+    await userEvent.click(tile("Servers"));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/needs a newer backend/i)).toBeInTheDocument();
+    expect(within(dialog).queryByText("No servers yet.")).not.toBeInTheDocument();
+  });
+
   test("an empty Delta Ready list says so rather than showing a blank dialog", async () => {
     renderDashboard();
     await screen.findByText("Dashboard");

@@ -125,8 +125,19 @@ export default function Dashboard() {
   // the list it opens can never disagree.
   const serverRows = useMemo(() => summary?.servers || [], [summary]);
   const deltaReadyRows = useMemo(() => serverRows.filter((s) => s.deltaReady), [serverRows]);
-  const totalServers = serverRows.length;
-  const readyServers = deltaReadyRows.length;
+
+  // Whether the backend actually sent the server list. A backend older than that field returns a
+  // summary without it, and reading length off a missing array silently turns a real count into 0 --
+  // which is exactly what a metric tile must never do. So the per-project counts stay as the
+  // fallback: they were the original source, they are scoped the same way (getProjects applies the
+  // same visibility rule), and they are right whether or not the list arrived.
+  const hasServerRows = Array.isArray(summary?.servers);
+  const totalServers = hasServerRows
+    ? serverRows.length
+    : projects.reduce((sum, p) => sum + (p.serverCount || 0), 0);
+  const readyServers = hasServerRows
+    ? deltaReadyRows.length
+    : projects.reduce((sum, p) => sum + (p.readyServerCount || 0), 0);
   const openEscalations = useMemo(
     () => projects.reduce((sum, p) => sum + (p.openEscalationCount || 0), 0),
     [projects]
@@ -229,7 +240,11 @@ export default function Dashboard() {
         <ServerListModal
           title={`Servers (${serverRows.length})`}
           rows={serverRows}
-          emptyText="No servers yet."
+          emptyText={
+            hasServerRows
+              ? "No servers yet."
+              : "This list needs a newer backend than the one currently running -- the count above is still correct."
+          }
           onClose={() => setOpenList(null)}
           onOpenProject={(id) => id && navigate(`/projects/${id}`)}
         />
@@ -238,7 +253,11 @@ export default function Dashboard() {
         <ServerListModal
           title={`Delta Ready (${deltaReadyRows.length})`}
           rows={deltaReadyRows}
-          emptyText="No server is Delta Ready yet."
+          emptyText={
+            hasServerRows
+              ? "No server is Delta Ready yet."
+              : "This list needs a newer backend than the one currently running -- the count above is still correct."
+          }
           showCombinations
           onClose={() => setOpenList(null)}
           onOpenProject={(id) => id && navigate(`/projects/${id}`)}
