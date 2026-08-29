@@ -4,6 +4,7 @@ import com.cloudfuze.deltatracker.dto.ProjectSummaryDto;
 import com.cloudfuze.deltatracker.dto.ProjectUpdateRequest;
 import com.cloudfuze.deltatracker.entity.AppUserRole;
 import com.cloudfuze.deltatracker.entity.Project;
+import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
 import com.cloudfuze.deltatracker.repository.ProjectMetabaseDatabaseRepository;
 import com.cloudfuze.deltatracker.repository.ProjectRepository;
@@ -28,6 +29,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -198,5 +200,91 @@ class ProjectServiceTest {
             assertThat(d.getEngineerEmails()).containsExactly("current.teammate@cloudfuze.com");
             assertThat(d.getEngineerEmails()).doesNotContain("old.stale.snapshot@cloudfuze.com");
         });
+    }
+
+    // --- query count on the list endpoint ---------------------------------------------------------
+
+    /** A project with one server, wired so serverRepository.findAll() reports it. */
+    private Project projectWithServer(Long projectId, Long serverId, List<Server> sink) {
+        Project project = new Project();
+        project.setId(projectId);
+        project.setName("Project " + projectId);
+        Server server = new Server();
+        server.setId(serverId);
+        server.setName("srv-" + serverId);
+        server.setProject(project);
+        sink.add(server);
+        return project;
+    }
+
+    @Test
+    void listLoadsItsRowsOnceForThePageRatherThanOncePerProject() {
+        // buildSummary batched its five lookups, but per project -- so this endpoint issued
+        // 5 x (number of projects) queries. Against the live roster of 79 that is ~395 round trips on
+        // a page every user opens, and one the Dashboard calls as well. The count must not grow with
+        // the number of projects.
+        List<Server> servers = new java.util.ArrayList<>();
+        List<Project> projects = List.of(
+                projectWithServer(1L, 10L, servers),
+                projectWithServer(2L, 20L, servers),
+                projectWithServer(3L, 30L, servers));
+        when(projectRepository.findAllByOrderByNameAsc()).thenReturn(projects);
+        when(serverRepository.findAll()).thenReturn(servers);
+        when(workspacePairRepository.findByServerIdIn(any())).thenReturn(List.of());
+        when(ticketRepository.findAllByCombinationServerIdIn(any())).thenReturn(List.of());
+        when(workspaceCombinationRepository.findByServerIdIn(any())).thenReturn(List.of());
+
+        List<ProjectSummaryDto> result = service.list("admin@cloudfuze.com", AppUserRole.ADMIN);
+
+        assertThat(result).hasSize(3);
+        // Once each, for all three projects together -- not once per project.
+        verify(workspacePairRepository, times(1)).findByServerIdIn(any());
+        verify(ticketRepository, times(1)).findAllByCombinationServerIdIn(any());
+        verify(workspaceCombinationRepository, times(1)).findByServerIdIn(any());
+    }
+
+    @Test
+    void listAsksForEveryVisibleProjectsServersInOneGo() {
+        // The single batch has to cover all of them: if it only carried the first project's servers,
+        // the others would silently summarise as empty rather than being slow.
+        List<Server> servers = new java.util.ArrayList<>();
+        List<Project> projects = List.of(
+                projectWithServer(1L, 10L, servers),
+                projectWithServer(2L, 20L, servers));
+        when(projectRepository.findAllByOrderByNameAsc()).thenReturn(projects);
+        when(serverRepository.findAll()).thenReturn(servers);
+        when(workspacePairRepository.findByServerIdIn(any())).thenReturn(List.of());
+        when(ticketRepository.findAllByCombinationServerIdIn(any())).thenReturn(List.of());
+        when(workspaceCombinationRepository.findByServerIdIn(any())).thenReturn(List.of());
+
+        service.list("admin@cloudfuze.com", AppUserRole.ADMIN);
+
+        ArgumentCaptor<List<Long>> ids = ArgumentCaptor.forClass(List.class);
+        verify(workspaceCombinationRepository).findByServerIdIn(ids.capture());
+        assertThat(ids.getValue()).containsExactlyInAnyOrder(10L, 20L);
+    }
+
+    @Test
+    void aProjectSummaryCountsOnlyItsOwnServers() {
+        // The batch maps now hold every project's rows, so the per-project narrowing is what stops one
+        // project's figures picking up another's. This is the regression the shared cache could cause.
+        List<Server> servers = new java.util.ArrayList<>();
+        Project first = projectWithServer(1L, 10L, servers);
+        projectWithServer(2L, 20L, servers);
+        // Give project 1 a second server so the two projects have different counts.
+        Server extra = new Server();
+        extra.setId(11L);
+        extra.setName("srv-11");
+        extra.setProject(first);
+        servers.add(extra);
+        when(projectRepository.findAllByOrderByNameAsc()).thenReturn(List.of(first, servers.get(1).getProject()));
+        when(serverRepository.findAll()).thenReturn(servers);
+        when(workspacePairRepository.findByServerIdIn(any())).thenReturn(List.of());
+        when(ticketRepository.findAllByCombinationServerIdIn(any())).thenReturn(List.of());
+        when(workspaceCombinationRepository.findByServerIdIn(any())).thenReturn(List.of());
+
+        List<ProjectSummaryDto> result = service.list("admin@cloudfuze.com", AppUserRole.ADMIN);
+
+        assertThat(result).extracting(ProjectSummaryDto::getServerCount).containsExactly(2, 1);
     }
 }

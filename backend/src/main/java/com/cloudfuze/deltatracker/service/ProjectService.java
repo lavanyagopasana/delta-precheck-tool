@@ -102,8 +102,25 @@ public class ProjectService {
     // every project stays visible, matching how the rest of the app degrades when auth is off.
     public List<ProjectSummaryDto> list(String callerEmail, AppUserRole callerRole) {
         List<Server> allServers = serverRepository.findAll();
-        return visibleProjects(callerEmail, callerRole).stream()
-                .map(project -> buildSummary(project, allServers))
+        List<Project> visible = visibleProjects(callerEmail, callerRole);
+        // Loaded ONCE for every visible server, not once per project. buildSummary already
+        // batched its five lookups, but it batched them per project -- so this endpoint issued
+        // 5 x (number of projects) queries, ~395 against the live roster of 79, on a page every
+        // user opens and that the Dashboard also calls. The maps are keyed by server and
+        // combination id, so one set serves every project without any of them seeing another's
+        // rows. Now 5 queries total, whatever the project count.
+        SummaryData data = loadSummaryData(serverIdsFor(visible, allServers));
+        return visible.stream()
+                .map(project -> buildSummary(project, allServers, data))
+                .toList();
+    }
+
+    /** Ids of every server belonging to any of these projects. */
+    private static List<Long> serverIdsFor(List<Project> projects, List<Server> allServers) {
+        Set<Long> projectIds = projects.stream().map(Project::getId).collect(Collectors.toSet());
+        return allServers.stream()
+                .filter(s -> s.getProject() != null && projectIds.contains(s.getProject().getId()))
+                .map(Server::getId)
                 .toList();
     }
 
@@ -129,7 +146,7 @@ public class ProjectService {
         ProjectDetailDto dto = new ProjectDetailDto();
         copySummary(summary, dto);
         List<ServerReadinessDto> servers = serverService.listReadinessForProject(id);
-        servers.forEach(this::applyReadinessStage);
+        applyReadinessStages(servers);
         dto.setServers(servers);
         return dto;
     }
@@ -139,20 +156,48 @@ public class ProjectService {
     // with no combinations yet, or none of them submitted; IN_PROGRESS names whichever
     // combination/role is next -- so the UI can show something more useful than a plain readiness
     // dot. Each combination now carries its own independent lifecycle (see WorkspaceCombination).
-    private void applyReadinessStage(ServerReadinessDto server) {
-        List<WorkspaceCombination> combinations = workspaceCombinationRepository.findByServerId(server.getServerId());
+    /**
+     * Fills in the readiness stage for a whole project's servers in three queries total.
+     *
+     * <p>This was a per-server method called from a forEach, so it issued three queries for each
+     * server on the page -- 30 round trips for a ten-server project, on the screen an engineer
+     * opens most often. The per-server logic below is unchanged; only where the rows come from is.
+     */
+    private void applyReadinessStages(List<ServerReadinessDto> servers) {
+        List<Long> serverIds = servers.stream().map(ServerReadinessDto::getServerId).toList();
+        Map<Long, List<WorkspaceCombination>> combinationsByServer = serverIds.isEmpty()
+                ? Map.of()
+                : workspaceCombinationRepository.findByServerIdIn(serverIds).stream()
+                        .collect(Collectors.groupingBy(c -> c.getServer().getId()));
+
+        List<Long> allCombinationIds = combinationsByServer.values().stream()
+                .flatMap(List::stream)
+                .map(WorkspaceCombination::getId)
+                .toList();
+        Map<Long, PreCheckSubmission> submissionByCombination = allCombinationIds.isEmpty()
+                ? Map.of()
+                : preCheckSubmissionRepository.findByCombinationIdIn(allCombinationIds).stream()
+                        .collect(Collectors.toMap(s -> s.getCombination().getId(), s -> s));
+        Map<Long, List<SignOff>> chainByCombination = allCombinationIds.isEmpty()
+                ? Map.of()
+                : signOffRepository.findByCombinationIdIn(allCombinationIds).stream()
+                        .collect(Collectors.groupingBy(s -> s.getCombination().getId()));
+
+        for (ServerReadinessDto server : servers) {
+            applyReadinessStage(server, combinationsByServer.getOrDefault(server.getServerId(), List.of()),
+                    submissionByCombination, chainByCombination);
+        }
+    }
+
+    private void applyReadinessStage(ServerReadinessDto server,
+                                      List<WorkspaceCombination> combinations,
+                                      Map<Long, PreCheckSubmission> submissionByCombination,
+                                      Map<Long, List<SignOff>> chainByCombination) {
         if (combinations.isEmpty()) {
             server.setReadinessStage("NOT_SUBMITTED");
             server.setReadinessDetail("No combinations imported yet");
             return;
         }
-
-        List<Long> combinationIds = combinations.stream().map(WorkspaceCombination::getId).toList();
-        Map<Long, PreCheckSubmission> submissionByCombination = preCheckSubmissionRepository
-                .findByCombinationIdIn(combinationIds).stream()
-                .collect(Collectors.toMap(s -> s.getCombination().getId(), s -> s));
-        Map<Long, List<SignOff>> chainByCombination = signOffRepository.findByCombinationIdIn(combinationIds).stream()
-                .collect(Collectors.groupingBy(s -> s.getCombination().getId()));
 
         int readyCount = 0;
         String blockingDetail = null;
@@ -571,17 +616,25 @@ public class ProjectService {
         to.setMetabaseDatabases(from.getMetabaseDatabases());
     }
 
-    private ProjectSummaryDto buildSummary(Project project, List<Server> allServers) {
-        List<Server> servers = allServers.stream()
-                .filter(s -> s.getProject() != null && s.getProject().getId().equals(project.getId()))
-                .toList();
+    /**
+     * The server- and combination-level rows every project summary is computed from, loaded in five
+     * IN queries for a whole set of servers at once.
+     *
+     * <p>Every map is keyed by server id or combination id, never by project, which is what lets one
+     * instance serve a whole page of projects: a project only ever reads the keys belonging to its
+     * own servers, so there is no way for one project's figures to pick up another's rows.
+     */
+    private record SummaryData(
+            Map<Long, Long> pairCountByServer,
+            Map<Long, Long> openEscalationByServer,
+            Map<Long, List<WorkspaceCombination>> combinationsByServer,
+            Map<Long, EnumMap<SignOffRole, SignOffStatus>> signOffByCombination,
+            Map<Long, PreCheckSubmission> submissionByCombination) {
+    }
 
-        // Batch-load this project's server-level data in a handful of IN queries instead of ~5
-        // queries per server. Same values, same order-independent aggregates -- purely fewer trips.
-        List<Long> serverIds = servers.stream().map(Server::getId).toList();
+    private SummaryData loadSummaryData(List<Long> serverIds) {
         Map<Long, Long> pairCountByServer = new HashMap<>();
         Map<Long, Long> openEscalationByServer = new HashMap<>();
-        List<WorkspaceCombination> combinations = new java.util.ArrayList<>();
         Map<Long, List<WorkspaceCombination>> combinationsByServer = new HashMap<>();
         Map<Long, EnumMap<SignOffRole, SignOffStatus>> signOffByCombination = new HashMap<>();
         Map<Long, PreCheckSubmission> submissionByCombination = new HashMap<>();
@@ -594,7 +647,8 @@ public class ProjectService {
                     openEscalationByServer.merge(t.getCombination().getServer().getId(), 1L, Long::sum);
                 }
             }
-            combinations.addAll(workspaceCombinationRepository.findByServerIdIn(serverIds));
+            List<WorkspaceCombination> combinations =
+                    workspaceCombinationRepository.findByServerIdIn(serverIds);
             combinationsByServer.putAll(combinations.stream()
                     .collect(Collectors.groupingBy(c -> c.getServer().getId())));
             List<Long> combinationIds = combinations.stream().map(WorkspaceCombination::getId).toList();
@@ -608,6 +662,32 @@ public class ProjectService {
                 }
             }
         }
+        return new SummaryData(pairCountByServer, openEscalationByServer, combinationsByServer,
+                signOffByCombination, submissionByCombination);
+    }
+
+    /** One project on its own -- used by create/update/detail, where there is nothing to share with. */
+    private ProjectSummaryDto buildSummary(Project project, List<Server> allServers) {
+        return buildSummary(project, allServers,
+                loadSummaryData(serverIdsFor(List.of(project), allServers)));
+    }
+
+    private ProjectSummaryDto buildSummary(Project project, List<Server> allServers, SummaryData data) {
+        List<Server> servers = allServers.stream()
+                .filter(s -> s.getProject() != null && s.getProject().getId().equals(project.getId()))
+                .toList();
+        List<Long> serverIds = servers.stream().map(Server::getId).toList();
+
+        Map<Long, Long> pairCountByServer = data.pairCountByServer();
+        Map<Long, Long> openEscalationByServer = data.openEscalationByServer();
+        Map<Long, List<WorkspaceCombination>> combinationsByServer = data.combinationsByServer();
+        Map<Long, EnumMap<SignOffRole, SignOffStatus>> signOffByCombination = data.signOffByCombination();
+        Map<Long, PreCheckSubmission> submissionByCombination = data.submissionByCombination();
+        // This project's combinations only -- the shared maps hold every project's, so the flat list
+        // the aggregates below iterate has to be narrowed back down to this project's servers.
+        List<WorkspaceCombination> combinations = serverIds.stream()
+                .flatMap(id -> combinationsByServer.getOrDefault(id, List.of()).stream())
+                .toList();
 
         long totalPairs = servers.stream().mapToLong(s -> pairCountByServer.getOrDefault(s.getId(), 0L)).sum();
         long readyServers = servers.stream().filter(s -> s.getStatus() == PairStatus.DELTA_READY).count();
