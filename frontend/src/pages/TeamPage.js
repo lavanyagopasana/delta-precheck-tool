@@ -107,7 +107,7 @@ export default function TeamPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <p>Loading teams...</p>;
+  if (loading && teams.length === 0) return <p>Loading teams...</p>;
 
   const isAdmin = !AUTH_CONFIGURED || currentUser?.role === "ADMIN";
   const myEmail = (AUTH_CONFIGURED ? currentUser?.email : "").toLowerCase();

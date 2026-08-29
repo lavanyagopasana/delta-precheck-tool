@@ -31,7 +31,7 @@ export default function ServerDetailsPage() {
 
   useEffect(load, [serverId]);
 
-  if (loading) return <p>Loading server...</p>;
+  if (loading && !server) return <p>Loading server...</p>;
   if (!server) return <div className="inline-hint">{error || "Server not found."}</div>;
 
   // Mirrors WorkspacePairsPanel's own default-selection logic so the combination shown here always
