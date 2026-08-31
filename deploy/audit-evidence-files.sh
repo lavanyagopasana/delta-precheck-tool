@@ -14,12 +14,18 @@
 # a read-only mount, a path that did not resolve), those files are still there and nothing said so.
 #
 # USAGE
-#   ./audit-evidence-files.sh
+#   ./audit-evidence-files.sh                        # every project
+#   ./audit-evidence-files.sh "city of orange"       # one project (substring, case-insensitive)
+#
+# With a project given it also prints the exact stored filenames that project references. Those are
+# the only files worth pulling out of any filesystem backup that turns up -- stored names are UUIDs,
+# so there is no way to guess them from the project or the original upload name.
 set -euo pipefail
 
 DB_SERVICE="${DB_SERVICE:-db}"
 BACKEND_SERVICE="${BACKEND_SERVICE:-backend}"
 UPLOAD_DIR="${UPLOAD_DIR:-/data/uploads}"   # where docker-compose.yml mounts delta_backend_uploads
+PROJECT_FILTER="${1:-}"
 
 [ -f .env ] || { echo "ERROR: no .env here -- run from the deploy directory." >&2; exit 1; }
 PGU="$(grep -E '^POSTGRES_USER=' .env | cut -d= -f2-)"
@@ -33,10 +39,35 @@ echo "=============================================================="
 
 # Both tables, because a decline snapshots the checklist into delta_cycle_items and the live
 # precheck_items are wiped -- so the declined attempt's evidence lives ONLY in the snapshot table.
+# Dollar-quoted so the project name needs no escaping, and matched with ILIKE on a substring so the
+# caller does not have to reproduce an em-dash or the exact full name.
+if [ -n "$PROJECT_FILTER" ]; then
+  echo "scoped to project matching: $PROJECT_FILTER"
+  echo
+  SCOPE_LIVE="AND p.name ILIKE \$q\$%$PROJECT_FILTER%\$q\$"
+  SCOPE_CYCLE="AND p.name ILIKE \$q\$%$PROJECT_FILTER%\$q\$"
+else
+  SCOPE_LIVE=""
+  SCOPE_CYCLE=""
+fi
+
+# Joined out to projects even in the unscoped case, so both branches run the identical query shape --
+# a scoped run that used a different query could disagree with the unscoped one about the same file.
 REFERENCED="$(docker compose exec -T "$DB_SERVICE" psql -U "$PGU" -d "$PGD" -Atc "
-  SELECT DISTINCT evidence_file_path FROM precheck_items     WHERE evidence_file_path IS NOT NULL
+  SELECT DISTINCT i.evidence_file_path
+  FROM precheck_items i
+  JOIN workspace_combinations c ON c.id = i.combination_id
+  JOIN servers s ON s.id = c.server_id
+  JOIN projects p ON p.id = s.project_id
+  WHERE i.evidence_file_path IS NOT NULL $SCOPE_LIVE
   UNION
-  SELECT DISTINCT evidence_file_path FROM delta_cycle_items  WHERE evidence_file_path IS NOT NULL
+  SELECT DISTINCT ci.evidence_file_path
+  FROM delta_cycle_items ci
+  JOIN delta_cycles dc ON dc.id = ci.cycle_id
+  JOIN workspace_combinations c2 ON c2.id = dc.combination_id
+  JOIN servers s2 ON s2.id = c2.server_id
+  JOIN projects p ON p.id = s2.project_id
+  WHERE ci.evidence_file_path IS NOT NULL $SCOPE_CYCLE
   ORDER BY 1;")"
 
 REF_COUNT="$(printf '%s\n' "$REFERENCED" | grep -c . || true)"
@@ -57,7 +88,36 @@ echo "referenced AND present : $PRESENT"
 echo "referenced but MISSING : $MISSING"
 echo
 
-if [ "$MISSING" != "0" ]; then
+if [ -n "$PROJECT_FILTER" ]; then
+  echo "Every evidence file this project references:"
+  echo "(LIVE = current checklist, DECLINED = frozen snapshot of a declined attempt)"
+  echo
+  printf '%-46s %-22s %-12s %s\n' "STORED FILE" "ITEM" "WHERE" "ON DISK?"
+  while IFS='|' read -r path item where; do
+    [ -z "$path" ] && continue
+    if grep -qxF "$path" /tmp/.disk.$$; then state="yes"; else state="MISSING"; fi
+    printf '%-46s %-22s %-12s %s\n' "${path#/uploads/}" "$(echo "$item" | cut -c1-22)" "$where" "$state"
+  done <<< "$(docker compose exec -T "$DB_SERVICE" psql -U "$PGU" -d "$PGD" -Atc "
+    SELECT i.evidence_file_path || '|' || i.name || '|LIVE'
+    FROM precheck_items i
+    JOIN workspace_combinations c ON c.id = i.combination_id
+    JOIN servers s ON s.id = c.server_id
+    JOIN projects p ON p.id = s.project_id
+    WHERE i.evidence_file_path IS NOT NULL $SCOPE_LIVE
+    UNION ALL
+    SELECT ci.evidence_file_path || '|' || ci.name || '|DECLINED'
+    FROM delta_cycle_items ci
+    JOIN delta_cycles dc ON dc.id = ci.cycle_id
+    JOIN workspace_combinations c2 ON c2.id = dc.combination_id
+    JOIN servers s2 ON s2.id = c2.server_id
+    JOIN projects p ON p.id = s2.project_id
+    WHERE ci.evidence_file_path IS NOT NULL $SCOPE_CYCLE
+    ORDER BY 3, 2;")"
+  echo
+  echo "The MISSING rows above are the only files that need recovering. Stored names are UUIDs, so"
+  echo "this list is the only way to know which files to pull out of a backup."
+  echo
+elif [ "$MISSING" != "0" ]; then
   echo "Which projects are affected:"
   docker compose exec -T "$DB_SERVICE" psql -U "$PGU" -d "$PGD" -c "
     SELECT p.name AS project,
