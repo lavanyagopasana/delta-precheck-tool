@@ -37,6 +37,17 @@ RECOVERY_DB="${RECOVERY_DB:-recovery}"
 APPLY="${APPLY:-0}"
 DB_SERVICE="${DB_SERVICE:-db}"
 
+# Names SampleProjectBootstrap invents. They pass the "has servers" test -- the seeding gives them
+# servers, combinations and delta-cycle history -- but restoring them would put demo data back into
+# production, which is the opposite of what anyone recovering real work wants. Skipped by default;
+# set SKIP_SAMPLE=0 to include them (only useful on a demo instance).
+SKIP_SAMPLE="${SKIP_SAMPLE:-1}"
+SAMPLE_NAMES="${SAMPLE_NAMES:-Demo prjct,Mercado}"
+
+# Optional allowlist of exact project names, comma-separated. Empty means "every qualifying project".
+# Use it to restore one specific project rather than the whole qualifying set.
+ONLY_PROJECTS="${ONLY_PROJECTS:-}"
+
 # Read the credentials the stack itself uses, rather than asking for them again and risking a
 # mismatch with the database the app is actually talking to.
 if [ ! -f .env ]; then
@@ -55,6 +66,8 @@ psql_run() {  # psql_run <database> <sql>
 echo "production database : $PGDB"
 echo "backup database     : $RECOVERY_DB"
 echo "mode                : $([ "$APPLY" = "1" ] && echo APPLY || echo 'DRY RUN (set APPLY=1 to write)')"
+[ "$SKIP_SAMPLE" = "1" ] && echo "skipping demo data  : $SAMPLE_NAMES"
+[ -n "$ONLY_PROJECTS" ] && echo "restricted to       : $ONLY_PROJECTS"
 echo
 
 # --- which projects come back -----------------------------------------------------------------
@@ -62,6 +75,32 @@ echo
 # need an extension Postgres does not ship enabled, so the live id list is fetched first and passed
 # in -- there are at most a couple of hundred, well inside a sane IN list.
 LIVE_IDS="$(psql_run "$PGDB" "SELECT COALESCE(string_agg(id::text, ','), '-1') FROM projects;")"
+
+# Built as SQL text so the exclusions are visible in one place rather than being applied later and
+# leaving the dry run reporting a different set from what the apply would write.
+SAMPLE_CLAUSE=""
+if [ "$SKIP_SAMPLE" = "1" ]; then
+  quoted=""
+  IFS=',' read -ra names <<< "$SAMPLE_NAMES"
+  for nm in "${names[@]}"; do
+    nm="$(echo "$nm" | sed 's/^ *//; s/ *$//')"
+    [ -z "$nm" ] && continue
+    quoted="$quoted${quoted:+, }'${nm//'/''}'"
+  done
+  [ -n "$quoted" ] && SAMPLE_CLAUSE="AND p.name NOT IN ($quoted)"
+fi
+
+ONLY_CLAUSE=""
+if [ -n "$ONLY_PROJECTS" ]; then
+  quoted=""
+  IFS=',' read -ra only <<< "$ONLY_PROJECTS"
+  for nm in "${only[@]}"; do
+    nm="$(echo "$nm" | sed 's/^ *//; s/ *$//')"
+    [ -z "$nm" ] && continue
+    quoted="$quoted${quoted:+, }'${nm//'/''}'"
+  done
+  [ -n "$quoted" ] && ONLY_CLAUSE="AND p.name IN ($quoted)"
+fi
 
 SELECT_MISSING="
   SELECT p.id
@@ -71,6 +110,8 @@ SELECT_MISSING="
       EXISTS (SELECT 1 FROM servers s WHERE s.project_id = p.id)
       OR upper(coalesce(p.external_phase, '')) = 'DELTA'
     )
+    $SAMPLE_CLAUSE
+    $ONLY_CLAUSE
 "
 
 PROJECT_IDS="$(psql_run "$RECOVERY_DB" "SELECT COALESCE(string_agg(id::text, ','), '') FROM ($SELECT_MISSING) q;")"
