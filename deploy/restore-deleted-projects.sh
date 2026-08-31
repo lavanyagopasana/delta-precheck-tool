@@ -78,28 +78,26 @@ LIVE_IDS="$(psql_run "$PGDB" "SELECT COALESCE(string_agg(id::text, ','), '-1') F
 
 # Built as SQL text so the exclusions are visible in one place rather than being applied later and
 # leaving the dry run reporting a different set from what the apply would write.
+# Exclusions are expressed with string_to_array over a single dollar-quoted literal, NOT by building
+# a quoted SQL list in bash.
+#
+# The previous version did `quoted="...'${nm//'/''}'"` -- a parameter expansion containing a single
+# quote, inside a double-quoted string. That is a bash syntax error: the quote re-pairs against later
+# quotes in the file, so `bash -n` still reported the script as valid while the surrounding lines
+# silently parsed as different strings than intended. Both exclusions then evaluated to nothing, and
+# the selection SQL itself was mangled -- the first real run restored a demo project it was told to
+# skip and skipped the project it was meant to restore.
+#
+# Dollar-quoting needs no escaping for anything a project name can hold, and the bash side never
+# builds a quote inside an expansion.
 SAMPLE_CLAUSE=""
-if [ "$SKIP_SAMPLE" = "1" ]; then
-  quoted=""
-  IFS=',' read -ra names <<< "$SAMPLE_NAMES"
-  for nm in "${names[@]}"; do
-    nm="$(echo "$nm" | sed 's/^ *//; s/ *$//')"
-    [ -z "$nm" ] && continue
-    quoted="$quoted${quoted:+, }'${nm//'/''}'"
-  done
-  [ -n "$quoted" ] && SAMPLE_CLAUSE="AND p.name NOT IN ($quoted)"
+if [ "$SKIP_SAMPLE" = "1" ] && [ -n "$SAMPLE_NAMES" ]; then
+  SAMPLE_CLAUSE="AND btrim(p.name) <> ALL (SELECT btrim(x) FROM unnest(string_to_array(\$q\$$SAMPLE_NAMES\$q\$, ',')) AS x)"
 fi
 
 ONLY_CLAUSE=""
 if [ -n "$ONLY_PROJECTS" ]; then
-  quoted=""
-  IFS=',' read -ra only <<< "$ONLY_PROJECTS"
-  for nm in "${only[@]}"; do
-    nm="$(echo "$nm" | sed 's/^ *//; s/ *$//')"
-    [ -z "$nm" ] && continue
-    quoted="$quoted${quoted:+, }'${nm//'/''}'"
-  done
-  [ -n "$quoted" ] && ONLY_CLAUSE="AND p.name IN ($quoted)"
+  ONLY_CLAUSE="AND btrim(p.name) = ANY (SELECT btrim(x) FROM unnest(string_to_array(\$q\$$ONLY_PROJECTS\$q\$, ',')) AS x)"
 fi
 
 SELECT_MISSING="
