@@ -175,11 +175,27 @@ export default function MetabaseStatusPanel({ entries, loading, error, onRefresh
     // Wide because a product type's breakdown is a row of eleven-odd status tiles; at the default
     // 640 they wrapped into a column and the shape of the breakdown was lost.
     <Modal title="Migration process status" onClose={onClose} width={900} closeIcon>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
+      {/* Refresh sits opposite a caption rather than alone against a dead band of whitespace. The
+          caption is not filler: the one thing the tiles never say is where the numbers came from or
+          how current they are, and a figure a Delta gets approved against should say both. */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 16,
+          marginBottom: 16,
+        }}
+      >
+        <p style={{ margin: 0, fontSize: 12.5, color: "var(--color-text-muted)", lineHeight: 1.45 }}>
+          Workspace counts by process status, read from this project's Metabase database when you
+          opened this.
+        </p>
+        {/* flexShrink so a long caption squeezes the text, never the button's label. */}
         <button
           type="button"
           className="btn secondary"
-          style={{ padding: "6px 14px", fontSize: 12.5 }}
+          style={{ padding: "6px 14px", fontSize: 12.5, flexShrink: 0 }}
           onClick={onRefresh}
           disabled={loading}
         >
