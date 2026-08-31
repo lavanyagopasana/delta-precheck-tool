@@ -70,7 +70,7 @@ gunzip -c "$BACKUP" | awk -v livefile="/tmp/.live_project_names.$$" '
     tbl = $2; sub(/^public\./, "", tbl)
     hdr = $0; sub(/^[^(]*\(/, "", hdr); sub(/\).*$/, "", hdr)
     cur = tbl
-    if (tbl == "projects")               { c_id = idx(hdr,"id"); c_name = idx(hdr,"name"); c_ph = idx(hdr,"external_phase") }
+    if (tbl == "projects")               { c_id = idx(hdr,"id"); c_name = idx(hdr,"name"); c_ph = idx(hdr,"external_phase"); c_by = idx(hdr,"created_by") }
     else if (tbl == "servers")           { s_id = idx(hdr,"id"); s_pid = idx(hdr,"project_id") }
     else if (tbl == "workspace_combinations") { w_id = idx(hdr,"id"); w_sid = idx(hdr,"server_id") }
     else if (tbl == "sign_offs")         { o_cid = idx(hdr,"combination_id") }
@@ -79,7 +79,7 @@ gunzip -c "$BACKUP" | awk -v livefile="/tmp/.live_project_names.$$" '
     next
   }
   cur != "" && $0 == "\\." { cur = ""; next }
-  cur == "projects"  { pname[$c_id] = $c_name; pphase[$c_id] = $c_ph; next }
+  cur == "projects"  { pname[$c_id] = $c_name; pphase[$c_id] = $c_ph; pby[$c_id] = (c_by ? $c_by : "?"); next }
   cur == "servers"   { sproj[$s_id] = $s_pid; nserv[$s_pid]++; next }
   cur == "workspace_combinations" { wserv[$w_id] = $w_sid; next }
   cur == "sign_offs"      { so[$o_cid]++; next }
@@ -95,7 +95,7 @@ gunzip -c "$BACKUP" | awk -v livefile="/tmp/.live_project_names.$$" '
     print "PROJECTS IN THE BACKUP THAT ARE MISSING FROM PRODUCTION"
     print "(these are the deletions -- \"restore?\" applies your rule: has servers, or PMO phase DELTA)"
     print ""
-    printf "%-42s %-18s %8s %10s %8s %8s  %s\n", "PROJECT", "PMO PHASE", "SERVERS", "APPROVALS", "CYCLES", "ITEMS", "RESTORE?"
+    printf "%-36s %-22s %-13s %7s %9s %6s %6s  %s\n", "PROJECT", "CREATED BY", "PMO PHASE", "SERVERS", "APPROVALS", "CYCLES", "ITEMS", "RESTORE?"
     n = 0; recoverable = 0
     for (id in pname) {
       nm = pname[id]
@@ -108,7 +108,8 @@ gunzip -c "$BACKUP" | awk -v livefile="/tmp/.live_project_names.$$" '
       ph = (pphase[id] == "\\N" || pphase[id] == "") ? "-" : pphase[id]
       want = (sv > 0 || toupper(ph) == "DELTA") ? "YES" : "no (empty, non-Delta)"
       if (want == "YES") recoverable++
-      printf "%-42s %-18s %8d %10d %8d %8d  %s\n", substr(nm,1,42), ph, sv, ap, cy, it, want
+      by = (pby[id] == "\\N" || pby[id] == "") ? "-" : pby[id]
+      printf "%-36s %-22s %-13s %7d %9d %6d %6d  %s\n", substr(nm,1,36), substr(by,1,22), substr(ph,1,13), sv, ap, cy, it, want
     }
     print ""
     if (n == 0) {
@@ -120,6 +121,9 @@ gunzip -c "$BACKUP" | awk -v livefile="/tmp/.live_project_names.$$" '
       print ""
       print "Rows with non-zero APPROVALS / CYCLES / ITEMS are the ones holding real engineer work."
       print "CYCLES includes declined approvals -- a decline is snapshotted into delta_cycles."
+      print ""
+      print "CREATED BY is the person who made the project by hand in this app. Anything mirrored"
+      print "from the PMO tool says \"PMO sync\" instead."
     }
   }
 '
