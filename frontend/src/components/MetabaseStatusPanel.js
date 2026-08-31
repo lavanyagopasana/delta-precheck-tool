@@ -1,12 +1,14 @@
 import React from "react";
 import { TableIcon } from "./Icons";
+import Modal from "./Modal";
 
 /**
- * The migration process status read out of Metabase, shown at the bottom of a project's page.
+ * The migration process status read out of Metabase, shown as a dialog over a project's page.
  *
- * Below the servers on purpose: it is a rollup of the whole project's migration data rather than
- * something you act on per server. One block per product type, because a Metabase database only ever
- * holds one product type's data, so a project spanning types reads from more than one database.
+ * A dialog rather than an inline section: it is a rollup of the whole project's migration data that
+ * you open, read and dismiss, not something you act on per server. One block per product type,
+ * because a Metabase database only ever holds one product type's data, so a project spanning types
+ * reads from more than one database.
  *
  * Each block is the same breakdown the Metabase UI gives for "filter OwnerEmailId, Summarize > Count,
  * Group by ProcessStatus" -- how many workspaces sit in each state.
@@ -167,38 +169,22 @@ function ProductTypeBlock({ entry }) {
 
 export default function MetabaseStatusPanel({ entries, loading, error, onRefresh, onClose }) {
   return (
-    <div className="card" style={{ marginTop: 20 }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
-      >
-        <h3 className="section-title" style={{ marginBottom: 0 }}>
-          Migration process status
-        </h3>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            type="button"
-            className="btn secondary"
-            style={{ padding: "6px 14px", fontSize: 12.5 }}
-            onClick={onRefresh}
-            disabled={loading}
-          >
-            {loading ? "Refreshing..." : "Refresh"}
-          </button>
-          <button
-            type="button"
-            className="btn secondary"
-            style={{ padding: "6px 14px", fontSize: 12.5 }}
-            onClick={onClose}
-          >
-            Hide
-          </button>
-        </div>
+    // A dialog rather than a section appended to the page: this is a read-only rollup you open,
+    // read and dismiss, and rendering it inline pushed the servers -- the things you actually act
+    // on -- off screen, with no indication the new block had appeared further down.
+    // Wide because a product type's breakdown is a row of eleven-odd status tiles; at the default
+    // 640 they wrapped into a column and the shape of the breakdown was lost.
+    <Modal title="Migration process status" onClose={onClose} width={900} closeIcon>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
+        <button
+          type="button"
+          className="btn secondary"
+          style={{ padding: "6px 14px", fontSize: 12.5 }}
+          onClick={onRefresh}
+          disabled={loading}
+        >
+          {loading ? "Refreshing..." : "Refresh"}
+        </button>
       </div>
 
       {loading ? (
@@ -207,15 +193,16 @@ export default function MetabaseStatusPanel({ entries, loading, error, onRefresh
           Reading from Metabase...
         </p>
       ) : error ? (
-        <div className="inline-hint" style={{ marginTop: 14 }}>{error}</div>
+        <div className="inline-hint">{error}</div>
       ) : !entries?.length ? (
-        <div className="inline-hint" style={{ marginTop: 14 }}>
+        <div className="inline-hint">
           <TableIcon size={14} style={{ marginRight: 6 }} />
-          No Metabase database has been fixed for this project yet. Choose one above first.
+          No Metabase database has been fixed for this project yet. Choose one on the project page
+          first.
         </div>
       ) : (
         entries.map((entry) => <ProductTypeBlock key={entry.productType} entry={entry} />)
       )}
-    </div>
+    </Modal>
   );
 }

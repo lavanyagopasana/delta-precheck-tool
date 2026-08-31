@@ -384,8 +384,9 @@ export default function ProjectDetailsPage() {
         onCloseAddServer={() => setShowAddServer(false)}
       />
 
-      {/* Below the servers on purpose: this is a rollup of the whole project's migration data, not
-          something you act on per server. */}
+      {/* A dialog, not a section appended below the servers: this is a rollup of the whole project's
+          migration data that you open, read and dismiss. Rendered last only because that is where the
+          state lives -- the overlay is fixed, so its position in the tree does not affect layout. */}
       {showStatus && (
         <MetabaseStatusPanel
           entries={statusEntries}
