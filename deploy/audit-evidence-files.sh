@@ -98,14 +98,14 @@ if [ -n "$PROJECT_FILTER" ]; then
     if grep -qxF "$path" /tmp/.disk.$$; then state="yes"; else state="MISSING"; fi
     printf '%-46s %-22s %-12s %s\n' "${path#/uploads/}" "$(echo "$item" | cut -c1-22)" "$where" "$state"
   done <<< "$(docker compose exec -T "$DB_SERVICE" psql -U "$PGU" -d "$PGD" -Atc "
-    SELECT i.evidence_file_path || '|' || i.name || '|LIVE'
+    SELECT i.evidence_file_path || '|' || i.item_name || '|LIVE'
     FROM precheck_items i
     JOIN workspace_combinations c ON c.id = i.combination_id
     JOIN servers s ON s.id = c.server_id
     JOIN projects p ON p.id = s.project_id
     WHERE i.evidence_file_path IS NOT NULL $SCOPE_LIVE
     UNION ALL
-    SELECT ci.evidence_file_path || '|' || ci.name || '|DECLINED'
+    SELECT ci.evidence_file_path || '|' || ci.item_name || '|DECLINED'
     FROM delta_cycle_items ci
     JOIN delta_cycles dc ON dc.id = ci.cycle_id
     JOIN workspace_combinations c2 ON c2.id = dc.combination_id
