@@ -3,8 +3,15 @@ package com.cloudfuze.deltatracker.service;
 import com.cloudfuze.deltatracker.dto.ProjectSummaryDto;
 import com.cloudfuze.deltatracker.dto.ProjectUpdateRequest;
 import com.cloudfuze.deltatracker.entity.AppUserRole;
+import com.cloudfuze.deltatracker.entity.DeltaCycle;
+import com.cloudfuze.deltatracker.entity.DeltaCycleStatus;
+import com.cloudfuze.deltatracker.entity.DeltaType;
 import com.cloudfuze.deltatracker.entity.Project;
 import com.cloudfuze.deltatracker.entity.Server;
+import com.cloudfuze.deltatracker.entity.SignOff;
+import com.cloudfuze.deltatracker.entity.SignOffRole;
+import com.cloudfuze.deltatracker.entity.SignOffStatus;
+import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
 import com.cloudfuze.deltatracker.repository.ProjectMetabaseDatabaseRepository;
 import com.cloudfuze.deltatracker.repository.ProjectRepository;
@@ -56,6 +63,7 @@ class ProjectServiceTest {
     @Mock private AppUserService appUserService;
     @Mock private ServerPurgeService serverPurgeService;
     @Mock private TeamService teamService;
+    @Mock private DeltaCycleService deltaCycleService;
 
     private ProjectService service;
 
@@ -64,10 +72,11 @@ class ProjectServiceTest {
         service = new ProjectService(projectRepository, projectMetabaseDatabaseRepository, serverRepository,
                 workspacePairRepository, workspaceCombinationRepository, signOffRepository,
                 preCheckSubmissionRepository, ticketRepository, serverService, workspaceCombinationService,
-                appUserService, serverPurgeService, teamService);
+                appUserService, serverPurgeService, teamService, deltaCycleService);
         when(projectRepository.existsByNameIgnoreCase(anyString())).thenReturn(false);
         when(projectRepository.save(any(Project.class))).thenAnswer(i -> i.getArgument(0));
         when(serverRepository.findAll()).thenReturn(List.of());
+        when(deltaCycleService.findDeclinedAwaitingResubmission()).thenReturn(List.of());
     }
 
     private Project savedProject() {
@@ -286,5 +295,87 @@ class ProjectServiceTest {
         List<ProjectSummaryDto> result = service.list("admin@cloudfuze.com", AppUserRole.ADMIN);
 
         assertThat(result).extracting(ProjectSummaryDto::getServerCount).containsExactly(2, 1);
+    }
+
+    /**
+     * A decline deletes the live sign-off chain (DeltaCycleService.rollOver) and keeps the outcome only
+     * in DeltaCycle history. buildSummary read the live rows alone, so a declined combination matched
+     * the "no chain yet" skip and landed in NO bucket -- combinationsDeclined stayed 0 and the
+     * dashboard's Approvals donut rendered "Declined (0)" while the Approvals page listed the decline.
+     */
+    @Test
+    void aDeclinedCombinationIsCountedAsDeclinedEvenThoughTheRolloverDeletedItsChain() {
+        List<Server> servers = new java.util.ArrayList<>();
+        Project project = projectWithServer(1L, 10L, servers);
+        WorkspaceCombination combination = combinationOn(servers.get(0), 100L);
+        when(projectRepository.findAllByOrderByNameAsc()).thenReturn(List.of(project));
+        when(serverRepository.findAll()).thenReturn(servers);
+        when(workspacePairRepository.findByServerIdIn(any())).thenReturn(List.of());
+        when(ticketRepository.findAllByCombinationServerIdIn(any())).thenReturn(List.of());
+        when(workspaceCombinationRepository.findByServerIdIn(any())).thenReturn(List.of(combination));
+        // The decline's own footprint: no live sign-off rows at all, one frozen DECLINED cycle.
+        when(signOffRepository.findByCombinationIdIn(any())).thenReturn(List.of());
+        when(preCheckSubmissionRepository.findByCombinationIdIn(any())).thenReturn(List.of());
+        when(deltaCycleService.findDeclinedAwaitingResubmission())
+                .thenReturn(List.of(declinedCycle(combination)));
+
+        ProjectSummaryDto summary = service.list("admin@cloudfuze.com", AppUserRole.ADMIN).get(0);
+
+        assertThat(summary.getCombinationsDeclined()).isEqualTo(1);
+        assertThat(summary.getCombinationsAwaitingApproval()).isZero();
+        assertThat(summary.getCombinationsFullyApproved()).isZero();
+    }
+
+    @Test
+    void aResubmittedCombinationCountsAsAwaitingApprovalRatherThanStillDeclined() {
+        // Its latest cycle row is still the DECLINED one -- a new cycle is only written when the fresh
+        // attempt resolves -- so the frozen history alone would keep reporting a decline forever. The
+        // live chain is what says somebody already refilled the checklist and it is moving again.
+        List<Server> servers = new java.util.ArrayList<>();
+        Project project = projectWithServer(1L, 10L, servers);
+        WorkspaceCombination combination = combinationOn(servers.get(0), 100L);
+        when(projectRepository.findAllByOrderByNameAsc()).thenReturn(List.of(project));
+        when(serverRepository.findAll()).thenReturn(servers);
+        when(workspacePairRepository.findByServerIdIn(any())).thenReturn(List.of());
+        when(ticketRepository.findAllByCombinationServerIdIn(any())).thenReturn(List.of());
+        when(workspaceCombinationRepository.findByServerIdIn(any())).thenReturn(List.of(combination));
+        when(signOffRepository.findByCombinationIdIn(any()))
+                .thenReturn(List.of(pendingSignOff(combination, SignOffRole.MIGRATION_LEAD)));
+        when(preCheckSubmissionRepository.findByCombinationIdIn(any())).thenReturn(List.of());
+        when(deltaCycleService.findDeclinedAwaitingResubmission())
+                .thenReturn(List.of(declinedCycle(combination)));
+
+        ProjectSummaryDto summary = service.list("admin@cloudfuze.com", AppUserRole.ADMIN).get(0);
+
+        assertThat(summary.getCombinationsDeclined()).isZero();
+        assertThat(summary.getCombinationsAwaitingApproval()).isEqualTo(1);
+    }
+
+    private WorkspaceCombination combinationOn(Server server, Long combinationId) {
+        WorkspaceCombination combination = new WorkspaceCombination();
+        combination.setId(combinationId);
+        combination.setName("Teams to Slack");
+        combination.setServer(server);
+        return combination;
+    }
+
+    private DeltaCycle declinedCycle(WorkspaceCombination combination) {
+        DeltaCycle cycle = new DeltaCycle(combination, 1, DeltaType.PRE_DELTA);
+        cycle.setStatus(DeltaCycleStatus.DECLINED);
+        cycle.setDeclinedByRole(SignOffRole.DEV_LEAD);
+        cycle.setDeclinedBy("dev@cloudfuze.com");
+        cycle.setDeclineReason("Evidence missing on two items.");
+        // Normally populated by the read-only combination_id column; set by hand here because that is
+        // the field the summary matches on.
+        cycle.setCombinationId(combination.getId());
+        return cycle;
+    }
+
+    private SignOff pendingSignOff(WorkspaceCombination combination, SignOffRole role) {
+        SignOff signOff = new SignOff();
+        signOff.setCombination(combination);
+        signOff.setRole(role);
+        signOff.setStatus(SignOffStatus.PENDING);
+        return signOff;
     }
 }

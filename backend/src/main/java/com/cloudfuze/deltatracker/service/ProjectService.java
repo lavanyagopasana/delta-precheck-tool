@@ -7,6 +7,7 @@ import com.cloudfuze.deltatracker.dto.ProjectUpdateRequest;
 import com.cloudfuze.deltatracker.dto.ProjectSummaryDto;
 import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
 import com.cloudfuze.deltatracker.entity.AppUserRole;
+import com.cloudfuze.deltatracker.entity.DeltaCycle;
 import com.cloudfuze.deltatracker.entity.PairStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
 import com.cloudfuze.deltatracker.entity.ProductType;
@@ -38,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -69,6 +71,10 @@ public class ProjectService {
     // Source of truth for "which engineers work for this manager" -- a project's engineers are
     // derived from its Migration Manager's team, not picked by hand (see syncEngineersToManager).
     private final TeamService teamService;
+    // Asked for the "declined, awaiting resubmission" set rather than re-deriving it here: a decline
+    // deletes the live chain, so that state exists only in DeltaCycle history and the rule for
+    // reading it back already lives in DeltaCycleService.findDeclinedAwaitingResubmission.
+    private final DeltaCycleService deltaCycleService;
 
     public ProjectService(ProjectRepository projectRepository,
                            ProjectMetabaseDatabaseRepository projectMetabaseDatabaseRepository,
@@ -82,7 +88,8 @@ public class ProjectService {
                            WorkspaceCombinationService workspaceCombinationService,
                            AppUserService appUserService,
                            ServerPurgeService serverPurgeService,
-                           TeamService teamService) {
+                           TeamService teamService,
+                           DeltaCycleService deltaCycleService) {
         this.projectRepository = projectRepository;
         this.projectMetabaseDatabaseRepository = projectMetabaseDatabaseRepository;
         this.serverRepository = serverRepository;
@@ -96,6 +103,7 @@ public class ProjectService {
         this.appUserService = appUserService;
         this.serverPurgeService = serverPurgeService;
         this.teamService = teamService;
+        this.deltaCycleService = deltaCycleService;
     }
 
     // email == null means auth isn't configured (or caller identity is unknown) -- in that case
@@ -629,7 +637,8 @@ public class ProjectService {
             Map<Long, Long> openEscalationByServer,
             Map<Long, List<WorkspaceCombination>> combinationsByServer,
             Map<Long, EnumMap<SignOffRole, SignOffStatus>> signOffByCombination,
-            Map<Long, PreCheckSubmission> submissionByCombination) {
+            Map<Long, PreCheckSubmission> submissionByCombination,
+            Set<Long> declinedAwaitingResubmission) {
     }
 
     private SummaryData loadSummaryData(List<Long> serverIds) {
@@ -638,6 +647,7 @@ public class ProjectService {
         Map<Long, List<WorkspaceCombination>> combinationsByServer = new HashMap<>();
         Map<Long, EnumMap<SignOffRole, SignOffStatus>> signOffByCombination = new HashMap<>();
         Map<Long, PreCheckSubmission> submissionByCombination = new HashMap<>();
+        Set<Long> declinedAwaitingResubmission = new HashSet<>();
         if (!serverIds.isEmpty()) {
             for (WorkspacePair wp : workspacePairRepository.findByServerIdIn(serverIds)) {
                 pairCountByServer.merge(wp.getServer().getId(), 1L, Long::sum);
@@ -660,10 +670,22 @@ public class ProjectService {
                 for (PreCheckSubmission sub : preCheckSubmissionRepository.findByCombinationIdIn(combinationIds)) {
                     submissionByCombination.put(sub.getCombination().getId(), sub);
                 }
+                // A declined combination has NO live sign-off rows -- the decline rollover deletes the
+                // chain (DeltaCycleService.rollOver) -- so the loop above cannot see it and the bucket
+                // counters below used to drop it entirely. Same source and same "no live chain" guard
+                // SignOffService.listApprovals uses, so the Approvals page and these counts agree.
+                Set<Long> ownCombinationIds = new HashSet<>(combinationIds);
+                for (DeltaCycle cycle : deltaCycleService.findDeclinedAwaitingResubmission()) {
+                    Long combinationId = cycle.getCombinationId();
+                    if (ownCombinationIds.contains(combinationId)
+                            && !signOffByCombination.containsKey(combinationId)) {
+                        declinedAwaitingResubmission.add(combinationId);
+                    }
+                }
             }
         }
         return new SummaryData(pairCountByServer, openEscalationByServer, combinationsByServer,
-                signOffByCombination, submissionByCombination);
+                signOffByCombination, submissionByCombination, declinedAwaitingResubmission);
     }
 
     /** One project on its own -- used by create/update/detail, where there is nothing to share with. */
@@ -683,6 +705,7 @@ public class ProjectService {
         Map<Long, List<WorkspaceCombination>> combinationsByServer = data.combinationsByServer();
         Map<Long, EnumMap<SignOffRole, SignOffStatus>> signOffByCombination = data.signOffByCombination();
         Map<Long, PreCheckSubmission> submissionByCombination = data.submissionByCombination();
+        Set<Long> declinedAwaitingResubmission = data.declinedAwaitingResubmission();
         // This project's combinations only -- the shared maps hold every project's, so the flat list
         // the aggregates below iterate has to be narrowed back down to this project's servers.
         List<WorkspaceCombination> combinations = serverIds.stream()
@@ -729,6 +752,14 @@ public class ProjectService {
                 devPending++;
             }
 
+            // Checked BEFORE the no-chain skip below: a declined combination is deliberately
+            // chainless (the rollover deleted it) and would otherwise be indistinguishable from one
+            // whose pre-check was never submitted, which is how declines came to be counted nowhere
+            // and the dashboard's Approvals donut showed "Declined (0)" against real declined work.
+            if (declinedAwaitingResubmission.contains(c.getId())) {
+                declined++;
+                continue;
+            }
             // No chain yet (pre-check never submitted) is not an approval state -- it belongs to the
             // pre-check funnel, not this one, so such combinations are counted in no bucket at all.
             if (roles == null || roles.isEmpty()) {
