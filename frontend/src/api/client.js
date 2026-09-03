@@ -1,5 +1,6 @@
 import axios from "axios";
 import { getAccessToken } from "../auth/getAccessToken";
+import { endExpiredSession } from "../auth/sessionExpiry";
 
 // Backend origin resolves at runtime (deploy-time file first, then build-time env, then this page's
 // own origin) so a bundle built anywhere works anywhere -- see config/runtimeConfig.js.
@@ -28,6 +29,48 @@ client.interceptors.request.use(async (config) => {
 //
 // This normalises those cases into the same shape the rest of the app already handles, so a
 // misconfigured proxy produces an error that names itself instead of a mystery.
+// A 401 from our own API means the bearer token was rejected, which in practice means it expired --
+// authorization failures (not on the allowlist, wrong role) come back as 403, not 401.
+//
+// This is not a rare edge: MSAL decides whether to renew by looking at the ACCESS token's expiry,
+// but what we send is the ID token (see auth/getAccessToken.js for why). A cached entry MSAL still
+// considers fresh can therefore hand back an ID token that has already expired, and every call on
+// the page starts failing at once.
+//
+// One forced refresh and one retry. If that still fails the session is genuinely over, and the
+// right outcome is the login screen -- not an error on every panel of a page the person can no
+// longer load anything into. Before this, an hour-old tab showed "Something went wrong (401)" with
+// no way forward but signing out by hand.
+client.interceptors.response.use(undefined, async (error) => {
+  const original = error.config;
+  if (error.response?.status !== 401 || !original) return Promise.reject(error);
+
+  if (!original._retriedAfter401) {
+    original._retriedAfter401 = true;
+    try {
+      const fresh = await getAccessToken(true);
+      if (fresh) {
+        original.headers = { ...original.headers, Authorization: `Bearer ${fresh}` };
+        return await client.request(original);
+      }
+    } catch (retryError) {
+      // Only a second 401 means the session is finished. A 500 or a dropped connection on the
+      // retry is a different problem and has to keep its own error, or a flaky network would log
+      // people out.
+      if (retryError?.response && retryError.response.status !== 401) {
+        return Promise.reject(retryError);
+      }
+    }
+  }
+
+  await endExpiredSession();
+  // Deliberately never settles. endExpiredSession clears MSAL, which re-renders the app as the
+  // login page; resolving or rejecting here would first let every in-flight caller paint its own
+  // error message into a UI that is about to be replaced. This is a "we are navigating away"
+  // promise, not a leak -- the components holding it are unmounted moments later.
+  return new Promise(() => {});
+});
+
 client.interceptors.response.use(undefined, (error) => {
   const response = error.response;
   if (!response) return Promise.reject(error);
