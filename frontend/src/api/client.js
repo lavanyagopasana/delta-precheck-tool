@@ -176,9 +176,11 @@ export const getTeams = () => client.get("/teams").then((r) => r.data);
 export const createTeam = (payload) => client.post("/teams", payload).then((r) => r.data);
 export const updateTeam = (id, payload) => client.patch(`/teams/${id}`, payload).then((r) => r.data);
 export const removeTeam = (id) => client.delete(`/teams/${id}`).then((r) => r.data);
-// teamId: null takes the person off every team, which is why it is sent explicitly rather than omitted.
-export const assignUserTeam = (email, teamId) =>
-  client.post("/teams/assign", { email, teamId }).then((r) => r.data);
+// Sets the person's teams to exactly teamIds -- an empty array takes them off every team, which is
+// why it is sent explicitly rather than omitted. Replace, not add: a caller that means "also put
+// them on this team" sends the union it wants (see AdminUsersPage's team cards).
+export const assignUserTeams = (email, teamIds) =>
+  client.post("/teams/assign", { email, teamIds }).then((r) => r.data);
 
 export const importWorkspacePairsCsv = (serverId, file) => {
   const formData = new FormData();

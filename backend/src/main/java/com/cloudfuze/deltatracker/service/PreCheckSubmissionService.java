@@ -6,11 +6,13 @@ import com.cloudfuze.deltatracker.dto.SubmissionSubmitRequest;
 import com.cloudfuze.deltatracker.entity.DeltaType;
 import com.cloudfuze.deltatracker.entity.ItemStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckItem;
+import com.cloudfuze.deltatracker.entity.PreCheckItemEvidence;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
 import com.cloudfuze.deltatracker.entity.SubmissionStatus;
 import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.exception.EvidenceRequiredException;
+import com.cloudfuze.deltatracker.repository.PreCheckItemEvidenceRepository;
 import com.cloudfuze.deltatracker.repository.PreCheckItemRepository;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
 import org.springframework.http.HttpStatus;
@@ -21,6 +23,8 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional
@@ -28,17 +32,20 @@ public class PreCheckSubmissionService {
 
     private final PreCheckSubmissionRepository submissionRepository;
     private final PreCheckItemRepository itemRepository;
+    private final PreCheckItemEvidenceRepository evidenceRepository;
     private final WorkspaceCombinationService combinationService;
     private final SignOffService signOffService;
     private final AppUserService appUserService;
 
     public PreCheckSubmissionService(PreCheckSubmissionRepository submissionRepository,
                                       PreCheckItemRepository itemRepository,
+                                      PreCheckItemEvidenceRepository evidenceRepository,
                                       WorkspaceCombinationService combinationService,
                                       SignOffService signOffService,
                                       AppUserService appUserService) {
         this.submissionRepository = submissionRepository;
         this.itemRepository = itemRepository;
+        this.evidenceRepository = evidenceRepository;
         this.combinationService = combinationService;
         this.signOffService = signOffService;
         this.appUserService = appUserService;
@@ -49,8 +56,9 @@ public class PreCheckSubmissionService {
         // Brings an untouched checklist in line with its product type's item set before rendering it.
         // Needed because items are rows seeded at creation time, so a combination created before Email
         // got its own (shorter) list still holds the Content one. No-ops unless the shape actually
-        // differs AND nothing has been filled in -- see realignPreCheckItemsIfUntouched.
-        combinationService.realignPreCheckItemsIfUntouched(combination);
+        // differs: a fresh checklist is replaced outright, a part-filled one gains only the items it
+        // is missing, and a submitted one is left alone -- see alignPreCheckItemsToProductType.
+        combinationService.alignPreCheckItemsToProductType(combination);
         return toDto(getOrCreate(combination), viewerEmail);
     }
 
@@ -243,7 +251,20 @@ public class PreCheckSubmissionService {
             dto.setItems(ordered.stream().map(PreCheckItemDto::redacted).toList());
         } else {
             dto.setCompletedCount((int) ordered.stream().filter(PreCheckSubmissionService::isItemComplete).count());
-            dto.setItems(ordered.stream().map(PreCheckItemDto::fromEntity).toList());
+            // Mapped WITH each item's evidence rows. Using the one-argument fromEntity here left
+            // evidenceFiles empty, and the panel's fallback then showed only evidenceFilePath -- the
+            // first file -- so an item with three attachments displayed one the moment the form was
+            // read through the submission (i.e. straight after submitting). The files were never
+            // lost; this path simply did not ask for them.
+            List<Long> itemIds = ordered.stream().map(PreCheckItem::getId).toList();
+            Map<Long, List<PreCheckItemEvidence>> evidenceByItem = itemIds.isEmpty()
+                    ? Map.of()
+                    : evidenceRepository.findByItemIdInOrderByUploadedAtAscIdAsc(itemIds).stream()
+                            .collect(Collectors.groupingBy(PreCheckItemEvidence::getItemId));
+            dto.setItems(ordered.stream()
+                    .map(item -> PreCheckItemDto.fromEntity(item,
+                            evidenceByItem.getOrDefault(item.getId(), List.of())))
+                    .toList());
         }
         return dto;
     }

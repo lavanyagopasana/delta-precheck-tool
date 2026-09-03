@@ -195,6 +195,24 @@ public class WorkspacePairService {
         int updated = 0;
         int duplicate = 0;
 
+        // A re-upload REPLACES this combination's pairs -- the file is the new complete list, so a
+        // row that is no longer in it must no longer be in the app. Merging left rows behind that the
+        // uploader had deliberately removed, with nothing on screen to say so.
+        //
+        // Deleted only after the header and required columns have been validated above, so a file
+        // that was never going to import cannot empty the list on its way to an error. Safe to
+        // delete outright because a WorkspacePair carries no state of its own beyond the row --
+        // source/destination email and path, and the combination name.
+        List<WorkspacePair> existing =
+                workspacePairRepository.findByServerIdAndCombinationIgnoreCase(server.getId(), trimmedCombination);
+        int replaced = existing.size();
+        if (!existing.isEmpty()) {
+            workspacePairRepository.deleteAll(existing);
+            // Flushed so the duplicate check inside processRow sees the rows as gone; otherwise every
+            // re-uploaded row would come back as a duplicate of the one it is replacing.
+            workspacePairRepository.flush();
+        }
+
         for (int rowNum = 1; rowNum < lines.size(); rowNum++) {
             String line = lines.get(rowNum);
             if (!StringUtils.hasText(line)) {
@@ -209,12 +227,23 @@ public class WorkspacePairService {
             }
         }
 
+        // Nothing usable in the file, but rows were deleted to make room for it: refuse the whole
+        // thing so the transaction rolls back and the old list survives. Without this, re-uploading
+        // a malformed file would silently leave the combination with no pairs at all.
+        if (created == 0 && replaced > 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "No usable rows in this CSV, so the existing " + replaced + " pair"
+                            + (replaced == 1 ? "" : "s") + " were kept. "
+                            + (errors.isEmpty() ? "The file has a header but no data rows." : errors.get(0)));
+        }
+
         server.setTotalPairCount((int) workspacePairRepository.countByServerId(server.getId()));
         serverRepository.save(server);
 
         result.setTotalRows(lines.size() - 1);
         result.setCreatedCount(created);
         result.setUpdatedCount(updated);
+        result.setReplacedCount(replaced);
         result.setDuplicateCount(duplicate);
         result.setDuplicates(duplicates);
         result.setErrors(errors);

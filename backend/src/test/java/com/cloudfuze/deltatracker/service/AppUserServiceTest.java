@@ -20,6 +20,7 @@ import org.springframework.cache.CacheManager;
 import org.springframework.mock.web.MockMultipartFile;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -358,5 +359,72 @@ class AppUserServiceTest {
         assertThat(result.getCreatedTeams()).isEmpty();
         verify(teamRepository, never()).save(any(Team.class));
         assertThat(result.getErrors()).isEmpty();
+    }
+
+    /**
+     * The manager picker was exactly emailsForRole(MIGRATION_MANAGER), so somebody who is an ADMIN
+     * and also runs engagements was never offered -- and because AppUserRole is single-valued, the
+     * only way to make them assignable was to demote them out of admin.
+     */
+    @Test
+    void managerCandidatesIncludeAFlaggedUserWhateverTheirRole() {
+        when(repository.findByRole(AppUserRole.MIGRATION_MANAGER))
+                .thenReturn(List.of(user("mgr@cloudfuze.com", AppUserRole.MIGRATION_MANAGER, false)));
+        when(repository.findByAssignableAsManagerTrue())
+                .thenReturn(List.of(user("boss@cloudfuze.com", AppUserRole.ADMIN, true)));
+
+        assertThat(service.managerCandidateEmails())
+                .containsExactly("boss@cloudfuze.com", "mgr@cloudfuze.com");
+    }
+
+    @Test
+    void aFlaggedMigrationManagerIsOfferedOnceNotTwice() {
+        // They match both source queries, so without a dedup the picker would list them twice.
+        // Case-insensitively, because email is the identity key everywhere else in this app: the
+        // constructor lowercases, but setEmail does not, so a row written by any other path can
+        // still differ only by case.
+        AppUser mixedCase = user("mgr@cloudfuze.com", AppUserRole.MIGRATION_MANAGER, true);
+        mixedCase.setEmail("Mgr@cloudfuze.com");
+        when(repository.findByRole(AppUserRole.MIGRATION_MANAGER)).thenReturn(List.of(mixedCase));
+        when(repository.findByAssignableAsManagerTrue())
+                .thenReturn(List.of(user("mgr@cloudfuze.com", AppUserRole.MIGRATION_MANAGER, true)));
+
+        // The role query is consulted first, so its spelling is the one kept.
+        assertThat(service.managerCandidateEmails()).containsExactly("Mgr@cloudfuze.com");
+    }
+
+    @Test
+    void upsertLeavesTheFlagAloneWhenTheCallerDoesNotMentionIt() {
+        // importCsv and AdminBootstrap both come through the 3-arg upsert, which passes null. If that
+        // cleared the flag, a CSV re-import of the roster would quietly un-assign every flagged
+        // person while looking like it only touched roles.
+        AppUser existing = user("boss@cloudfuze.com", AppUserRole.ADMIN, true);
+        when(repository.findByEmailIgnoreCase("boss@cloudfuze.com")).thenReturn(Optional.of(existing));
+        when(repository.save(any(AppUser.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.upsert("boss@cloudfuze.com", AppUserRole.ADMIN, "other.admin@cloudfuze.com");
+
+        ArgumentCaptor<AppUser> saved = ArgumentCaptor.forClass(AppUser.class);
+        verify(repository).save(saved.capture());
+        assertThat(saved.getValue().isAssignableAsManager()).isTrue();
+    }
+
+    @Test
+    void anAdminCanTurnTheFlagBackOff() {
+        AppUser existing = user("boss@cloudfuze.com", AppUserRole.ADMIN, true);
+        when(repository.findByEmailIgnoreCase("boss@cloudfuze.com")).thenReturn(Optional.of(existing));
+        when(repository.save(any(AppUser.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.upsert("boss@cloudfuze.com", AppUserRole.ADMIN, false, "other.admin@cloudfuze.com");
+
+        ArgumentCaptor<AppUser> saved = ArgumentCaptor.forClass(AppUser.class);
+        verify(repository).save(saved.capture());
+        assertThat(saved.getValue().isAssignableAsManager()).isFalse();
+    }
+
+    private AppUser user(String email, AppUserRole role, boolean assignableAsManager) {
+        AppUser user = new AppUser(email, role, "admin@cloudfuze.com");
+        user.setAssignableAsManager(assignableAsManager);
+        return user;
     }
 }

@@ -5,6 +5,8 @@ import com.cloudfuze.deltatracker.dto.DeltaCycleItemDto;
 import com.cloudfuze.deltatracker.dto.DeltaCycleSignOffDto;
 import com.cloudfuze.deltatracker.entity.DeltaCycle;
 import com.cloudfuze.deltatracker.entity.DeltaCycleItem;
+import com.cloudfuze.deltatracker.entity.DeltaCycleItemEvidence;
+import com.cloudfuze.deltatracker.entity.PreCheckItemEvidence;
 import com.cloudfuze.deltatracker.entity.DeltaCycleSignOff;
 import com.cloudfuze.deltatracker.entity.DeltaCycleStatus;
 import com.cloudfuze.deltatracker.entity.DeltaType;
@@ -18,6 +20,8 @@ import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import com.cloudfuze.deltatracker.repository.DeltaCycleItemRepository;
 import com.cloudfuze.deltatracker.repository.DeltaCycleRepository;
 import com.cloudfuze.deltatracker.repository.DeltaCycleSignOffRepository;
+import com.cloudfuze.deltatracker.repository.DeltaCycleItemEvidenceRepository;
+import com.cloudfuze.deltatracker.repository.PreCheckItemEvidenceRepository;
 import com.cloudfuze.deltatracker.repository.PreCheckItemRepository;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
 import com.cloudfuze.deltatracker.repository.SignOffRepository;
@@ -52,6 +56,8 @@ public class DeltaCycleService {
     private final DeltaCycleItemRepository cycleItemRepository;
     private final DeltaCycleSignOffRepository cycleSignOffRepository;
     private final PreCheckItemRepository preCheckItemRepository;
+    private final PreCheckItemEvidenceRepository evidenceRepository;
+    private final DeltaCycleItemEvidenceRepository cycleItemEvidenceRepository;
     private final PreCheckSubmissionRepository preCheckSubmissionRepository;
     private final SignOffRepository signOffRepository;
 
@@ -59,12 +65,16 @@ public class DeltaCycleService {
                              DeltaCycleItemRepository cycleItemRepository,
                              DeltaCycleSignOffRepository cycleSignOffRepository,
                              PreCheckItemRepository preCheckItemRepository,
+                             PreCheckItemEvidenceRepository evidenceRepository,
+                             DeltaCycleItemEvidenceRepository cycleItemEvidenceRepository,
                              PreCheckSubmissionRepository preCheckSubmissionRepository,
                              SignOffRepository signOffRepository) {
         this.cycleRepository = cycleRepository;
         this.cycleItemRepository = cycleItemRepository;
         this.cycleSignOffRepository = cycleSignOffRepository;
         this.preCheckItemRepository = preCheckItemRepository;
+        this.evidenceRepository = evidenceRepository;
+        this.cycleItemEvidenceRepository = cycleItemEvidenceRepository;
         this.preCheckSubmissionRepository = preCheckSubmissionRepository;
         this.signOffRepository = signOffRepository;
     }
@@ -130,7 +140,24 @@ public class DeltaCycleService {
         for (int i = 0; i < live.size(); i++) {
             snapshot.add(new DeltaCycleItem(cycle, live.get(i), i));
         }
-        cycleItemRepository.saveAll(snapshot);
+        snapshot = cycleItemRepository.saveAll(snapshot);
+
+        // Copy EVERY evidence file into the snapshot, not just the item's first one. DeltaCycleItem
+        // carries a single evidence_file_path -- the whole truth when an item could hold one file --
+        // so a cycle evidenced with three files was frozen, and shown to anyone reading the history,
+        // as one. The paths are copied rather than referenced, so clearing the live pre-check's
+        // evidence later cannot rewrite what the approvers saw.
+        List<DeltaCycleItemEvidence> frozen = new ArrayList<>();
+        for (int i = 0; i < snapshot.size(); i++) {
+            DeltaCycleItem cycleItem = snapshot.get(i);
+            for (PreCheckItemEvidence file : evidenceRepository
+                    .findByItemIdOrderByUploadedAtAscIdAsc(live.get(i).getId())) {
+                frozen.add(new DeltaCycleItemEvidence(cycleItem, file.getFilePath(), file.getFileName()));
+            }
+        }
+        if (!frozen.isEmpty()) {
+            cycleItemEvidenceRepository.saveAll(frozen);
+        }
     }
 
     private void snapshotSignOffs(DeltaCycle cycle, WorkspaceCombination combination) {
@@ -312,12 +339,25 @@ public class DeltaCycleService {
                 .filter(item -> expected.contains(item.getItemName()))
                 .toList();
         keep.forEach(item -> {
+            // One Time Migration is carried forward, not cleared. It records a migration that
+            // happened once, before any delta -- re-attaching the same report to every subsequent
+            // pre-delta was pure re-work, and the engineer had to dig out a file they had already
+            // filed. Status and note come with it: leaving the evidence in place while blanking a
+            // mandatory note would hand back a form that cannot be submitted.
+            if (ServerService.ONE_TIME_MIGRATION_ITEM.equals(item.getItemName())) {
+                return;
+            }
             item.setStatus(ItemStatus.NOT_STARTED);
             item.setNotes(null);
             item.setEvidenceFilePath(null);
             item.setEvidenceFileName(null);
             item.setLastModifiedBy(null);
             item.setLastModifiedAt(null);
+            // Its evidence ROWS have to go as well. resetChecklist predates multi-file evidence and
+            // only nulled the single mirror field, which left every item's uploads attached to the
+            // new cycle while the form showed none of them -- the next submit then passed on
+            // evidence nobody had looked at.
+            evidenceRepository.deleteByItemId(item.getId());
         });
         preCheckItemRepository.saveAll(keep);
 
@@ -352,10 +392,18 @@ public class DeltaCycleService {
         }
         List<Long> cycleIds = cycles.stream().map(DeltaCycle::getId).toList();
 
-        Map<Long, List<DeltaCycleItemDto>> itemsByCycle = cycleItemRepository
-                .findByCycleIdInOrderBySortOrderAsc(cycleIds).stream()
+        List<DeltaCycleItem> cycleItems = cycleItemRepository.findByCycleIdInOrderBySortOrderAsc(cycleIds);
+        // One query for every frozen file on the panel rather than one per item.
+        List<Long> cycleItemIds = cycleItems.stream().map(DeltaCycleItem::getId).toList();
+        Map<Long, List<DeltaCycleItemEvidence>> frozenByItem = cycleItemIds.isEmpty()
+                ? Map.of()
+                : cycleItemEvidenceRepository.findByCycleItemIdInOrderByIdAsc(cycleItemIds).stream()
+                        .collect(Collectors.groupingBy(DeltaCycleItemEvidence::getCycleItemId));
+
+        Map<Long, List<DeltaCycleItemDto>> itemsByCycle = cycleItems.stream()
                 .collect(Collectors.groupingBy(DeltaCycleItem::getCycleId,
-                        Collectors.mapping(DeltaCycleItemDto::fromEntity, Collectors.toList())));
+                        Collectors.mapping(item -> DeltaCycleItemDto.fromEntity(item,
+                                frozenByItem.getOrDefault(item.getId(), List.of())), Collectors.toList())));
 
         Map<Long, List<DeltaCycleSignOffDto>> signOffsByCycle = cycleSignOffRepository
                 .findByCycleIdIn(cycleIds).stream()

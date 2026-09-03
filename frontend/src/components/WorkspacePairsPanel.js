@@ -140,7 +140,8 @@ export default function WorkspacePairsPanel({
     !AUTH_CONFIGURED || ["ADMIN", "MIGRATION_ENGINEER", "MIGRATION_MANAGER"].includes(currentUser?.role);
   // Mirrors PreCheckPanel.PRECHECK_EDIT_ROLES / SecurityConfig. A manager or lead still gets the link,
   // it just reads "View Pre-Check Form" -- they review, they don't fill it in.
-  const canFillPreCheck = !AUTH_CONFIGURED || ["ADMIN", "MIGRATION_ENGINEER"].includes(currentUser?.role);
+  const canFillPreCheck =
+    !AUTH_CONFIGURED || ["ADMIN", "MIGRATION_ENGINEER", "MIGRATION_MANAGER"].includes(currentUser?.role);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [comboReadiness, setComboReadiness] = useState(null);

@@ -12,6 +12,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
@@ -34,6 +35,10 @@ import static org.assertj.core.api.Assertions.assertThat;
         // Re-enabled just for this class. The test profile disables it so the seeded roster cannot
         // leak into every other @SpringBootTest through the shared H2 database.
         properties = "app.seed-team-roster=true")
+// AppUser.teams is a LAZY collection, and these cases assert on membership after the seed has
+// returned -- unlike the single team_id proxy it replaced, a lazy collection needs the session still
+// open to be read at all.
+@Transactional
 class TeamRosterBootstrapTest {
 
     @Autowired
@@ -47,7 +52,7 @@ class TeamRosterBootstrapTest {
 
     private List<String> emailsOf(String teamName, AppUserRole role) {
         Team team = teamRepository.findByNameIgnoreCase(teamName).orElseThrow();
-        return appUserRepository.findByTeamIdAndRole(team.getId(), role).stream()
+        return appUserRepository.findByTeams_IdAndRole(team.getId(), role).stream()
                 .map(AppUser::getEmail)
                 .toList();
     }
@@ -80,7 +85,7 @@ class TeamRosterBootstrapTest {
                 .filteredOn(u -> u.getRole() == AppUserRole.ADMIN
                         || u.getRole() == AppUserRole.DEV_LEAD
                         || u.getRole() == AppUserRole.QA_LEAD)
-                .allSatisfy(u -> assertThat(u.getTeam()).isNull());
+                .allSatisfy(u -> assertThat(u.getTeams()).isEmpty());
     }
 
     @Test
@@ -106,17 +111,18 @@ class TeamRosterBootstrapTest {
         // back to the team the file names, nor create a duplicate alongside it.
         Team handMade = teamRepository.save(new Team("Ad hoc team", "an-admin"));
         AppUser manager = appUserRepository.findByEmailIgnoreCase("sravan.kesaram@cloudfuze.com").orElseThrow();
-        manager.setTeam(handMade);
+        // Replaces, not adds: the premise is that the admin's hand-made team IS this manager's
+        // placement. Appending it would leave them on the roster team as well and test nothing.
+        manager.getTeams().clear();
+        manager.getTeams().add(handMade);
         appUserRepository.save(manager);
         long teamsBefore = teamRepository.count();
 
         bootstrap.run();
 
         AppUser after = appUserRepository.findByEmailIgnoreCase("sravan.kesaram@cloudfuze.com").orElseThrow();
-        // Compared by id, not by name: team is a LAZY association and this assertion runs outside a
-        // session, so reading a mapped field would throw LazyInitializationException. getId() is
-        // answered from the proxy itself without a fetch.
-        assertThat(after.getTeam().getId()).isEqualTo(handMade.getId());
+        // Compared by id: enough to prove which team, and independent of Team's equals.
+        assertThat(after.getTeams()).extracting("id").containsExactly(handMade.getId());
         assertThat(teamRepository.count()).isEqualTo(teamsBefore);
     }
 
@@ -130,7 +136,7 @@ class TeamRosterBootstrapTest {
                 "davidraj.dumpala@cloudfuze.com")) {
             Optional<AppUser> user = appUserRepository.findByEmailIgnoreCase(email);
             assertThat(user).as("%s should be seeded", email).isPresent();
-            assertThat(user.orElseThrow().getTeam()).as("%s should be on a team", email).isNotNull();
+            assertThat(user.orElseThrow().getTeams()).as("%s should be on a team", email).isNotEmpty();
         }
     }
 
@@ -149,24 +155,24 @@ class TeamRosterBootstrapTest {
         Team squatter = teamRepository.save(new Team("Team 9", "an-admin"));
         AppUser outsider = appUserRepository.save(
                 new AppUser("squatter.manager@cloudfuze.com", AppUserRole.MIGRATION_MANAGER, "an-admin"));
-        outsider.setTeam(squatter);
+        outsider.getTeams().add(squatter);
         appUserRepository.save(outsider);
 
         // A roster manager with no team, whose group name is free but whose team must not become
         // the squatter's. Detach one so the group is reprocessed.
         AppUser rosterManager = appUserRepository.findByEmailIgnoreCase("raghu.yellani@cloudfuze.com").orElseThrow();
-        Long originalTeamId = rosterManager.getTeam().getId();
-        rosterManager.setTeam(null);
+        Long originalTeamId = rosterManager.getTeams().iterator().next().getId();
+        rosterManager.getTeams().clear();
         appUserRepository.save(rosterManager);
 
         bootstrap.run();
 
         AppUser after = appUserRepository.findByEmailIgnoreCase("raghu.yellani@cloudfuze.com").orElseThrow();
-        assertThat(after.getTeam()).as("the roster manager should be placed on a team").isNotNull();
-        assertThat(after.getTeam().getId())
+        assertThat(after.getTeams()).as("the roster manager should be placed on a team").isNotEmpty();
+        assertThat(after.getTeams().iterator().next().getId())
                 .as("must never land in a team an admin made for somebody else")
                 .isNotEqualTo(squatter.getId());
-        assertThat(appUserRepository.findByTeamId(squatter.getId()))
+        assertThat(appUserRepository.findByTeams_Id(squatter.getId()))
                 .extracting(AppUser::getEmail)
                 .containsExactly("squatter.manager@cloudfuze.com");
         assertThat(originalTeamId).isNotNull();
@@ -184,14 +190,17 @@ class TeamRosterBootstrapTest {
         // team is reused and topped up instead.
         Team handMade = teamRepository.save(new Team("Hand made", "an-admin"));
         AppUser manager = appUserRepository.findByEmailIgnoreCase("harika.velidi@cloudfuze.com").orElseThrow();
-        manager.setTeam(handMade);
+        // Replaces, not adds: the premise is that the admin's hand-made team IS this manager's
+        // placement. Appending it would leave them on the roster team as well and test nothing.
+        manager.getTeams().clear();
+        manager.getTeams().add(handMade);
         appUserRepository.save(manager);
 
         // Detach that team's engineers, as if the admin never added them.
-        List<AppUser> engineers = appUserRepository.findByTeamIdAndRole(
+        List<AppUser> engineers = appUserRepository.findByTeams_IdAndRole(
                 teamRepository.findByNameIgnoreCase("Team 1").orElseThrow().getId(),
                 AppUserRole.MIGRATION_ENGINEER);
-        engineers.forEach(e -> e.setTeam(null));
+        engineers.forEach(e -> e.getTeams().clear());
         appUserRepository.saveAll(engineers);
         long teamsBefore = teamRepository.count();
 
@@ -200,10 +209,10 @@ class TeamRosterBootstrapTest {
         // No duplicate team, and the manager stays on the one the admin made.
         assertThat(teamRepository.count()).isEqualTo(teamsBefore);
         AppUser managerAfter = appUserRepository.findByEmailIgnoreCase("harika.velidi@cloudfuze.com").orElseThrow();
-        assertThat(managerAfter.getTeam().getId()).isEqualTo(handMade.getId());
+        assertThat(managerAfter.getTeams()).extracting("id").containsExactly(handMade.getId());
 
         // ...and the engineers the file names are now on it.
-        assertThat(appUserRepository.findByTeamIdAndRole(handMade.getId(), AppUserRole.MIGRATION_ENGINEER))
+        assertThat(appUserRepository.findByTeams_IdAndRole(handMade.getId(), AppUserRole.MIGRATION_ENGINEER))
                 .extracting(AppUser::getEmail)
                 .contains("siva.kota@cloudfuze.com", "ravi.hemanth@cloudfuze.com", "meena.lakshmi@cloudfuze.com");
     }

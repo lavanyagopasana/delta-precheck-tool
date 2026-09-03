@@ -19,4 +19,11 @@ public class AppUserUpsertRequest {
 
     @NotNull
     private AppUserRole role;
+
+    /**
+     * Boxed on purpose: absent (null) means "leave whatever this row already had", which is what
+     * lets a caller that only means to change a role not clear the flag as a side effect. Only an
+     * admin reaches this -- AdminController checks that before delegating.
+     */
+    private Boolean assignableAsManager;
 }

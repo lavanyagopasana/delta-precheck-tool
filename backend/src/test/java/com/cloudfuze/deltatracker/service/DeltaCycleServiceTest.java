@@ -61,6 +61,8 @@ class DeltaCycleServiceTest {
     @Mock private DeltaCycleItemRepository cycleItemRepository;
     @Mock private DeltaCycleSignOffRepository cycleSignOffRepository;
     @Mock private PreCheckItemRepository preCheckItemRepository;
+    @Mock private com.cloudfuze.deltatracker.repository.PreCheckItemEvidenceRepository evidenceRepository;
+    @Mock private com.cloudfuze.deltatracker.repository.DeltaCycleItemEvidenceRepository cycleItemEvidenceRepository;
     @Mock private PreCheckSubmissionRepository preCheckSubmissionRepository;
     @Mock private SignOffRepository signOffRepository;
 
@@ -71,7 +73,8 @@ class DeltaCycleServiceTest {
     @BeforeEach
     void setUp() {
         service = new DeltaCycleService(cycleRepository, cycleItemRepository, cycleSignOffRepository,
-                preCheckItemRepository, preCheckSubmissionRepository, signOffRepository);
+                preCheckItemRepository, evidenceRepository, cycleItemEvidenceRepository,
+                preCheckSubmissionRepository, signOffRepository);
 
         Server server = new Server("SRV-1");
         server.setId(10L);
@@ -485,5 +488,53 @@ class DeltaCycleServiceTest {
         when(cycleRepository.findAll()).thenReturn(List.of(declined, approved));
 
         assertThat(service.findDeclinedAwaitingResubmission()).containsExactly(declined);
+    }
+
+    @Test
+    void aRolloverCarriesOneTimeMigrationForwardAndClearsEverythingElse() {
+        // The one-time migration happened once, before any delta, so re-attaching the same report to
+        // every subsequent pre-delta was pure re-work. Its status, note and evidence survive the
+        // rollover; every other item goes back to unfilled.
+        existingCycle(DeltaType.PRE_DELTA, 1);
+        PreCheckItem oneTime = item(ServerService.ONE_TIME_MIGRATION_ITEM, ItemStatus.COMPLETED,
+                "moved in July", "/uploads/onetime.pdf");
+        PreCheckItem dataVerified = item("Data Verified", ItemStatus.COMPLETED, "checked", "/uploads/a.png");
+        when(preCheckItemRepository.findByCombinationId(CID))
+                .thenReturn(new ArrayList<>(List.of(oneTime, dataVerified)));
+        when(signOffRepository.findByCombinationId(CID)).thenReturn(new ArrayList<>());
+
+        service.completeCycle(combination, "eng@cloudfuze.com", FINISHED_AT);
+
+        assertThat(oneTime.getStatus()).isEqualTo(ItemStatus.COMPLETED);
+        assertThat(oneTime.getNotes()).isEqualTo("moved in July");
+        assertThat(oneTime.getEvidenceFilePath()).isEqualTo("/uploads/onetime.pdf");
+
+        assertThat(dataVerified.getStatus()).isEqualTo(ItemStatus.NOT_STARTED);
+        assertThat(dataVerified.getNotes()).isNull();
+        assertThat(dataVerified.getEvidenceFilePath()).isNull();
+    }
+
+    @Test
+    void aRolloverDeletesTheEvidenceRowsOfEveryItemItClears() {
+        // resetChecklist predates multi-file evidence and only nulled the single mirror field, so
+        // uploads stayed attached to the new cycle while the form showed none of them -- and the next
+        // submit then passed on evidence nobody had looked at.
+        existingCycle(DeltaType.PRE_DELTA, 1);
+        PreCheckItem oneTime = item(ServerService.ONE_TIME_MIGRATION_ITEM, ItemStatus.COMPLETED,
+                "moved in July", "/uploads/onetime.pdf");
+        PreCheckItem dataVerified = item("Data Verified", ItemStatus.COMPLETED, "checked", "/uploads/a.png");
+        // Distinct ids: the shared helper leaves them null, and two nulls make "deleted this one, not
+        // that one" unprovable -- both calls would look identical.
+        oneTime.setId(901L);
+        dataVerified.setId(902L);
+        when(preCheckItemRepository.findByCombinationId(CID))
+                .thenReturn(new ArrayList<>(List.of(oneTime, dataVerified)));
+        when(signOffRepository.findByCombinationId(CID)).thenReturn(new ArrayList<>());
+
+        service.completeCycle(combination, "eng@cloudfuze.com", FINISHED_AT);
+
+        verify(evidenceRepository).deleteByItemId(902L);
+        // The carried-forward item keeps its files -- deleting them is the whole thing this avoids.
+        verify(evidenceRepository, never()).deleteByItemId(901L);
     }
 }

@@ -64,6 +64,7 @@ class ProjectServiceTest {
     @Mock private ServerPurgeService serverPurgeService;
     @Mock private TeamService teamService;
     @Mock private DeltaCycleService deltaCycleService;
+    @Mock private ChangeLogService changeLogService;
 
     private ProjectService service;
 
@@ -72,7 +73,8 @@ class ProjectServiceTest {
         service = new ProjectService(projectRepository, projectMetabaseDatabaseRepository, serverRepository,
                 workspacePairRepository, workspaceCombinationRepository, signOffRepository,
                 preCheckSubmissionRepository, ticketRepository, serverService, workspaceCombinationService,
-                appUserService, serverPurgeService, teamService, deltaCycleService);
+                appUserService, serverPurgeService, teamService, deltaCycleService,
+                changeLogService);
         when(projectRepository.existsByNameIgnoreCase(anyString())).thenReturn(false);
         when(projectRepository.save(any(Project.class))).thenAnswer(i -> i.getArgument(0));
         when(serverRepository.findAll()).thenReturn(List.of());

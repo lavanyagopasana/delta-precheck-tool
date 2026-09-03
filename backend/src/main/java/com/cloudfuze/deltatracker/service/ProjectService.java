@@ -7,6 +7,7 @@ import com.cloudfuze.deltatracker.dto.ProjectUpdateRequest;
 import com.cloudfuze.deltatracker.dto.ProjectSummaryDto;
 import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
 import com.cloudfuze.deltatracker.entity.AppUserRole;
+import com.cloudfuze.deltatracker.entity.ChangeLogEntityType;
 import com.cloudfuze.deltatracker.entity.DeltaCycle;
 import com.cloudfuze.deltatracker.entity.PairStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
@@ -75,6 +76,7 @@ public class ProjectService {
     // deletes the live chain, so that state exists only in DeltaCycle history and the rule for
     // reading it back already lives in DeltaCycleService.findDeclinedAwaitingResubmission.
     private final DeltaCycleService deltaCycleService;
+    private final ChangeLogService changeLogService;
 
     public ProjectService(ProjectRepository projectRepository,
                            ProjectMetabaseDatabaseRepository projectMetabaseDatabaseRepository,
@@ -89,7 +91,8 @@ public class ProjectService {
                            AppUserService appUserService,
                            ServerPurgeService serverPurgeService,
                            TeamService teamService,
-                           DeltaCycleService deltaCycleService) {
+                           DeltaCycleService deltaCycleService,
+                           ChangeLogService changeLogService) {
         this.projectRepository = projectRepository;
         this.projectMetabaseDatabaseRepository = projectMetabaseDatabaseRepository;
         this.serverRepository = serverRepository;
@@ -104,6 +107,7 @@ public class ProjectService {
         this.serverPurgeService = serverPurgeService;
         this.teamService = teamService;
         this.deltaCycleService = deltaCycleService;
+        this.changeLogService = changeLogService;
     }
 
     // email == null means auth isn't configured (or caller identity is unknown) -- in that case
@@ -306,6 +310,10 @@ public class ProjectService {
             throw new ApiException(HttpStatus.FORBIDDEN, "You don't have permission to edit this project.");
         }
 
+        // Read before anything is changed -- these are what the trail compares against.
+        String previousName = project.getName();
+        String previousManager = project.getMigrationManagerName();
+
         String trimmedName = request.getName() == null ? "" : request.getName().trim();
         if (trimmedName.isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Project name is required.");
@@ -361,6 +369,13 @@ public class ProjectService {
             project.setEngineerEmails(teamService.engineersOf(newManager));
         }
 
+        // Recorded from the values captured before the setters above ran. Both fields in one place
+        // because this is the only path that edits a project's details.
+        changeLogService.record(ChangeLogEntityType.PROJECT, project.getId(), "Name",
+                previousName, trimmedName, callerEmail);
+        changeLogService.record(ChangeLogEntityType.PROJECT, project.getId(), "Migration Manager",
+                previousManager, newManager, callerEmail);
+
         project.setName(trimmedName);
         Project saved = projectRepository.save(project);
         return buildSummary(saved, serverRepository.findAll());
@@ -387,40 +402,56 @@ public class ProjectService {
 
         ProductType productType = parseProductType(request.getProductType());
         String next = blankToNull(request.getDatabaseName());
-        Optional<ProjectMetabaseDatabase> existing =
-                projectMetabaseDatabaseRepository.findByProjectIdAndProductType(id, productType);
-        String current = existing.map(ProjectMetabaseDatabase::getDatabaseName).orElse(null);
-
-        // Confirming the database is a ONE-WAY action for everyone except an admin. Whoever sets it is
-        // fixing which database this product type's processed/conflict figures are read from, and those
-        // figures are what a Delta gets approved against -- so quietly re-pointing it later would change
-        // the meaning of an approval nobody re-examined. First set: the manager or an assigned engineer.
-        // Every change after that: admin only, which is also the unblock path for a wrong first choice.
-        //
-        // Clearing counts as a change. Otherwise the lock is one blank submit away from being reset and
-        // then re-set to anything.
-        //
-        // callerEmail == null means auth isn't configured, and the whole app runs open in that mode
-        // (see isVisible) -- the lock would otherwise make local dev unusable.
-        boolean isAdmin = callerRole == AppUserRole.ADMIN;
-        if (current != null && !isAdmin && callerEmail != null && !current.equals(next)) {
-            throw new ApiException(HttpStatus.CONFLICT,
-                    "This project's " + productType + " Metabase database is already set to \"" + current
-                            + "\". Only an admin can change it.");
-        }
-
         if (next == null) {
-            existing.ifPresent(projectMetabaseDatabaseRepository::delete);
-        } else if (existing.isPresent()) {
-            ProjectMetabaseDatabase row = existing.get();
-            row.setDatabaseName(next);
-            row.setSetBy(callerEmail);
-            row.setSetAt(LocalDateTime.now());
-            projectMetabaseDatabaseRepository.save(row);
-        } else {
-            projectMetabaseDatabaseRepository.save(
-                    new ProjectMetabaseDatabase(project, productType, next, callerEmail));
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Choose a Metabase database to add.");
         }
+
+        // Adding the SAME database twice would double every figure for that product type, so it is
+        // rejected rather than silently deduplicated -- the caller asked for something that cannot
+        // be what they meant. Case-insensitive, because Metabase's own names are.
+        if (projectMetabaseDatabaseRepository
+                .findByProjectIdAndProductTypeAndDatabaseNameIgnoreCase(id, productType, next).isPresent()) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "\"" + next + "\" is already one of this project's " + productType + " databases.");
+        }
+
+        projectMetabaseDatabaseRepository.save(
+                new ProjectMetabaseDatabase(project, productType, next, callerEmail));
+        return buildSummary(project, serverRepository.findAll());
+    }
+
+    /**
+     * Removes one database from a product type. <b>Admin only</b>, unlike adding.
+     *
+     * <p>The asymmetry is deliberate and is what is left of the old one-way lock. Adding is additive:
+     * it widens the figures, and the new database is listed on the panel where anyone can see it
+     * contributed. Removing subtracts -- the processed and conflict counts a Delta was approved
+     * against silently get smaller, with nothing on screen to say a source was dropped. That is the
+     * half worth keeping an admin in front of.
+     *
+     * <p>callerEmail == null means auth is not configured and the whole app runs open (see isVisible),
+     * so the check is skipped -- the lock would otherwise make local dev unusable.
+     */
+    public ProjectSummaryDto removeMetabaseDatabase(Long id, String rawProductType, String rawDatabaseName,
+                                                     String callerEmail, AppUserRole callerRole) {
+        Project project = findOrThrow(id);
+        if (callerEmail != null && callerRole != AppUserRole.ADMIN
+                && callerRole != AppUserRole.MIGRATION_MANAGER) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Only an admin or a Migration Manager can remove a Metabase database -- it changes the "
+                            + "figures already approved against.");
+        }
+
+        ProductType productType = parseProductType(rawProductType);
+        String name = blankToNull(rawDatabaseName);
+        if (name == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Say which Metabase database to remove.");
+        }
+        ProjectMetabaseDatabase row = projectMetabaseDatabaseRepository
+                .findByProjectIdAndProductTypeAndDatabaseNameIgnoreCase(id, productType, name)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND,
+                        "\"" + name + "\" isn't one of this project's " + productType + " databases."));
+        projectMetabaseDatabaseRepository.delete(row);
         return buildSummary(project, serverRepository.findAll());
     }
 
@@ -457,8 +488,11 @@ public class ProjectService {
                     dto.setSetAt(row.getSetAt());
                     return dto;
                 })
-                // Stable order so the page doesn't reshuffle its rows between loads.
-                .sorted(java.util.Comparator.comparing(ProjectMetabaseDatabaseDto::getProductType))
+                // Stable order so the page doesn't reshuffle its rows between loads. By name as
+                // well as type, because a product type can now hold several databases.
+                .sorted(java.util.Comparator.comparing(ProjectMetabaseDatabaseDto::getProductType)
+                        .thenComparing(ProjectMetabaseDatabaseDto::getDatabaseName,
+                                String.CASE_INSENSITIVE_ORDER))
                 .toList();
     }
 

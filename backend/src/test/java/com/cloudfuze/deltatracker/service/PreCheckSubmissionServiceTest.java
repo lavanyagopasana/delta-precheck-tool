@@ -57,6 +57,7 @@ class PreCheckSubmissionServiceTest {
 
     @Mock private PreCheckSubmissionRepository submissionRepository;
     @Mock private PreCheckItemRepository itemRepository;
+    @Mock private com.cloudfuze.deltatracker.repository.PreCheckItemEvidenceRepository evidenceRepository;
     @Mock private WorkspaceCombinationService combinationService;
     @Mock private SignOffService signOffService;
     @Mock private AppUserService appUserService;
@@ -67,8 +68,8 @@ class PreCheckSubmissionServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PreCheckSubmissionService(submissionRepository, itemRepository, combinationService,
-                signOffService, appUserService);
+        service = new PreCheckSubmissionService(submissionRepository, itemRepository, evidenceRepository,
+                combinationService, signOffService, appUserService);
         project = new Project("Alpha", "eng@cloudfuze.com", MM(), null);
         Server server = new Server("SRV-1");
         server.setId(10L);

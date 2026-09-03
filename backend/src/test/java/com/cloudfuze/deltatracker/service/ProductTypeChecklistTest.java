@@ -18,10 +18,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ProductTypeChecklistTest {
 
     @Test
-    void emailChecklistIsTheFourConfirmedItemsInOrder() {
+    void emailChecklistIsTheConfirmedItemsInOrder() {
+        // Five sections added 2026-09-03, between One Time Migration and Data Verified, in the order
+        // an email migration is actually checked.
         assertThat(ServerService.preCheckItemsFor(ProductType.EMAIL)).containsExactly(
                 "Delta Type",
                 "OneTime Migration",
+                "Email Folders",
+                "Email Picking",
+                "Email Copy Queue",
+                "Email Info",
+                "Attachment Details",
                 "Data Verified",
                 "Workspace Status Updated in DB");
     }
@@ -45,10 +52,14 @@ class ProductTypeChecklistTest {
     }
 
     @Test
-    void messageChecklistIsTheFiveConfirmedItemsInOrder() {
+    void messageChecklistIsTheConfirmedItemsInOrder() {
+        // Channels and DM sections added 2026-09-03, directly under One Time Migration: a chat
+        // migration is verified as channels first, then direct and group messages.
         assertThat(ServerService.preCheckItemsFor(ProductType.MESSAGE)).containsExactly(
                 "Delta Type",
                 "OneTime Migration",
+                "Channels Details",
+                "DM's or Group DM's",
                 "Delta Message Sync",
                 "Data Verified",
                 "Workspace Status Updated in DB");
@@ -85,11 +96,16 @@ class ProductTypeChecklistTest {
     }
 
     @Test
-    void contentChecklistIsUnchanged() {
+    void contentChecklistIsTheConfirmedItemsInOrder() {
+        // Folder and File detail sections added 2026-09-03, after Previous Delta Migration. Renamed
+        // from "contentChecklistIsUnchanged": it is no longer unchanged, and a test whose name claims
+        // otherwise is worse than no name at all.
         assertThat(ServerService.preCheckItemsFor(ProductType.CONTENT)).containsExactly(
                 "Delta Type",
                 "OneTime Migration",
                 "Previous Delta Migration",
+                "Folder Details",
+                "File Details",
                 "Data Verified",
                 "Permissions Verified",
                 "Hyperlinks Verified",

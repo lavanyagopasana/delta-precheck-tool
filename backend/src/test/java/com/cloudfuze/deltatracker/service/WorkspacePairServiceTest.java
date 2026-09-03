@@ -3,6 +3,7 @@ package com.cloudfuze.deltatracker.service;
 import com.cloudfuze.deltatracker.dto.WorkspacePairImportResultDto;
 import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.entity.WorkspacePair;
+import com.cloudfuze.deltatracker.exception.ApiException;
 import com.cloudfuze.deltatracker.repository.ProjectRepository;
 import com.cloudfuze.deltatracker.repository.WorkspaceCombinationRepository;
 import com.cloudfuze.deltatracker.repository.ServerRepository;
@@ -23,6 +24,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -122,5 +126,69 @@ class WorkspacePairServiceTest {
         assertThat(result.getDuplicates()).hasSize(1);
         assertThat(result.getDuplicates().get(0))
                 .isEqualTo("Row 2: dup@x.com → dst@x.com already exists (skipped)");
+    }
+
+    // ---- Re-upload replaces a combination's pairs -----------------------------------------------
+
+    private static MockMultipartFile csv(String body) {
+        return new MockMultipartFile("file", "pairs.csv", "text/csv", body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static WorkspacePair pair(String source) {
+        WorkspacePair p = new WorkspacePair();
+        p.setSourceEmail(source);
+        p.setDestinationEmail("dest@cloudfuze.com");
+        p.setCombination("MyDrive to OneDrive");
+        return p;
+    }
+
+    /**
+     * A re-upload is a REPLACE, not a merge: the file is the new complete list for that combination,
+     * so rows the uploader dropped from it must disappear rather than linger with nothing on screen
+     * to explain them.
+     */
+    @Test
+    void reUploadingDeletesTheCombinationsPreviousPairs() {
+        when(workspacePairRepository.findByServerIdAndCombinationIgnoreCase(SID, "MyDrive to OneDrive"))
+                .thenReturn(java.util.List.of(pair("old1@cloudfuze.com"), pair("old2@cloudfuze.com")));
+
+        WorkspacePairImportResultDto result = service.importCsvForServerCombination(SID, "MyDrive to OneDrive",
+                csv("source_email,destination_email\nnew@cloudfuze.com,dest@cloudfuze.com\n"));
+
+        assertThat(result.getReplacedCount()).isEqualTo(2);
+        assertThat(result.getCreatedCount()).isEqualTo(1);
+        verify(workspacePairRepository).deleteAll(argThat(rows -> {
+            java.util.List<WorkspacePair> list = new java.util.ArrayList<>();
+            rows.forEach(list::add);
+            return list.size() == 2;
+        }));
+    }
+
+    /**
+     * The safety valve. Rows are deleted before the new ones are read, so a file that yields nothing
+     * usable would otherwise leave the combination empty -- worse than refusing the upload.
+     */
+    @Test
+    void aReUploadWithNoUsableRowsIsRefusedSoTheOldPairsSurvive() {
+        when(workspacePairRepository.findByServerIdAndCombinationIgnoreCase(SID, "MyDrive to OneDrive"))
+                .thenReturn(java.util.List.of(pair("old1@cloudfuze.com")));
+
+        // Header only -- valid columns, no data.
+        assertThatThrownBy(() -> service.importCsvForServerCombination(SID, "MyDrive to OneDrive",
+                csv("source_email,destination_email\n")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("were kept");
+    }
+
+    @Test
+    void aFirstUploadWithNothingToReplaceStillReportsZero() {
+        when(workspacePairRepository.findByServerIdAndCombinationIgnoreCase(SID, "MyDrive to OneDrive"))
+                .thenReturn(java.util.List.of());
+
+        WorkspacePairImportResultDto result = service.importCsvForServerCombination(SID, "MyDrive to OneDrive",
+                csv("source_email,destination_email\nnew@cloudfuze.com,dest@cloudfuze.com\n"));
+
+        assertThat(result.getReplacedCount()).isZero();
+        assertThat(result.getCreatedCount()).isEqualTo(1);
     }
 }
