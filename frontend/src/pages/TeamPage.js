@@ -200,9 +200,6 @@ export default function TeamPage() {
   return (
     <div>
       <div className="detail-header-top" style={{ marginBottom: 18 }}>
-        <span className="detail-header-icon">
-          <TeamIcon width={20} height={20} />
-        </span>
         <h2 className="detail-header-title">{isAdmin ? "Teams" : "My Team"}</h2>
       </div>
 
@@ -223,18 +220,10 @@ export default function TeamPage() {
       {roster && (
         <>
           <div className="detail-header-top" style={{ margin: "26px 0 14px" }}>
-            <span className="detail-header-icon">
-              <TeamIcon width={20} height={20} />
-            </span>
             <h2 className="detail-header-title">Approvers</h2>
           </div>
           {/* Not scoped to the viewer, unlike the teams above: these two roles approve across every
               team, so everyone sees the same list. */}
-          <p className="note-hint" style={{ marginBottom: 14 }}>
-            These roles are not part of any team — they approve for every team. A pre-check goes
-            Migration Manager → Dev Lead → QA Lead, and the Dev Lead decides at approval time
-            whether the QA Lead step is needed at all.
-          </p>
           <ApproverCard title="Dev Leads" step="2nd — after the Migration Manager" people={roster.devLeads || []} />
           <ApproverCard title="QA Leads" step="3rd — if the Dev Lead requires it" people={roster.qaLeads || []} />
         </>

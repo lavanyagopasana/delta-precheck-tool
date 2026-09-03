@@ -307,7 +307,7 @@ export default function WorkspacePairsPanel({
       <div style={{ marginTop: 24 }}>
         {data.pairs.length === 0 ? (
           <>
-            <h3 className="section-title">Migration Pairs</h3>
+            <h3 className="section-title">User Mapping</h3>
             <p className="empty-state">
               {canImport ? "No migration pairs yet. Import a CSV above." : "No migration pairs yet."}
             </p>
@@ -315,7 +315,7 @@ export default function WorkspacePairsPanel({
         ) : (
           activeGroup && (
             <DataTable
-              title="Migration Pairs"
+              title="User Mapping"
               rows={activeGroup.pairs}
               rowKey={(p) => p.id}
               searchPlaceholder="Filter migration pairs..."
