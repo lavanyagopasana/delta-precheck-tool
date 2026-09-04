@@ -19,6 +19,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -52,6 +53,9 @@ import java.util.Map;
 public class MetabaseClient {
 
     private static final Logger log = LoggerFactory.getLogger(MetabaseClient.class);
+
+    /** Drive change records live here. Content product type only -- see countDriveChangesByStatus. */
+    public static final String DRIVE_CHANGE_COLLECTION = "DriveChangeIdDetails";
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(20);
@@ -169,6 +173,71 @@ public class MetabaseClient {
                  {"$group": {"_id": "$processStatus", "count": {"$sum": 1}}},
                  {"$sort": {"count": -1}}]""";
         return toCountMap(runAggregation(databaseId, collection, excludeInternal));
+    }
+
+    /**
+     * The customer's user ids in a database, as {@code Users._id -> primaryEmail}, excluding
+     * {@code @cloudfuze.com} addresses.
+     *
+     * <p>Needed because {@code DriveChangeIdDetails} identifies who a change belongs to by
+     * {@code userId} alone -- there is no email on the row -- so the internal/customer split that
+     * every other count makes on {@code ownerEmailId} can only be made here by first resolving ids
+     * out of {@code Users}. Verified 2026-08-31 on db 214 ({@code bluecurrent}): 13 users, of which
+     * one ({@code ithelp@bluecurrent.com}) is the customer and twelve are CloudFuze staff.
+     *
+     * <p>Returns the emails too, not just the ids, so the panel can say whose changes it counted --
+     * the same question {@code ownerEmails} answers for the workspace counts.
+     */
+    public Map<String, String> customerUserIds(long databaseId) {
+        String pipeline = """
+                [{"$match": {"primaryEmail": {"$not": {"$regex": "@cloudfuze\\\\.com$", "$options": "i"}}}},
+                 {"$project": {"primaryEmail": 1}}]""";
+        JsonNode rows = runAggregation(databaseId, "Users", pipeline);
+        Map<String, String> byId = new LinkedHashMap<>();
+        for (JsonNode row : rows) {
+            // Positional rows again, matching the projection's cols order: [_id, primaryEmail].
+            if (!row.isArray() || row.size() < 2) {
+                continue;
+            }
+            JsonNode id = row.get(0);
+            if (id.isNull() || id.isMissingNode()) {
+                continue;
+            }
+            JsonNode email = row.get(1);
+            byId.put(id.asText(), email.isNull() || email.isMissingNode() ? null : email.asText());
+        }
+        return byId;
+    }
+
+    /**
+     * Counts Drive change records by {@code status} for a given set of user ids -- the
+     * "filter UserId, Summarize > Count, Group by Status" flow on {@code DriveChangeIdDetails}.
+     *
+     * <p>Content only: {@code DriveChangeIdDetails} is a Drive concept and the collection does not
+     * exist for the email and message product types.
+     *
+     * <p><b>An empty id list is not an empty result.</b> {@code $in: []} matches nothing, so passing
+     * no ids would return zero counts for every status -- indistinguishable on screen from "the
+     * customer has made no Drive changes". The caller must decide what no-known-customer-users means
+     * before calling; this method refuses to answer for an empty list rather than answer wrongly.
+     *
+     * <p>Its status vocabulary is its own ({@code PROCESSED}, {@code NOT_PROCESSED},
+     * {@code COMPLETED} on db 214), which is why this returns raw strings like every other count here.
+     */
+    public Map<String, Long> countDriveChangesByStatus(long databaseId, Collection<String> userIds) {
+        if (userIds == null || userIds.isEmpty()) {
+            throw new IllegalArgumentException("countDriveChangesByStatus needs at least one user id");
+        }
+        String idList;
+        try {
+            idList = objectMapper.writeValueAsString(userIds);
+        } catch (Exception e) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "Could not build the Metabase query.");
+        }
+        String pipeline = "[{\"$match\": {\"userId\": {\"$in\": " + idList + "}}},"
+                + " {\"$group\": {\"_id\": \"$status\", \"count\": {\"$sum\": 1}}},"
+                + " {\"$sort\": {\"count\": -1}}]";
+        return toCountMap(runAggregation(databaseId, DRIVE_CHANGE_COLLECTION, pipeline));
     }
 
     /** The non-{@code @cloudfuze.com} owner emails present in a collection, with their row counts. */

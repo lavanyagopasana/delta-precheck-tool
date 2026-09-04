@@ -3,6 +3,7 @@ package com.cloudfuze.deltatracker.service;
 import com.cloudfuze.deltatracker.dto.MetabaseDatabaseDto;
 import com.cloudfuze.deltatracker.dto.MetabaseStatusCountDto;
 import com.cloudfuze.deltatracker.dto.MetabaseStatusDto;
+import com.cloudfuze.deltatracker.dto.MetabaseUserDto;
 import com.cloudfuze.deltatracker.entity.ProductType;
 import com.cloudfuze.deltatracker.entity.ProjectMetabaseDatabase;
 import com.cloudfuze.deltatracker.exception.ApiException;
@@ -48,6 +49,10 @@ public class MetabaseStatusService {
      */
     private static final List<String> STATUS_ORDER = List.of(
             "PROCESSED",
+            // Drive changes only -- their vocabulary is PROCESSED / COMPLETED / NOT_PROCESSED, and
+            // COMPLETED never appears on a workspace row. Listed here because both breakdowns are
+            // ordered by this one list.
+            "COMPLETED",
             "PROCESSED_WITH_SOME_CONFLICTS",
             "PROCESSED_WITH_CONFLICTS",
             "PROCESSED_WITH_FOLDER_CONFLICT",
@@ -69,7 +74,8 @@ public class MetabaseStatusService {
     }
 
     /**
-     * One entry per product type this project has fixed a database for. Returns an empty list rather
+     * One entry per database this project has added -- several per product type is normal. Returns an
+     * empty list rather
      * than throwing when none is set -- "nobody has chosen a database yet" is a normal state of a new
      * project, not an error.
      */
@@ -90,7 +96,11 @@ public class MetabaseStatusService {
         for (ProjectMetabaseDatabase row : configured) {
             out.add(buildOne(row, databases, lookupError));
         }
-        out.sort(Comparator.comparing(MetabaseStatusDto::getProductType));
+        // By name as well as type: a product type can be spread across several databases, and
+        // without the tiebreaker two entries for the same type would swap places between loads.
+        out.sort(Comparator.comparing(MetabaseStatusDto::getProductType)
+                .thenComparing(MetabaseStatusDto::getDatabaseName,
+                        Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)));
         return out;
     }
 
@@ -138,7 +148,54 @@ public class MetabaseStatusService {
         } catch (ApiException e) {
             dto.setError(e.getMessage());
         }
+
+        if (row.getProductType() == ProductType.CONTENT) {
+            addDriveChanges(dto, databaseId);
+        }
         return dto;
+    }
+
+    /**
+     * The Drive change breakdown, which is the flow: read the customer's user ids out of
+     * {@code Users}, filter {@code DriveChangeIdDetails} to them, then count by {@code status}.
+     *
+     * <p>Two collections rather than one because a Drive change row carries only a {@code userId} --
+     * no email -- so the @cloudfuze.com split every other figure makes directly can only be made
+     * here by resolving ids first.
+     *
+     * <p>In its own try/catch, and writing to its own error field, so that a Drive-change failure
+     * leaves the workspace counts on screen. They are independent reads and one being unavailable is
+     * no reason to hide the other.
+     *
+     * <p><b>No customer users is reported, not counted as zero.</b> Filtering on an empty id list
+     * would match nothing and render as "0 Drive changes", which reads as "nothing migrated" when
+     * the truth is that this database has no non-CloudFuze user to attribute changes to.
+     */
+    private void addDriveChanges(MetabaseStatusDto dto, long databaseId) {
+        try {
+            Map<String, String> customerUsers = metabaseClient.customerUserIds(databaseId);
+            if (customerUsers.isEmpty()) {
+                dto.setDriveChangesError("This database has no non-CloudFuze user, so Drive changes "
+                        + "can't be attributed to the customer.");
+                return;
+            }
+            dto.setDriveChangeUsers(customerUsers.entrySet().stream()
+                    .map(e -> new MetabaseUserDto(e.getKey(), e.getValue()))
+                    .sorted(Comparator.comparing(MetabaseUserDto::getEmail,
+                            Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
+                    .toList());
+            Map<String, Long> counts = metabaseClient.countDriveChangesByStatus(databaseId, customerUsers.keySet());
+            dto.setDriveChanges(order(counts));
+            long counted = counts.values().stream().mapToLong(Long::longValue).sum();
+            // No excluded-internal figure here, unlike the workspace counts. It was a large noisy
+            // number nobody acted on -- 10,085 excluded against 73 counted on a real project -- and
+            // it read as though something had gone wrong with the figures above it. Dropping it also
+            // drops a whole-collection COUNT per content database from an endpoint already taking
+            // ~15s, against a collection that can hold millions of rows.
+            dto.setTotalDriveChanges(counted);
+        } catch (ApiException e) {
+            dto.setDriveChangesError(e.getMessage());
+        }
     }
 
     /**

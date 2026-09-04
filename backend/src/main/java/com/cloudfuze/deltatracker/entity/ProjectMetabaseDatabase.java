@@ -18,12 +18,18 @@ import lombok.Setter;
  * <p>Replaces the earlier single {@code Project.metabaseDatabaseName} column. That column is left in
  * the database by {@code ddl-auto=update} (it drops nothing) but is no longer mapped or read.
  *
- * <p>The unique constraint is what makes "one database per product type per project" a database-level
- * fact rather than a service-level hope.
+ * <p><b>Several databases per product type.</b> One customer engagement can spread a single product
+ * type across more than one Metabase database, so the unique constraint spans the database NAME as
+ * well -- it now prevents adding the SAME database twice to one product type, not a second database.
+ * The earlier two-column form is dropped at startup by {@code MetabaseDatabaseConstraintSync};
+ * {@code ddl-auto=update} never drops a constraint on its own, so on a long-lived database the old
+ * one would otherwise keep rejecting the second database forever.
  */
 @Entity
 @Table(name = "project_metabase_databases",
-        uniqueConstraints = @UniqueConstraint(columnNames = {"project_id", "product_type"}))
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_project_metabase_db_project_type_name",
+                columnNames = {"project_id", "product_type", "database_name"}))
 @Getter
 @Setter
 @NoArgsConstructor

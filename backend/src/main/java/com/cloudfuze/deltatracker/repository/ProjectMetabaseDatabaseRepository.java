@@ -11,7 +11,13 @@ public interface ProjectMetabaseDatabaseRepository extends JpaRepository<Project
 
     List<ProjectMetabaseDatabase> findByProjectId(Long projectId);
 
-    Optional<ProjectMetabaseDatabase> findByProjectIdAndProductType(Long projectId, ProductType productType);
+    // A list now, not an Optional: a product type can be spread across several Metabase databases.
+    List<ProjectMetabaseDatabase> findByProjectIdAndProductType(Long projectId, ProductType productType);
+
+    // Case-insensitive because Metabase's own names are, and adding "Bakkt" beside "bakkt" would
+    // double every figure for that product type rather than reading as the duplicate it is.
+    Optional<ProjectMetabaseDatabase> findByProjectIdAndProductTypeAndDatabaseNameIgnoreCase(
+            Long projectId, ProductType productType, String databaseName);
 
     void deleteByProjectId(Long projectId);
 }

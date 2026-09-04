@@ -153,11 +153,19 @@ export const createProject = (payload) => client.post("/projects", payload).then
 export const updateProjectDetails = (id, payload) =>
   client.patch(`/projects/${id}`, payload).then((r) => r.data);
 export const removeProject = (id) => client.delete(`/projects/${id}`).then((r) => r.data);
-// Fix which Metabase database holds ONE product type's data for a project. Per product type because a
-// Metabase database only ever holds one type's data. Send "" as databaseName to clear it (admin only
-// once fixed). Rejects 409 when already fixed and the caller isn't an admin.
+// Add a Metabase database to ONE product type on a project. A product type can be spread across
+// several databases, so this appends rather than replaces; adding the same name twice is rejected
+// (409). Open to the project's Migration Manager, an assigned engineer, or an admin.
 export const setProjectMetabaseDatabase = (id, productType, databaseName) =>
   client.patch(`/projects/${id}/metabase`, { productType, databaseName }).then((r) => r.data);
+
+// Remove one database from a product type. ADMIN ONLY -- adding widens the figures visibly, removing
+// shrinks the ones a Delta was approved against with nothing on screen to say a source was dropped.
+// Query params, not a body: axios drops the body on DELETE by default.
+export const removeProjectMetabaseDatabase = (id, productType, databaseName) =>
+  client
+    .delete(`/projects/${id}/metabase`, { params: { productType, databaseName } })
+    .then((r) => r.data);
 // The live processStatus breakdown, one entry per product type the project has a database for.
 // Fetched on demand (the "Get process status" button), never on page load -- it is several round
 // trips to Metabase and a project usually doesn't need it.

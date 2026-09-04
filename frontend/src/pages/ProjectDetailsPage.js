@@ -4,6 +4,7 @@ import {
   getProjectDetail,
   getMetabaseDatabases,
   setProjectMetabaseDatabase,
+  removeProjectMetabaseDatabase,
   getProjectMetabaseStatus,
 } from "../api/client";
 import { useToast } from "../components/Toast";
@@ -12,8 +13,9 @@ import { useCurrentUser } from "../auth/CurrentUserContext";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
 import ServerUrlsPanel from "../components/ServerUrlsPanel";
 import MetabaseStatusPanel from "../components/MetabaseStatusPanel";
+import { METABASE_UI_ENABLED } from "../config/features";
 import SearchableSelect from "../components/SearchableSelect";
-import { PlusIcon, FolderIcon, EyeIcon, EditIcon } from "../components/Icons";
+import { PlusIcon, FolderIcon, EyeIcon, TrashIcon } from "../components/Icons";
 
 const initials = (email) => (email || "?").trim().charAt(0).toUpperCase();
 
@@ -22,28 +24,33 @@ const initials = (email) => (email || "?").trim().charAt(0).toUpperCase();
 const titleCase = (s) => (s ? s.charAt(0) + s.slice(1).toLowerCase() : s);
 
 /**
- * Which Metabase database holds this project's migration data, ONE ROW PER PRODUCT TYPE, plus the
- * button that opens the status section at the bottom of the page.
+ * Which Metabase databases hold this project's migration data, grouped by product type, plus the
+ * button that opens the status dialog.
  *
- * Per product type because a Metabase database only ever holds one product type's data, so a project
- * whose servers span types needs one database per type. The product types offered are derived from
- * the project's own servers -- nobody picks them.
+ * Grouped by product type because a Metabase database only ever holds one product type's data. A
+ * type can be spread across SEVERAL databases though -- one customer engagement often is -- so each
+ * type carries a list, and the status dialog reports every one of them separately.
  *
  * A dropdown of the real names fetched from Metabase, never free text: the names are per-customer
  * strings nobody remembers exactly, and a typo would point the status panel at nothing.
  *
- * Confirming is a deliberate second step and it LOCKS that product type's value. The project's
- * Migration Manager or any assigned engineer may make the first choice; after that only an admin can
- * change it, because this decides where the figures a Delta gets approved against come from.
+ * Adding is open to the project's Migration Manager or an assigned engineer; REMOVING is admin-only.
+ * The asymmetry is the point: adding widens the figures and the new database is listed right here
+ * where anyone can see it contributed, while removing quietly shrinks the numbers a Delta was
+ * approved against.
  */
 function MetabaseDatabaseRow({ project, canManage, isAdmin, databases, loadError, onSaved, onShowStatus }) {
+  // The integration is switched off for now (see config/features.js). Returning null here rather
+  // than at each call site keeps the pickers, the "Get process status" button and their loading
+  // state in one place, so turning it back on is the flag and nothing else.
+  if (!METABASE_UI_ENABLED) {
+    return null;
+  }
   // productTypes comes from the backend, which reads the project's servers and falls back to PMO's
   // migrationTypes -- so a freshly synced project can have its database chosen during setup rather
-  // than being blocked behind creating a server first. All 79 ACTIVE PMO projects carry a
-  // migrationTypes value, including the ones whose NAME doesn't show it (the "(Gmail - Gmail)" suffix
-  // is only appended to disambiguate duplicate names, so "cloudsoft" looks typeless but isn't).
+  // than being blocked behind creating a server first.
   //
-  // A database already fixed for a type that has since disappeared from both sources still has to
+  // A database already added for a type that has since disappeared from both sources still has to
   // appear -- otherwise it keeps reporting with nothing on screen explaining where the numbers came from.
   const productTypes = (() => {
     const seen = [...(project.productTypes || [])];
@@ -54,45 +61,28 @@ function MetabaseDatabaseRow({ project, canManage, isAdmin, databases, loadError
   })();
 
   const savedFor = (productType) =>
-    (project.metabaseDatabases || []).find((d) => d.productType === productType)?.databaseName || "";
+    (project.metabaseDatabases || [])
+      .filter((d) => d.productType === productType && d.databaseName)
+      .map((d) => d.databaseName);
 
   const anySaved = (project.metabaseDatabases || []).some((d) => d.databaseName);
 
   return (
     <div className="project-metabase">
-      <span className="detail-fact-label" style={{ display: "block", marginBottom: 10 }}>
-        Metabase Database
-      </span>
-
-      {/* Pickers on the left, the one project-level action on the right, vertically centred against
-          them -- so the button lines up with the picker row instead of floating on the label row above
-          it. Stays correct for a project with three product types, where the button belongs to the
-          whole block rather than to any single row. */}
-      <div className="project-metabase-body">
-        <div className="project-metabase-pickers">
-          {!productTypes.length ? (
-            <span style={{ fontSize: 13, color: "var(--color-text-faint)" }}>
-              No product type known for this project yet. It comes from PMO, or from a server's product
-              type once one is added.
-            </span>
-          ) : (
-            productTypes.map((productType) => (
-              <MetabaseDatabasePicker
-                key={productType}
-                project={project}
-                productType={productType}
-                savedValue={savedFor(productType)}
-                canManage={canManage}
-                isAdmin={isAdmin}
-                databases={databases}
-                loadError={loadError}
-                onSaved={onSaved}
-              />
-            ))
-          )}
-        </div>
-
-        {/* Only offered once at least one database is fixed -- there is nothing to report on before. */}
+      {/* The action sits on the label row, top-right, rather than beside the pickers. It belongs to
+          the whole block, not to any one product type, and with a type now holding a variable number
+          of databases there is no longer a single picker row for it to line up against. */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          marginBottom: 10,
+        }}
+      >
+        <span className="detail-fact-label">Metabase Databases</span>
+        {/* Only offered once at least one is added -- there is nothing to report on before. */}
         {anySaved && (
           <button
             type="button"
@@ -104,58 +94,99 @@ function MetabaseDatabaseRow({ project, canManage, isAdmin, databases, loadError
           </button>
         )}
       </div>
+
+      <div className="project-metabase-pickers">
+        {!productTypes.length ? (
+          <span style={{ fontSize: 13, color: "var(--color-text-faint)" }}>
+            No product type known for this project yet. It comes from PMO, or from a server's product
+            type once one is added.
+          </span>
+        ) : (
+          productTypes.map((productType) => (
+            <MetabaseDatabasePicker
+              key={productType}
+              project={project}
+              productType={productType}
+              savedValues={savedFor(productType)}
+              canManage={canManage}
+              isAdmin={isAdmin}
+              databases={databases}
+              loadError={loadError}
+              onSaved={onSaved}
+            />
+          ))
+        )}
+      </div>
     </div>
   );
 }
 
-/** One product type's dropdown, confirm step, and lock. */
-function MetabaseDatabasePicker({ project, productType, savedValue, canManage, isAdmin,
+/** One product type: the databases already added, and the control to add another. */
+function MetabaseDatabasePicker({ project, productType, savedValues, canManage, isAdmin,
                                   databases, loadError, onSaved }) {
   const showToast = useToast();
   const confirm = useConfirm();
-  const [value, setValue] = useState(savedValue);
+  const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(null);
   const [error, setError] = useState(null);
-  // Admins get an explicit Change step rather than a live dropdown, so a stray click on a <select>
-  // can't re-point a locked project's reporting without the person meaning to.
-  const [editing, setEditing] = useState(false);
+  // The picker stays hidden behind an "Add database" button once one is added, so a type that is
+  // already configured reads as a settled fact rather than as an open form.
+  const [adding, setAdding] = useState(false);
 
-  const locked = !!savedValue && !isAdmin;
-  const choosing = !locked && (!savedValue || editing);
+  const hasAny = savedValues.length > 0;
+  const choosing = canManage && (!hasAny || adding);
 
-  // Whatever is already saved stays selectable even when Metabase doesn't list it -- a database that
-  // was renamed or that this account can't see would otherwise silently reset the dropdown to blank
-  // and read as "nobody ever set this".
-  const options = (() => {
-    const names = (databases || []).map((db) => db.name);
-    if (savedValue && !names.some((n) => n.toLowerCase() === savedValue.toLowerCase())) {
-      return [savedValue, ...names];
-    }
-    return names;
-  })();
+  // Already-added names are dropped from the list: re-picking one is the single thing the server
+  // rejects (409), so it should not be offerable in the first place.
+  const options = (databases || [])
+    .map((db) => db.name)
+    .filter((name) => !savedValues.some((v) => v.toLowerCase() === name.toLowerCase()));
 
-  const handleConfirm = async () => {
+  const handleAdd = async () => {
     const next = value.trim();
     if (!next) return;
-    // A one-way door for everyone but an admin, so it is spelled out before it closes rather than
-    // explained afterwards by a 409.
-    const message = savedValue
-      ? `Change this project's ${productType} Metabase database from "${savedValue}" to "${next}"? The figures the team approves against will come from the new database.`
-      : `Fix "${next}" as this project's ${productType} Metabase database? Once confirmed, only an admin can change it.`;
-    if (!(await confirm({ title: "Confirm Metabase database", message, confirmLabel: "Confirm" }))) {
-      return;
-    }
+    const message = hasAny
+      ? `Add "${next}" as another ${productType} Metabase database? Its figures will be counted alongside the ${savedValues.length} already added, and only an admin can remove it later.`
+      : `Add "${next}" as this project's ${productType} Metabase database? The figures the team approves against will come from it, and only an admin can remove it later.`;
+    if (!(await confirm({ title: "Add Metabase database", message, confirmLabel: "Add" }))) return;
+
     setSaving(true);
     setError(null);
     try {
       await setProjectMetabaseDatabase(project.id, productType, next);
-      showToast(`${productType} Metabase database fixed as "${next}".`);
-      setEditing(false);
+      showToast(`"${next}" added to ${productType}.`);
+      setValue("");
+      setAdding(false);
       onSaved();
     } catch (err) {
-      setError(err.response?.data?.message || "Failed to save the Metabase database.");
+      setError(err.response?.data?.message || "Failed to add the Metabase database.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleRemove = async (name) => {
+    // Destructive and admin-only: it subtracts from figures that may already have been approved
+    // against, so the consequence is spelled out before it happens rather than after.
+    const ok = await confirm({
+      title: "Remove Metabase database",
+      message: `Remove "${name}" from this project's ${productType} databases? Its workspaces and conflicts will stop being counted, which will change the totals the team approves against.`,
+      confirmLabel: "Remove",
+      danger: true,
+    });
+    if (!ok) return;
+
+    setRemoving(name);
+    setError(null);
+    try {
+      await removeProjectMetabaseDatabase(project.id, productType, name);
+      showToast(`"${name}" removed from ${productType}.`);
+      onSaved();
+    } catch (err) {
+      setError(err.response?.data?.message || "Failed to remove the Metabase database.");
+    } finally {
+      setRemoving(null);
     }
   };
 
@@ -164,7 +195,29 @@ function MetabaseDatabasePicker({ project, productType, savedValue, canManage, i
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         <span className="metabase-type">{titleCase(productType)}</span>
 
-        {choosing && canManage ? (
+        {savedValues.map((name) => (
+          <span key={name} className="metabase-db-chip">
+            <span className="metabase-db-name">{name}</span>
+            {isAdmin && (
+              <button
+                type="button"
+                className="metabase-db-remove"
+                onClick={() => handleRemove(name)}
+                disabled={removing === name}
+                title={`Remove ${name}`}
+                aria-label={`Remove ${name}`}
+              >
+                <TrashIcon size={12} style={{ marginRight: 0 }} />
+              </button>
+            )}
+          </span>
+        ))}
+
+        {!hasAny && !choosing && (
+          <span style={{ fontSize: 13, color: "var(--color-text-faint)" }}>Not set yet</span>
+        )}
+
+        {choosing ? (
           <>
             {/* Searchable rather than a native <select>: Metabase serves 159 database names, and
                 scrolling that list to find one is what this replaces. */}
@@ -179,54 +232,43 @@ function MetabaseDatabasePicker({ project, productType, savedValue, canManage, i
             />
             <button
               className="btn"
-              style={{ padding: "8px 14px", fontSize: 12.5, whiteSpace: "nowrap" }}
-              onClick={handleConfirm}
-              disabled={saving || !value.trim() || value.trim() === savedValue}
+              style={{ padding: "6px 14px", fontSize: 12.5, whiteSpace: "nowrap" }}
+              onClick={handleAdd}
+              disabled={saving || !value.trim()}
             >
-              {saving ? "Saving..." : savedValue ? "Confirm change" : "Confirm database"}
+              {saving ? "Adding..." : "Add"}
             </button>
-            {editing && (
+            {hasAny && (
               <button
                 type="button"
                 className="btn secondary"
-                style={{ padding: "8px 14px", fontSize: 12.5 }}
-                onClick={() => { setValue(savedValue); setEditing(false); setError(null); }}
+                style={{ padding: "6px 14px", fontSize: 12.5 }}
+                onClick={() => { setValue(""); setAdding(false); setError(null); }}
                 disabled={saving}
               >
                 Cancel
               </button>
             )}
           </>
-        ) : savedValue ? (
-          <>
-            <span className="metabase-db-name">{savedValue}</span>
-            <span className="badge gray" title="Fixed -- only an admin can change this">Locked</span>
-            {isAdmin && (
-              <button
-                type="button"
-                className="btn secondary"
-                style={{ padding: "7px 14px", fontSize: 12.5, whiteSpace: "nowrap" }}
-                onClick={() => setEditing(true)}
-              >
-                <EditIcon size={13} style={{ marginRight: 0 }} /> Change
-              </button>
-            )}
-          </>
         ) : (
-          <span style={{ fontSize: 13, color: "var(--color-text-faint)" }}>Not set yet</span>
+          canManage && (
+            <button type="button" className="metabase-add-btn" onClick={() => setAdding(true)}>
+              <PlusIcon size={12} style={{ marginRight: 0 }} /> Add database
+            </button>
+          )
         )}
       </div>
 
       {/* The dropdown is the only way in, so a failed list load has to say so rather than silently
-          offering an empty one -- there is no text-entry fallback now that the value locks once set. */}
-      {choosing && canManage && loadError && (
+          offering an empty one -- there is no text-entry fallback. */}
+      {choosing && loadError && (
         <div className="inline-hint" style={{ marginTop: 6 }}>
           {loadError} The list has to load before a database can be picked.
         </div>
       )}
-      {locked && (
-        <div className="inline-hint" style={{ marginTop: 6 }}>
-          Fixed for this project. Ask an admin if it needs to change.
+      {hasAny && !isAdmin && (
+        <div className="note-hint" style={{ marginTop: 6 }}>
+          Anyone on this project can add another database; only an admin can remove one.
         </div>
       )}
       {error && <div className="inline-hint" style={{ marginTop: 6 }}>{error}</div>}
@@ -387,7 +429,7 @@ export default function ProjectDetailsPage() {
       {/* A dialog, not a section appended below the servers: this is a rollup of the whole project's
           migration data that you open, read and dismiss. Rendered last only because that is where the
           state lives -- the overlay is fixed, so its position in the tree does not affect layout. */}
-      {showStatus && (
+      {METABASE_UI_ENABLED && showStatus && (
         <MetabaseStatusPanel
           entries={statusEntries}
           loading={statusLoading}
