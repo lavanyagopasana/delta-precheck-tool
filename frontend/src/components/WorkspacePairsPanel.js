@@ -2,16 +2,21 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   getServerReadiness,
   getCombinationReadiness,
+  getCombinationHistory,
+  getServerHistory,
+  getServerPairImports,
   startCombinationDelta,
   finishCombinationDelta,
   importWorkspacePairsCsv,
   usesTwoColumnCsv,
+  usesMessageCsvShape,
   SAMPLE_CSV_COLUMNS,
 } from "../api/client";
 import CombinationOverview from "./CombinationOverview";
 import CsvImportPanel from "./CsvImportPanel";
 import DataTable from "./DataTable";
 import DeltaHistoryPanel from "./DeltaHistoryPanel";
+import HistoryButton from "./HistoryButton";
 import Modal from "./Modal";
 import PreCheckPanel from "./PreCheckPanel";
 import { useToast } from "./Toast";
@@ -105,10 +110,38 @@ function CombinationStatRow({ combinationId, onChanged, onReadiness, preCheckAct
 
   if (!readiness) return null;
 
+  // Server history + every CSV uploaded against the server, filtered down to this one combination's
+  // rows client-side (PairImportLogDto carries the combination name; there is no per-combination
+  // import endpoint, since a whole-server import's rows span several combinations at once).
+  const historyAction = (
+    <HistoryButton
+      label="Edit and upload history"
+      title={`${readiness.combinationName} — History`}
+      sections={[
+        {
+          title: "Edits to this combination",
+          fetch: () => getCombinationHistory(combinationId),
+          emptyText: "Nothing edits a combination's details yet.",
+          kind: "change",
+        },
+        {
+          title: "CSV uploads for this combination",
+          fetch: () =>
+            getServerPairImports(readiness.serverId).then((rows) =>
+              rows.filter((r) => (r.combination || "").toLowerCase() === (readiness.combinationName || "").toLowerCase())
+            ),
+          emptyText: "No CSV has been uploaded for this combination yet.",
+          kind: "import",
+        },
+      ]}
+    />
+  );
+
   return (
     <CombinationOverview
       readiness={readiness}
       preCheckAction={preCheckAction}
+      historyAction={historyAction}
       startAction={
         readiness.deltaInitiatedAt && canRunDelta ? (
           <button className="btn success" style={{ padding: "5px 14px", fontSize: 12.5 }} onClick={handleStartDelta}>
@@ -305,9 +338,11 @@ export default function WorkspacePairsPanel({
       )}
 
       <div style={{ marginTop: 24 }}>
+        {/* Message moves channels, not user accounts -- "User Mapping" as a heading over a table of
+            channel names read as if the rows were people. */}
         {data.pairs.length === 0 ? (
           <>
-            <h3 className="section-title">User Mapping</h3>
+            <h3 className="section-title">{usesMessageCsvShape(data.productType) ? "Channel's CSV" : "User Mapping"}</h3>
             <p className="empty-state">
               {canImport ? "No migration pairs yet. Import a CSV above." : "No migration pairs yet."}
             </p>
@@ -315,15 +350,18 @@ export default function WorkspacePairsPanel({
         ) : (
           activeGroup && (
             <DataTable
-              title="User Mapping"
+              title={usesMessageCsvShape(data.productType) ? "Channel's CSV" : "User Mapping"}
               rows={activeGroup.pairs}
               rowKey={(p) => p.id}
               searchPlaceholder="Filter migration pairs..."
               emptyMessage="No migration pairs yet."
-              // Email and Message migrate accounts, not folder trees, so their CSVs have no path
-              // columns and every pair's paths are null. Rendering them anyway gave two columns of em
-              // dashes that read as missing data rather than "not applicable", and contradicted the
-              // two-column format shown under CSV format. Same predicate as the CSV shapes use.
+              // Email migrates accounts, not a folder tree, so its CSV has no path columns and every
+              // pair's paths are null. Rendering them anyway gave two columns of em dashes that read
+              // as missing data rather than "not applicable", and contradicted the two-column format
+              // shown under CSV format. Message has its own four columns, product-named and in
+              // Message's own order (Channel name / Destination Channel name / Destination Team name /
+              // Channel type) -- not Content's generic source/path/destination/path labels, even
+              // though the same four fields sit underneath. Same predicates as the CSV shapes use.
               // Every column here is marked sensitive: these are the CUSTOMER's end-user mailboxes and
               // folder paths, imported from their CSV, not CloudFuze staff. Session recording is on for
               // internal-usage visibility, and CloudFuze does not own the consent to ship a customer's
@@ -331,7 +369,14 @@ export default function WorkspacePairsPanel({
               // work normally -- suppression only affects what Hotjar captures. See DataTable's
               // `sensitive` handling and analytics/hotjar.js.
               columns={
-                usesTwoColumnCsv(data.productType)
+                usesMessageCsvShape(data.productType)
+                  ? [
+                      { key: "sourceEmail", label: "Channel name", sensitive: true },
+                      { key: "destinationEmail", label: "Destination Channel name", sensitive: true },
+                      { key: "sourcePath", label: "Destination Team name", sensitive: true, render: (p) => p.sourcePath || "-" },
+                      { key: "destinationPath", label: "Channel type", sensitive: true, render: (p) => p.destinationPath || "-" },
+                    ]
+                  : usesTwoColumnCsv(data.productType)
                   ? [
                       { key: "sourceEmail", label: "Source Email", sensitive: true },
                       { key: "destinationEmail", label: "Destination Email", sensitive: true },

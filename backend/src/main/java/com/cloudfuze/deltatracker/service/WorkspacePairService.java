@@ -51,12 +51,20 @@ public class WorkspacePairService {
     private static final int MAX_PATH_LEN = 1000;
     private static final int MAX_COMBINATION_LEN = 200;
 
+    // Message's CSV names its four columns Channel name / Destination Channel name / Destination Team
+    // name / Channel type -- accepted here as aliases onto the same four generic fields every other
+    // product type already uses, rather than a second schema. Channel name -> source_email,
+    // Destination Channel name -> destination_email, Destination Team name -> source_path (despite
+    // the "destination" in its own name -- that is the column ORDER Message specifies, third of four,
+    // which lands in the third generic field), Channel type -> destination_path.
     private static final Map<String, List<String>> COLUMN_ALIASES = Map.of(
             "server_url", List.of("serverurl", "url", "server"),
-            "source_email", List.of("sourceemail", "source", "sourceuser", "sourceaccount"),
-            "source_path", List.of("sourcepath", "sourcefolder", "sourcefolderpath"),
-            "destination_email", List.of("destinationemail", "destination", "destinationuser", "targetemail", "destinationaccount"),
-            "destination_path", List.of("destinationpath", "destinationfolder", "targetpath", "destinationfolderpath"),
+            "source_email", List.of("sourceemail", "source", "sourceuser", "sourceaccount", "channelname"),
+            "source_path", List.of("sourcepath", "sourcefolder", "sourcefolderpath", "destinationteamname"),
+            "destination_email", List.of("destinationemail", "destination", "destinationuser", "targetemail",
+                    "destinationaccount", "destinationchannelname"),
+            "destination_path", List.of("destinationpath", "destinationfolder", "targetpath",
+                    "destinationfolderpath", "channeltype"),
             "combination", List.of("combination", "platformcombination", "sourcedestinationtype")
     );
 
