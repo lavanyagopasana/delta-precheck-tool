@@ -57,10 +57,17 @@ public class PairImportLogDto {
     private static String summarise(PairImportLog log) {
         StringBuilder parts = new StringBuilder();
         if (log.getReplacedCount() > 0) {
-            parts.append("replaced ").append(log.getReplacedCount()).append(" existing pair")
-                    .append(log.getReplacedCount() == 1 ? "" : "s");
+            // One sentence, not two comma-joined fragments ("replaced 10, 10 added") that read as
+            // two separate things happening -- easy to misread as 20 total, when the truth is the
+            // old 10 rows are GONE and these are their entire replacement, whether or not the new
+            // file happens to contain the same emails as before.
+            parts.append("Replaced all ").append(log.getReplacedCount())
+                    .append(log.getReplacedCount() == 1 ? " previous pair" : " previous pairs")
+                    .append(" with ").append(log.getCreatedCount())
+                    .append(log.getCreatedCount() == 1 ? " new pair" : " new pairs");
+        } else {
+            append(parts, log.getCreatedCount() + " added");
         }
-        append(parts, log.getCreatedCount() + " added");
         if (log.getUpdatedCount() > 0) {
             append(parts, log.getUpdatedCount() + " updated");
         }
