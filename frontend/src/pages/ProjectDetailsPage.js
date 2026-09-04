@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   getProjectDetail,
+  getProjectHistory,
   getMetabaseDatabases,
   setProjectMetabaseDatabase,
   removeProjectMetabaseDatabase,
@@ -12,6 +13,7 @@ import { useConfirm } from "../components/ConfirmDialog";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
 import ServerUrlsPanel from "../components/ServerUrlsPanel";
+import HistoryButton from "../components/HistoryButton";
 import MetabaseStatusPanel from "../components/MetabaseStatusPanel";
 import { METABASE_UI_ENABLED } from "../config/features";
 import SearchableSelect from "../components/SearchableSelect";
@@ -302,11 +304,29 @@ function ProjectHeader({ project, canManage, onAddServer, metabaseRow }) {
           )}
         </div>
 
-        {canManage && (
-          <button className="btn" style={{ flexShrink: 0, alignSelf: "center" }} onClick={onAddServer}>
-            <PlusIcon /> Add Server
-          </button>
-        )}
+        {/* One child in this grid column always -- History plus, when present, Add Server -- so the
+            4-column grid-template-columns above never has to account for a 5th slot. Visible to
+            everyone: the edit trail is disclosure, and the project history GET is open to any
+            allowlisted caller. */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0, alignSelf: "center" }}>
+          <HistoryButton
+            label="Project edit and delete history"
+            title={`${project.name} — History`}
+            sections={[
+              {
+                title: "Edits to this project",
+                fetch: () => getProjectHistory(project.id),
+                emptyText: "No edits recorded yet.",
+                kind: "change",
+              },
+            ]}
+          />
+          {canManage && (
+            <button className="btn" onClick={onAddServer}>
+              <PlusIcon /> Add Server
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Second row: the Metabase database this project reports against. */}

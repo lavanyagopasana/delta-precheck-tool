@@ -9,6 +9,7 @@ import {
   SAMPLE_CSV_COLUMNS_COMBINATION,
   sampleCsvColumnsForProductType,
   usesTwoColumnCsv,
+  usesMessageCsvShape,
 } from "../api/client";
 import { useToast } from "./Toast";
 import { useConfirm } from "./ConfirmDialog";
@@ -16,6 +17,8 @@ import Modal from "./Modal";
 import AddCombinationModal from "./AddCombinationModal";
 import DeltaBadge from "./DeltaBadge";
 import { DownloadIcon, UploadIcon, TrashIcon, PlusIcon, SwapIcon, ServerIcon, EditIcon, TableIcon, CheckIcon } from "./Icons";
+import HistoryButton from "./HistoryButton";
+import { getServerHistory, getServerPairImports } from "../api/client";
 import { downloadSampleCsv, downloadCsv } from "../utils/csv";
 import { groupByCombination } from "../utils/pairs";
 import { previousDeltasDoneCount, previousDeltasDoneShortLabel } from "../utils/delta";
@@ -30,21 +33,26 @@ const PRODUCT_TYPE_OPTIONS = [
 // The CSV shape per product type: header columns plus one example row, kept together so the two can
 // never disagree about column count (a 4-column header over a 2-value row writes a broken sample file).
 //
-// Email and Message both take just the two accounts -- neither moves a folder tree, so there is no
-// path to give. Only Content carries source/destination paths.
-const TWO_COLUMN_SHAPE = {
-  columns: sampleCsvColumnsForProductType("EMAIL"),
-  row: ["jane.doe@source-tenant.com", "jane.doe@company.com"],
-};
-
+// Email takes just the two accounts -- it moves no folder tree, so there is no path to give. Content
+// carries source/destination paths. Message has its own four named columns (Channel name /
+// Destination Channel name / Destination Team name / Channel type) in that specific order -- not the
+// generic source/path/destination/path order Content uses, and not Email's two-column shape either.
 const CSV_SHAPES = {
   CONTENT: {
     label: "Content",
     columns: SAMPLE_CSV_COLUMNS_COMBINATION,
     row: ["jane.doe@source-tenant.com", "/jane.doe/My Drive", "jane.doe@company.com", "/sites/migrated/jane.doe"],
   },
-  EMAIL: { label: "Email", ...TWO_COLUMN_SHAPE },
-  MESSAGE: { label: "Message", ...TWO_COLUMN_SHAPE },
+  EMAIL: {
+    label: "Email",
+    columns: sampleCsvColumnsForProductType("EMAIL"),
+    row: ["jane.doe@source-tenant.com", "jane.doe@company.com"],
+  },
+  MESSAGE: {
+    label: "Message",
+    columns: sampleCsvColumnsForProductType("MESSAGE"),
+    row: ["general", "general-copy", "Marketing Team", "Public"],
+  },
 };
 
 function csvSampleFor(productType) {
@@ -52,8 +60,13 @@ function csvSampleFor(productType) {
 }
 
 // Values for a single pair row, matched to the shape above so an export's rows always line up with its
-// header. Email omits the path fields rather than exporting two permanently empty columns.
+// header. Email omits the path fields rather than exporting two permanently empty columns. Message's
+// order is its own: Channel name, Destination Channel name, Destination Team name, Channel type --
+// destination email comes SECOND here, not fourth like Content's source/path/destination/path order.
 function csvRowForPair(productType, pair) {
+  if (usesMessageCsvShape(productType)) {
+    return [pair.sourceEmail, pair.destinationEmail, pair.sourcePath, pair.destinationPath];
+  }
   return usesTwoColumnCsv(productType)
     ? [pair.sourceEmail, pair.destinationEmail]
     : [pair.sourceEmail, pair.sourcePath, pair.destinationEmail, pair.destinationPath];
@@ -163,18 +176,19 @@ function AddServerModal({ project, canManage, onSaved, open, onClose }) {
  * The shape is a property of the product type, not of the server, so this groups by shape: one button
  * for the project, one section per distinct format actually present, each with its own sample download.
  */
-function CsvFormatModal({ servers, onClose }) {
-  // One entry per DISTINCT shape in the project, not per server. Four Content servers share one format,
-  // so repeating the identical table four times (and putting a button on every card to reach it) was
-  // noise. Servers with no product type fall back to the Content shape, so they collapse into that same
-  // entry rather than producing a duplicate.
-  // Deduped by the COLUMNS, not the product-type label. Email and Message have identical shapes, so
-  // keying on the label rendered the same two-column table twice under two headings -- the same
-  // repetition that moved this out of the per-server cards in the first place. Types that share a
-  // shape share one section, named for all of them ("Email / Message").
+function CsvFormatModal({ onClose }) {
+  // Every product type's format, always -- not derived from which servers this project happens to
+  // have. It used to build one entry per server actually added, so a project with only an Email
+  // server never showed the Content or Message shapes: someone couldn't check a format before
+  // adding the server that would need it, which is backwards -- the format is a fact about the
+  // product type, not about what has been added so far.
+  //
+  // Deduped by the COLUMNS, not the product-type label, in case two types ever coincide again --
+  // Email and Message used to share a shape before Message got its own four named columns, and that
+  // dedup is what stopped the identical table repeating under two headings.
   const shapes = [];
-  servers.forEach((s) => {
-    const shape = csvSampleFor(s.productType);
+  ["CONTENT", "EMAIL", "MESSAGE"].forEach((productType) => {
+    const shape = csvSampleFor(productType);
     const signature = shape.columns.join("|");
     const existing = shapes.find((sh) => sh.signature === signature);
     if (existing) {
@@ -718,6 +732,26 @@ function ServerCard({ server, isAdmin, canManage, onSaved }) {
               <PlusIcon size={14} style={{ marginRight: 0 }} /> Add combination
             </button>
           )}
+          {/* Visible to everyone, not gated by canManage/isAdmin: the edit trail is disclosure, and
+              the server history and CSV-upload-history GETs are open to any allowlisted caller. */}
+          <HistoryButton
+            label="Server edit and CSV upload history"
+            title={`${server.serverName} — History`}
+            sections={[
+              {
+                title: "Edits to this server",
+                fetch: () => getServerHistory(server.serverId),
+                emptyText: "No edits recorded yet.",
+                kind: "change",
+              },
+              {
+                title: "CSV uploads",
+                fetch: () => getServerPairImports(server.serverId),
+                emptyText: "No CSV has been uploaded for this server yet.",
+                kind: "import",
+              },
+            ]}
+          />
           {/* Destructive action last, set slightly apart from the routine ones. Sitting flush between
               two things people click often made an irreversible erase easy to hit by accident. */}
           {isAdmin && (
@@ -827,7 +861,7 @@ export default function ServerUrlsPanel({ project, canManage, isAdmin, onSaved, 
           )}
         </div>
 
-        {showCsvFormat && <CsvFormatModal servers={servers} onClose={() => setShowCsvFormat(false)} />}
+        {showCsvFormat && <CsvFormatModal onClose={() => setShowCsvFormat(false)} />}
 
         {!servers.length ? (
           <p className="empty-state">

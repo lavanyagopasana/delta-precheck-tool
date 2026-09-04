@@ -34,6 +34,16 @@ export function EditIcon(props) {
   );
 }
 
+// Clock face -- used for "History" buttons (edit trails, CSV upload history).
+export function ClockIcon(props) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <polyline points="12 7 12 12 16 14" />
+    </Svg>
+  );
+}
+
 export function TrashIcon(props) {
   return (
     <Svg {...props}>

@@ -556,6 +556,13 @@ public class ProjectService {
         // ServerService.decommission -- see ServerPurgeService for why this isn't inlined here anymore
         // (the previous inline version predated Delta cycles and never deleted them, so deleting a
         // project with any Delta cycle failed on a foreign-key constraint).
+        // Recorded BEFORE the purge/delete below, while the name is still there to record. Feeds
+        // the "recently deleted projects" list on the Projects page -- once this row is gone there is
+        // no project page left to view a per-project history on, so that list is the only place this
+        // is visible afterwards.
+        changeLogService.recordDeletion(ChangeLogEntityType.PROJECT, project.getId(), project.getName(),
+                callerEmail);
+
         servers.forEach(serverPurgeService::purge);
         // The per-product-type Metabase rows hang off this project by FK, so they go first --
 

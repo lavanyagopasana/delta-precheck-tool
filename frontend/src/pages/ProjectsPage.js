@@ -1,11 +1,19 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { getProjects, createProject, getRoster, removeProject, updateProjectDetails } from "../api/client";
+import {
+  getProjects,
+  getDeletedProjects,
+  createProject,
+  getRoster,
+  removeProject,
+  updateProjectDetails,
+} from "../api/client";
 import { useToast } from "../components/Toast";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { AUTH_CONFIGURED } from "../auth/authConfig";
 import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
+import HistoryButton from "../components/HistoryButton";
 import { TrashIcon, PlusIcon, EditIcon } from "../components/Icons";
 import { useConfirm } from "../components/ConfirmDialog";
 import { emailLocalPart, humanizePhase } from "../utils/format";
@@ -266,6 +274,20 @@ export default function ProjectsPage() {
         emptyMessage="No projects yet. Click Add Project above."
         toolbarRight={
           <div style={{ display: "flex", gap: 8 }}>
+            {/* Visible to everyone, not gated: a deleted project has no page of its own left to view
+                its history on, so this list is the only place a deletion stays visible afterwards. */}
+            <HistoryButton
+              label="Recently deleted projects"
+              title="Recently deleted projects"
+              sections={[
+                {
+                  title: "Deleted projects",
+                  fetch: getDeletedProjects,
+                  emptyText: "No project has been deleted yet.",
+                  kind: "change",
+                },
+              ]}
+            />
             <button className="btn" onClick={() => setShowModal(true)}>
               <PlusIcon />
               Add Project

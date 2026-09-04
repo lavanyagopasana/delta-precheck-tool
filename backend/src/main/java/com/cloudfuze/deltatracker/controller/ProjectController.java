@@ -50,6 +50,16 @@ public class ProjectController {
     }
 
     /**
+     * Every project ever deleted, newest first. Once a project is gone there is no project page
+     * left to view its own history on, so this is the only place a deletion stays visible -- open
+     * to any allowlisted caller, same as every other history GET.
+     */
+    @GetMapping("/deleted")
+    public List<ChangeLogEntryDto> deleted() {
+        return changeLogService.recentlyDeleted(ChangeLogEntityType.PROJECT);
+    }
+
+    /**
      * Edit history, newest first. A GET open to any allowlisted caller -- the trail exists to be
      * read, so restricting it to the people allowed to make the edits would defeat the point.
      */

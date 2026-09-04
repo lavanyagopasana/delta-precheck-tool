@@ -188,8 +188,9 @@ public class SecurityConfig {
                         // trails exist to be read -- restricting them to whoever may make the edit
                         // would defeat the disclosure they are for. Listed ahead of the write rules
                         // below so a role gate on editing never narrows who may READ the trail.
-                        .requestMatchers(HttpMethod.GET, "/api/projects/*/history", "/api/servers/*/history",
-                                "/api/combinations/*/history", "/api/servers/*/pair-imports")
+                        .requestMatchers(HttpMethod.GET, "/api/projects/*/history", "/api/projects/deleted",
+                                "/api/servers/*/history", "/api/combinations/*/history",
+                                "/api/servers/*/pair-imports")
                                 .access(allowlistRequired())
                         // Deleting a combination's pairs -- admins and managers. Engineers can still
                         // IMPORT (above) but not clear the list, which is the destructive half.

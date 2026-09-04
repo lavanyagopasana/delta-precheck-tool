@@ -128,6 +128,11 @@ export const getServerReadiness = (serverId) =>
 // combinations (id, name, pairCount, status); fetch one's own readiness here.
 export const getCombinationReadiness = (combinationId) =>
   client.get(`/combinations/${combinationId}`).then((r) => r.data);
+
+// This combination's edit history, newest first. Empty today by design, not omission -- nothing
+// edits a combination's details yet (no PATCH route exists), so this is wired ready for the day one
+// does. Open to any allowlisted caller.
+export const getCombinationHistory = (id) => client.get(`/combinations/${id}/history`).then((r) => r.data);
 export const startCombinationDelta = (combinationId) =>
   client.post(`/combinations/${combinationId}/delta/start`).then((r) => r.data);
 export const finishCombinationDelta = (combinationId) =>
@@ -147,12 +152,31 @@ export const decommissionServer = (serverId) =>
 export const deleteServer = (serverId) =>
   client.delete(`/servers/${serverId}`).then((r) => r.data);
 
+// This server's edit history (product type), newest first. Server records nothing else about its
+// own changes -- no creator, no modified-by -- so this trail is the only account of them. Open to
+// any allowlisted caller.
+export const getServerHistory = (id) => client.get(`/servers/${id}/history`).then((r) => r.data);
+
+// Every user-mapping CSV uploaded against this server, newest first -- who, the filename, and for a
+// re-upload how many existing pairs it replaced (those rows exist nowhere else afterwards). Open to
+// any allowlisted caller.
+export const getServerPairImports = (id) => client.get(`/servers/${id}/pair-imports`).then((r) => r.data);
+
 export const getProjects = () => client.get("/projects").then((r) => r.data);
+
+// Every project ever deleted, newest first. There is no page left for a deleted project, so this is
+// the only place its deletion stays visible -- open to any allowlisted caller.
+export const getDeletedProjects = () => client.get("/projects/deleted").then((r) => r.data);
 export const getProjectDetail = (id) => client.get(`/projects/${id}`).then((r) => r.data);
 export const createProject = (payload) => client.post("/projects", payload).then((r) => r.data);
 export const updateProjectDetails = (id, payload) =>
   client.patch(`/projects/${id}`, payload).then((r) => r.data);
 export const removeProject = (id) => client.delete(`/projects/${id}`).then((r) => r.data);
+
+// This project's edit history (name, Migration Manager), newest first. A GET open to any
+// allowlisted caller -- the trail is disclosure, so it is visible to everyone who can see the
+// project, not gated to whoever may make the edit.
+export const getProjectHistory = (id) => client.get(`/projects/${id}/history`).then((r) => r.data);
 // Add a Metabase database to ONE product type on a project. A product type can be spread across
 // several databases, so this appends rather than replaces; adding the same name twice is rejected
 // (409). Open to the project's Migration Manager, an assigned engineer, or an admin.
@@ -225,14 +249,35 @@ export const SAMPLE_CSV_COLUMNS_COMBINATION = ["source_email", "source_path", "d
 // advertising two columns an email engineer has nothing to put in.
 export const SAMPLE_CSV_COLUMNS_COMBINATION_EMAIL = ["source_email", "destination_email"];
 
-// Email and Message migrate accounts, not folder trees, so both take only the two columns; Content is
-// the only type with paths. One predicate rather than an inline `=== "EMAIL"` in each place, because
-// that check had already been written in four spots and adding Message meant finding all of them.
-export const usesTwoColumnCsv = (productType) => productType === "EMAIL" || productType === "MESSAGE";
+// Message's own column names, product-named rather than the generic source/destination email+path
+// used everywhere else. Same four generic fields underneath (WorkspacePairService.COLUMN_ALIASES
+// maps these header strings onto source_email/source_path/destination_email/destination_path) --
+// this is only how the sample file, the export and the "View CSV format" table label and order them.
+export const SAMPLE_CSV_COLUMNS_COMBINATION_MESSAGE = [
+  "Channel name",
+  "Destination Channel name",
+  "Destination Team name",
+  "Channel type",
+];
+
+// Only Email is genuinely two columns now (no folder tree to move). Message used to share this
+// shape; it has its own four-column format instead (SAMPLE_CSV_COLUMNS_COMBINATION_MESSAGE), kept as
+// a separate predicate rather than folded into usesTwoColumnCsv so a caller that only means "does
+// this type skip the two path columns entirely" isn't accidentally also asked about Message's shape.
+export const usesTwoColumnCsv = (productType) => productType === "EMAIL";
+
+// Message's shape is distinct enough (its own column names AND a different field order --
+// destination email comes second, not fourth) that a boolean can't express it. Callers that build a
+// per-type shape should branch on this before falling back to usesTwoColumnCsv.
+export const usesMessageCsvShape = (productType) => productType === "MESSAGE";
 
 // The CSV shape for a server's product type.
 export const sampleCsvColumnsForProductType = (productType) =>
-  usesTwoColumnCsv(productType) ? SAMPLE_CSV_COLUMNS_COMBINATION_EMAIL : SAMPLE_CSV_COLUMNS_COMBINATION;
+  usesMessageCsvShape(productType)
+    ? SAMPLE_CSV_COLUMNS_COMBINATION_MESSAGE
+    : usesTwoColumnCsv(productType)
+    ? SAMPLE_CSV_COLUMNS_COMBINATION_EMAIL
+    : SAMPLE_CSV_COLUMNS_COMBINATION;
 
 export const importWorkspacePairsCsvForCombination = (serverId, combination, file) => {
   const formData = new FormData();

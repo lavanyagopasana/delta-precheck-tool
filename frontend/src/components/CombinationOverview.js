@@ -35,7 +35,7 @@ function Stage({ index, state, title, meta, actor, action }) {
   );
 }
 
-export default function CombinationOverview({ readiness, preCheckAction, startAction, finishAction }) {
+export default function CombinationOverview({ readiness, preCheckAction, startAction, finishAction, historyAction }) {
   const fmt = (d) => new Date(d).toLocaleDateString();
   const complete = readiness.finalDeltaComplete;
   const readyToStart = isReadyToStartDelta(readiness);
@@ -115,7 +115,15 @@ export default function CombinationOverview({ readiness, preCheckAction, startAc
         {/* The pre-check action, on the same line as the state it relates to -- it used to sit in a
             separate row below the panel under a "Pre-Check" heading, which was a heading for a
             single button. */}
-        {preCheckAction && <div className="combo-head-action">{preCheckAction}</div>}
+        {/* One .combo-head-action, not two: the class carries margin-left: auto to push itself to the
+            row's far right, and two sibling instances of it fought over that, landing History a
+            second auto-margin's distance past Delta History instead of sitting next to it. */}
+        {(preCheckAction || historyAction) && (
+          <div className="combo-head-action">
+            {preCheckAction}
+            {historyAction}
+          </div>
+        )}
       </div>
 
       {/* The reason an approver bounced this back. The API has carried it all along; this view never

@@ -97,6 +97,26 @@ public class ChangeLogService {
         pairImportLogRepository.save(log);
     }
 
+    /**
+     * Records that an entity was deleted. Uses the same "Deleted" field name for every entity type,
+     * so {@link #recentlyDeleted} can find them all with one query regardless of what was deleted.
+     *
+     * <p>Called BEFORE the row itself is removed -- the caller still has the name/identity to put in
+     * oldValue, which is gone the instant the delete happens.
+     */
+    public void recordDeletion(ChangeLogEntityType entityType, Long entityId, String identity,
+                                String deletedBy) {
+        record(entityType, entityId, "Deleted", identity, null, deletedBy);
+    }
+
+    /** Every recorded deletion of one entity type, newest first -- e.g. every project ever deleted. */
+    @Transactional(readOnly = true)
+    public List<ChangeLogEntryDto> recentlyDeleted(ChangeLogEntityType entityType) {
+        return repository.findByEntityTypeAndFieldNameOrderByChangedAtDescIdDesc(entityType, "Deleted").stream()
+                .map(ChangeLogEntryDto::fromEntity)
+                .toList();
+    }
+
     /** Every upload against one server, newest first. */
     @Transactional(readOnly = true)
     public List<PairImportLogDto> pairImportHistory(Long serverId) {
