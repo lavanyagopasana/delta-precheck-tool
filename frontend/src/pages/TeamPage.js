@@ -11,7 +11,10 @@ const initials = (email) => (email || "?").trim().charAt(0).toUpperCase();
 const teamDisplayName = (team) => {
   const managers = team.managerEmails || [];
   if (managers.length === 0) return team.name;
-  return `${managers.map(emailLocalPart).join("/")} team`;
+  // A "/" join with no surrounding space gives the browser no word-break opportunity in a squeezed
+  // header column -- with 2+ managers (teams can have more than one) it degrades to wrapping the
+  // whole joined string one character per line. ", " gives it real break points.
+  return `${managers.map(emailLocalPart).join(", ")} team`;
 };
 
 const TeamIcon = (props) => (
