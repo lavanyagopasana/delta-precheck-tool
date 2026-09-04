@@ -159,7 +159,7 @@ export default function AddCombinationModal({ server, open, onClose, onSaved }) 
 
       <div style={{ marginTop: 20 }}>
         <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 6 }}>
-          Migration Pairs CSV
+          {server.productType === "MESSAGE" ? "Channel Details CSV" : "User Mapping CSV"}
         </label>
         <div
           className={`precheck-dropzone-lg${dragOver ? " drag-over" : ""}`}

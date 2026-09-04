@@ -24,8 +24,10 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -73,6 +75,38 @@ public class AppUserService {
     @Cacheable(CacheConfig.ROSTER_EMAILS_CACHE)
     public List<String> emailsForRole(AppUserRole role) {
         return appUserRepository.findByRole(role).stream().map(AppUser::getEmail).toList();
+    }
+
+    /**
+     * Everyone who may be named a project's Migration Manager: the MIGRATION_MANAGER role, plus
+     * anyone an admin has flagged as assignable whatever their own role.
+     *
+     * <p>Exists because the picker used to be exactly emailsForRole(MIGRATION_MANAGER), so an admin
+     * who also runs engagements simply was not offered -- and nothing on the write side rejected
+     * them, the name just never appeared to be chosen. Shares the roster cache with the per-role
+     * lists and is evicted by the same writes.
+     *
+     * <p>The key is spelled out. Left to the default, a no-arg method keys on SimpleKey.EMPTY --
+     * and TeamService.engineersByManager is also no-arg on this same cache, so the two overwrote
+     * each other and whichever read second got the other's value: a live
+     * {@code ClassCastException: ListN cannot be cast to Map} out of GET /api/roster, which is what
+     * feeds the manager picker and the Teams page. Any further no-arg method on this cache needs
+     * its own key too.
+     */
+    @Cacheable(value = CacheConfig.ROSTER_EMAILS_CACHE, key = "'managerCandidates'")
+    public List<String> managerCandidateEmails() {
+        // Deduplicated case-insensitively: a flagged MIGRATION_MANAGER is in both source lists, and
+        // email is the identity key everywhere else in this app.
+        Map<String, String> byLowercase = new LinkedHashMap<>();
+        for (AppUser user : appUserRepository.findByRole(AppUserRole.MIGRATION_MANAGER)) {
+            byLowercase.putIfAbsent(user.getEmail().toLowerCase(), user.getEmail());
+        }
+        for (AppUser user : appUserRepository.findByAssignableAsManagerTrue()) {
+            byLowercase.putIfAbsent(user.getEmail().toLowerCase(), user.getEmail());
+        }
+        return byLowercase.values().stream()
+                .sorted(String.CASE_INSENSITIVE_ORDER)
+                .toList();
     }
 
     // Drop the whole roster cache whenever the app_users table changes. Called from every write
@@ -123,10 +157,39 @@ public class AppUserService {
         return roleOf(email).filter(r -> r == AppUserRole.ADMIN).isPresent();
     }
 
+    /**
+     * ADMIN or MIGRATION_MANAGER -- the roles that may edit and delete project data.
+     *
+     * <p>Managers were given the destructive project actions (delete a server, decommission, clear a
+     * combination's pairs, remove a Metabase database) alongside admins, because they own delivery
+     * for their projects and each of those was previously an admin-only errand.
+     *
+     * <p>Deliberately NOT used for three things, which stay ADMIN-only: filling in a pre-check (the
+     * manager is the chain's first approver, so it would collapse two steps into one person), team
+     * writes (team membership decides which engineers a manager may assign, so they could widen
+     * their own pool), and the user allowlist. One predicate rather than a role check at each call
+     * site, so the boundary is stated once.
+     */
+    public boolean canEditProjectData(String email) {
+        return roleOf(email)
+                .filter(r -> r == AppUserRole.ADMIN || r == AppUserRole.MIGRATION_MANAGER)
+                .isPresent();
+    }
+
     // actingAdminEmail is the admin performing the change (from AdminController.requireAdmin). It's
     // stored as addedBy for brand-new rows, and used to guard the scenarios where editing a user
     // isn't safe -- so "editing users" is deliberately NOT allowed for every user/every change.
     public AppUser upsertEntity(String email, AppUserRole role, String actingAdminEmail) {
+        return upsertEntity(email, role, null, actingAdminEmail);
+    }
+
+    /**
+     * @param assignableAsManager null leaves an existing row's flag untouched -- CSV import and the
+     *     admin bootstrap both come through here and must not silently clear a flag they know
+     *     nothing about. A new row created with null defaults to false, as the entity does.
+     */
+    public AppUser upsertEntity(String email, AppUserRole role, Boolean assignableAsManager,
+                                 String actingAdminEmail) {
         Optional<AppUser> existing = appUserRepository.findByEmailIgnoreCase(email);
 
         if (existing.isPresent()) {
@@ -146,6 +209,9 @@ public class AppUserService {
 
         AppUser user = existing.orElseGet(() -> new AppUser(email, role, actingAdminEmail));
         user.setRole(role);
+        if (assignableAsManager != null) {
+            user.setAssignableAsManager(assignableAsManager);
+        }
         AppUser saved = appUserRepository.save(user);
         evictRosterCache();
         return saved;
@@ -154,7 +220,12 @@ public class AppUserService {
     // DTO-returning wrapper for the controller. upsertEntity above returns the saved row itself,
     // which importCsv needs so it can set the team without re-reading what it just wrote.
     public AppUserDto upsert(String email, AppUserRole role, String actingAdminEmail) {
-        return AppUserDto.fromEntity(upsertEntity(email, role, actingAdminEmail));
+        return upsert(email, role, null, actingAdminEmail);
+    }
+
+    public AppUserDto upsert(String email, AppUserRole role, Boolean assignableAsManager,
+                              String actingAdminEmail) {
+        return AppUserDto.fromEntity(upsertEntity(email, role, assignableAsManager, actingAdminEmail));
     }
 
     // One person per row. A header row is auto-detected if any cell normalizes to "email", "role" or
@@ -246,26 +317,44 @@ public class AppUserService {
 
             // Resolved BEFORE the upsert so an unknown team name doesn't half-apply the row --
             // otherwise the person would be created/updated and then reported as an error.
-            Team rowTeam = null;
+            //
+            // Several teams may be named in one cell, separated by ";" -- a comma would be eaten by
+            // the CSV split itself. One name behaves exactly as it always did.
+            List<Team> rowTeams = new ArrayList<>();
             String rawTeam = teamColumn >= 0 && teamColumn < fields.size() ? fields.get(teamColumn).trim() : "";
             if (StringUtils.hasText(rawTeam)) {
-                Optional<Team> found = teamRepository.findByNameIgnoreCase(rawTeam);
-                if (found.isPresent()) {
-                    rowTeam = found.get();
-                } else {
-                    rowTeam = teamRepository.save(new Team(rawTeam, addedBy));
-                    createdTeams.add(rowTeam.getName());
+                for (String namePart : rawTeam.split(";")) {
+                    String teamName = namePart.trim();
+                    if (teamName.isEmpty()) {
+                        continue;
+                    }
+                    Optional<Team> found = teamRepository.findByNameIgnoreCase(teamName);
+                    Team resolved;
+                    if (found.isPresent()) {
+                        resolved = found.get();
+                    } else {
+                        resolved = teamRepository.save(new Team(teamName, addedBy));
+                        createdTeams.add(resolved.getName());
+                    }
+                    if (rowTeams.stream().noneMatch(t -> t.getId().equals(resolved.getId()))) {
+                        rowTeams.add(resolved);
+                    }
                 }
             }
 
             boolean existed = appUserRepository.existsByEmailIgnoreCase(email);
             try {
                 AppUser stored = upsertEntity(email, rowRole, addedBy);
-                if (rowTeam != null) {
+                if (!rowTeams.isEmpty()) {
                     // Set on the row upsertEntity just returned rather than re-reading it. Applied as
                     // a second save because upsert owns the role guards (self-demotion, last admin)
                     // and stays team-agnostic, so team assignment can't be blocked by them.
-                    stored.setTeam(rowTeam);
+                    //
+                    // The named teams REPLACE that person's memberships, so re-importing a corrected
+                    // file converges instead of piling teams up every run. A blank cell still leaves
+                    // membership untouched, which is what makes a role-only file safe to import.
+                    stored.getTeams().clear();
+                    stored.getTeams().addAll(rowTeams);
                     appUserRepository.save(stored);
                     evictRosterCache();
                 }

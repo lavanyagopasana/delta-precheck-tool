@@ -47,6 +47,7 @@ class ProjectControllerTest {
     // ProjectController gained the Metabase status endpoint; @WebMvcTest builds the real controller,
     // so every constructor dependency needs a bean or the context fails before any test runs.
     @MockBean private com.cloudfuze.deltatracker.service.MetabaseStatusService metabaseStatusService;
+    @MockBean private com.cloudfuze.deltatracker.service.ChangeLogService changeLogService;
 
     private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder asUser(
             org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder b) {

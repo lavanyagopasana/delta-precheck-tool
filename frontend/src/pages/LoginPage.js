@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useMsal } from "@azure/msal-react";
 import { InteractionStatus } from "@azure/msal-browser";
 import { interactiveLoginRequest } from "../auth/authConfig";
+import { consumeSessionExpiredNotice } from "../auth/sessionExpiry";
 import cloudfuzeLogo from "../assets/cloudfuze-logo.svg";
 
 const LockIcon = () => (
@@ -69,6 +70,9 @@ const STEPS = [
 export default function LoginPage() {
   const { instance, inProgress } = useMsal();
   const [error, setError] = useState(null);
+  // Read once on mount. consumeSessionExpiredNotice() clears the flag as it reads, so calling it
+  // inline during render would burn it on the first paint and the message would vanish on the next.
+  const [sessionExpired] = useState(consumeSessionExpiredNotice);
 
   const handleSignIn = async () => {
     setError(null);
@@ -131,9 +135,13 @@ export default function LoginPage() {
         <div className="card login-card">
           <img src={cloudfuzeLogo} alt="CloudFuze" className="login-card-logo" width="74" height="40" />
           <div className="login-card-eyebrow">Delta Pre-Check Tool</div>
-          <h2 style={{ justifyContent: "center", marginBottom: 4 }}>Welcome back</h2>
+          <h2 style={{ justifyContent: "center", marginBottom: 4 }}>
+            {sessionExpired ? "Session expired" : "Welcome back"}
+          </h2>
           <p style={{ color: "var(--color-text-muted)", fontSize: 13.5, marginTop: 0, marginBottom: 28 }}>
-            Sign in with your CloudFuze Microsoft account to continue.
+            {sessionExpired
+              ? "You were signed out because your session expired. Sign in again to pick up where you left off."
+              : "Sign in with your CloudFuze Microsoft account to continue."}
           </p>
 
           <button

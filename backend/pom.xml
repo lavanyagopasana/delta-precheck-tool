@@ -100,6 +100,33 @@
                     </excludes>
                 </configuration>
             </plugin>
+            <!--
+                Pins EVERY test JVM to the in-memory H2 database, whatever a test class declares.
+
+                Why this exists: application.properties points at the real local PostgreSQL, so a
+                @SpringBootTest that forgets
+                @TestPropertySource(locations = "classpath:/application-test.properties")
+                silently inherits it and the suite connects to the developer's own database.
+                Together with the test profile's ddl-auto of create-drop that is data loss, and it
+                has already happened here once: a mis-annotated test reached real PostgreSQL and the
+                local app_users table came back empty.
+
+                A system property outranks any application*.properties value, so this closes the
+                hole at the build level instead of relying on every future test remembering an
+                annotation.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <spring.datasource.url>jdbc:h2:mem:deltatest;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE</spring.datasource.url>
+                        <spring.datasource.driver-class-name>org.h2.Driver</spring.datasource.driver-class-name>
+                        <spring.datasource.username>sa</spring.datasource.username>
+                        <spring.datasource.password></spring.datasource.password>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 

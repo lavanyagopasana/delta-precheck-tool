@@ -945,6 +945,46 @@ input[type="checkbox"]:disabled {
   align-items: center;
   gap: 5px;
 }
+/* .inline-hint is red with a "!" bubble: it means "this failed". It had become the catch-all for
+   three different things -- a real failure, ordinary explanation ("no database chosen yet"), and a
+   caution about the data itself ("most of this database is test data") -- and rendering all three
+   identically trained the eye to read every one of them as broken, which makes the actual errors
+   easier to miss rather than harder. These two are the quieter registers.
+
+   .note-hint  -- explanation. Nothing is wrong; this is just how things are.
+   .warn-hint  -- the figures are real but need reading carefully. Amber, not red. */
+.note-hint {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.warn-hint {
+  color: var(--color-yellow);
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 8px;
+  line-height: 1.5;
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+}
+.warn-hint::before {
+  content: "!";
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: var(--color-yellow-soft);
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .inline-hint::before {
   content: "!";
   display: inline-flex;
@@ -2616,12 +2656,224 @@ input[type="checkbox"]:disabled {
   color: var(--color-text-faint);
 }
 
-/* One product type's block inside the status panel, separated from the next by a hairline so three
-   product types don't run together. */
+/* The database name and its remove button read as ONE unit -- the button acts on the chip it sits
+   against, not on the row. */
+.metabase-db-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Light red, not the full .btn.danger treatment. There is one of these per database, so at three
+   databases a solid red button each turned the row into a wall of alarm -- but it IS destructive and
+   admin-only, so it cannot be neutral grey either. A soft tint reads as "this deletes" without
+   shouting, and firms up on hover when you are actually reaching for it. */
+.metabase-db-remove {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  border: none;
+  border-radius: 6px;
+  background: var(--color-red-soft);
+  color: var(--color-red);
+  opacity: 0.75;
+  cursor: pointer;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+.metabase-db-remove:hover:not(:disabled),
+.metabase-db-remove:focus-visible {
+  opacity: 1;
+}
+.metabase-db-remove:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* "Add another" is a quiet affordance, not a call to action: the databases already added are the
+   content of this row, and a solid button beside them competed with the row's own information.
+   Dashed and pill-shaped is the conventional "add one more" shape. */
+.metabase-add-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px dashed #b7cbf3;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.metabase-add-btn:hover:not(:disabled) {
+  background: var(--color-primary-soft);
+  border-style: solid;
+}
+
+/* One product type's whole group in the status dialog: the heading, then every database that
+   belongs to that type. */
+.metabase-group + .metabase-group {
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 2px solid var(--color-border);
+}
+
+/* The group heading has to make the grouping obvious at a glance -- "these three are all Content".
+   
+   It was a grey band with the blue .metabase-type pill inside it, and the two tints muddied each
+   other: a soft blue chip on a soft grey fill reads as one indistinct smudge rather than as a label
+   on a header. Fixed by removing the competing fill entirely rather than by picking a third colour.
+   What separates the heading now is structure -- an accent bar and a rule beneath it -- which also
+   stops it looking like just another chip in a page that already has several. */
+.metabase-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Centred, not baseline-aligned. Three things of three different sizes sit on this row (a 15px
+   heading, 12px description, 12px total) and a shared baseline left them looking staggered --
+   the accent bar in particular sat low against text it is meant to mark. */
+
+/* The description takes the slack so the total can sit hard right without a ragged gap opening
+   between it and the text: min-width 0 lets it wrap rather than push the total off the row. */
+.metabase-group-desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* The combined figure is the one number on this row, so it is set apart from the sentence beside
+   it rather than reading as the end of it. */
+.metabase-group-total {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text);
+  background: var(--color-gray-soft);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+/* The product type as a heading, not a pill: it names the section, and the databases below it are
+   its contents. The bar carries the accent colour the pill used to. */
+.metabase-group-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+.metabase-group-title::before {
+  content: "";
+  width: 4px;
+  height: 17px;
+  border-radius: 2px;
+  background: var(--color-primary);
+}
+
+.metabase-group-count {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* One database's block inside the status panel, separated from the next by a hairline so several
+   databases don't run together. */
 .metabase-status-block + .metabase-status-block {
   margin-top: 18px;
   padding-top: 18px;
   border-top: 1px solid var(--color-border);
+}
+
+.metabase-block-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+/* A database with nothing in it is a footnote, not a section. It was rendering taller than a
+   database WITH data -- two headings and two full-width sentences of apology -- so a project with
+   three databases was mostly empty-state prose. Collapsed to one line, indented behind a quiet rule
+   so the eye skips it and lands on the databases that actually have figures. */
+.metabase-status-block--empty {
+  padding-left: 12px;
+  border-left: 2px solid var(--color-border);
+}
+
+.metabase-status-block--empty .metabase-block-head {
+  margin-bottom: 6px;
+}
+
+.metabase-empty-tag {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+  background: var(--color-gray-soft);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+
+/* Drive changes under a database: a subsection of that block, not a peer of it. */
+.metabase-subsection {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.metabase-subsection-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.metabase-subsection-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+/* Label/value pairs under the tiles ("Counted for", "Filtered by UserId"). A definition list rather
+   than a stack of sentences: the labels line up in a column, so the values are scannable instead of
+   each line having to be read from the start to find where the label ends. */
+.metabase-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 12px;
+  margin: 12px 0 0;
+  font-size: 12px;
+}
+
+.metabase-facts dt {
+  color: var(--color-text-faint);
+  white-space: nowrap;
+}
+
+.metabase-facts dd {
+  margin: 0;
+  color: var(--color-text-muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.metabase-facts dd code {
+  font-size: 11.5px;
+  color: var(--color-text-muted);
 }
 
 /* One server, as its own bordered white block on the page background -- replaces the grey
@@ -2828,6 +3080,7 @@ input[type="checkbox"]:disabled {
 
 .team-card-tag {
   padding: 1px 7px;
+  font-size: 11.5px;
   background: var(--color-primary-soft);
   color: var(--color-primary);
   border-radius: 999px;

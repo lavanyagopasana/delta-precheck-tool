@@ -29,13 +29,29 @@ import DeltaBadge from "./DeltaBadge";
 import { emailLocalPart } from "../utils/format";
 import { previousDeltasDoneCount } from "../utils/delta";
 
+// The stored item name never changes ("Previous Delta Migration" is the matching key every save,
+// submit-precondition check and alignment pass keys off), but what it's LABELLED as does: on the
+// combination's Nth pre-delta this is asking about the (N-1)th one specifically, so "Pre Delta 2
+// Migration" on the 3rd pre-delta reads as what it actually is, not a generic "previous" that leaves
+// which cycle unstated. Purely a display transform, the same way deltaTypeStatusOptions below turns
+// deltaMajor into "Pre delta 2" without touching what's stored for Delta Type either.
+function itemDisplayName(itemName, deltaMajor) {
+  if (isPreDeltaMigrationItem(itemName) && deltaMajor > 1) {
+    return `Pre Delta ${deltaMajor - 1} Migration`;
+  }
+  return itemName;
+}
+
 // Filling out and submitting a pre-check is a MIGRATION_ENGINEER action. MIGRATION_MANAGER was removed
 // on 2026-08-06: the manager is the first approver in the sign-off chain, so filling in the form they
 // then approve collapses two steps into one person. DEV_LEAD/QA_LEAD were never allowed. ADMIN stays as
 // the unblock path for a pre-check locked to an unavailable engineer. Mirrors SecurityConfig's matcher
 // for /api/combinations/*/precheck-items/** -- keep the two in step, this only hides the controls; the
 // backend is what actually enforces it.
-const PRECHECK_EDIT_ROLES = ["ADMIN", "MIGRATION_ENGINEER"];
+// Mirrors SecurityConfig's precheck-items/precheck-submission matcher. Managers were added on
+// 2026-09-03; every edit they make is recorded and shown on the item, which is what makes a manager
+// filling in the form they later approve accountable rather than forbidden.
+const PRECHECK_EDIT_ROLES = ["ADMIN", "MIGRATION_ENGINEER", "MIGRATION_MANAGER"];
 
 const STATUS_BADGE = {
   NOT_STARTED: { color: "gray", label: "Not Started" },
@@ -54,9 +70,13 @@ const BASE_STATUS_OPTIONS = [
 // choosing "Final delta" ends the combination for good and makes its server decommissionable. The
 // descriptions are surfaced next to the dropdown (DeltaTypeHint) because the two options have very
 // different consequences and the labels alone don't convey that.
-const DELTA_TYPE_STATUS_OPTIONS = [
+// deltaMajor numbers the pre-delta being filled, so the choice reads "Pre delta 2" on the second
+// cycle instead of a bare "Pre delta" that looks identical to the first. The stored value is still
+// PRE_DELTA -- the number comes from the combination, not from a new status per cycle, which is what
+// keeps every existing row and every status check working untouched.
+const deltaTypeStatusOptions = (deltaMajor) => [
   { value: "NOT_STARTED", label: "Not Started" },
-  { value: "PRE_DELTA", label: "Pre delta" },
+  { value: "PRE_DELTA", label: deltaMajor > 0 ? `Pre delta ${deltaMajor}` : "Pre delta" },
   { value: "FINAL_DELTA", label: "Final delta" },
 ];
 
@@ -79,9 +99,9 @@ const DELTA_MESSAGE_SYNC_OPTIONS = [
 
 // Scoped by product type as well as item name: "OneTime Migration" exists on all three checklists but
 // only Message offers "Partially completed". productType comes from the readiness payload.
-function statusOptionsFor(itemName, productType) {
+function statusOptionsFor(itemName, productType, deltaMajor) {
   if (itemName === DELTA_TYPE_ITEM) {
-    return DELTA_TYPE_STATUS_OPTIONS;
+    return deltaTypeStatusOptions(deltaMajor);
   }
   if (productType === "MESSAGE" && itemName === DELTA_MESSAGE_SYNC_ITEM) {
     return DELTA_MESSAGE_SYNC_OPTIONS;
@@ -148,14 +168,24 @@ function statusVisual(status, itemName) {
   return STATUS_VISUAL[status] || STATUS_VISUAL_DEFAULT;
 }
 
-function evidenceDisplayName(item) {
-  if (item.evidenceFileName) return item.evidenceFileName;
-  if (!item.evidenceFilePath) return null;
-  const segments = item.evidenceFilePath.split("/");
+function fileDisplayName(filePath, fileName) {
+  if (fileName) return fileName;
+  if (!filePath) return null;
+  const segments = filePath.split("/");
   return segments[segments.length - 1];
 }
 
-function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved }) {
+// An item can carry several evidence files. evidenceFilePath/evidenceFileName remain the FIRST of
+// them, so a response from before this existed (or any caller still sending one file) still shows
+// its attachment rather than nothing.
+function evidenceFilesOf(item) {
+  if (Array.isArray(item.evidenceFiles) && item.evidenceFiles.length) return item.evidenceFiles;
+  return item.evidenceFilePath
+    ? [{ filePath: item.evidenceFilePath, fileName: item.evidenceFileName }]
+    : [];
+}
+
+function ItemRow({ item, locked, combinationId, editingAs, productType, deltaMajor, onSaved }) {
   const [uploading, setUploading] = useState(false);
   // null while idle; 0-100 during an upload. Separate from `uploading` so the label can
   // fall back to a plain "Uploading..." if progress is ever unavailable.
@@ -180,21 +210,26 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
     };
   }, []);
 
-  const save = async (patch) => {
+  const save = async (patch, successMessage) => {
     setError(null);
     try {
+      // evidenceFiles is sent on EVERY save, not just the ones that touch evidence. The backend
+      // treats an absent list as "this caller manages one file", so a status-only save that left it
+      // out would collapse a three-file item down to its first file.
       const updated = await updatePreCheckItem(combinationId, item.id, {
         status: item.status,
         notes: item.notes,
-        evidenceFilePath: item.evidenceFilePath,
-        evidenceFileName: item.evidenceFileName,
+        evidenceFiles: evidenceFilesOf(item).map((f) => ({
+          filePath: f.filePath,
+          fileName: f.fileName,
+        })),
         updatedBy: editingAs || undefined,
         ...patch,
       });
       onSaved(updated);
-      showToast(`${item.itemName} saved.`, "success");
+      showToast(successMessage || `${itemDisplayName(item.itemName, deltaMajor)} saved.`, "success");
     } catch (err) {
-      const msg = err.response?.data?.message || `Couldn't save ${item.itemName}. Please try again.`;
+      const msg = err.response?.data?.message || `Couldn't save ${itemDisplayName(item.itemName, deltaMajor)}. Please try again.`;
       setError(msg);
       showToast(msg, "error");
     }
@@ -205,8 +240,66 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
     save({ status: e.target.value });
   };
 
-  const uploadFile = async (file) => {
-    if (!file) return;
+  const uploadFiles = async (fileList) => {
+    const picked = Array.from(fileList || []).filter(Boolean);
+    if (!picked.length) return;
+
+    // Rejected by original NAME, not by stored path: every upload is given a unique path, so the
+    // same screenshot picked twice became two rows that looked identical. Checked before uploading
+    // so the bytes are never sent; the backend enforces the same rule for anything that gets past
+    // the browser (a double-submit, a retry).
+    const alreadyAttached = new Set(
+      evidenceFilesOf(item).map((f) => (fileDisplayName(f.filePath, f.fileName) || "").toLowerCase())
+    );
+    const files = [];
+    const skipped = [];
+    for (const file of picked) {
+      const key = (file.name || "").toLowerCase();
+      if (alreadyAttached.has(key)) {
+        skipped.push(file.name);
+        continue;
+      }
+      // Added as we go, so the same name twice inside ONE selection is caught too.
+      alreadyAttached.add(key);
+      files.push(file);
+    }
+    if (skipped.length) {
+      showToast(
+        `Already attached, skipped: ${skipped.join(", ")}.`
+          + " Rename it if it is genuinely a different file.",
+        "error"
+      );
+    }
+    if (!files.length) return;
+    // Uploaded one at a time on purpose: the progress bar reports a single request, and one bad
+    // file among five should not discard the ones that already succeeded.
+    const attached = [];
+    for (const file of files) {
+      const ok = await uploadOne(file, attached);
+      if (!ok) break;
+    }
+    if (attached.length) {
+      const existing = evidenceFilesOf(item).map((f) => ({ filePath: f.filePath, fileName: f.fileName }));
+      const total = existing.length + attached.length;
+      // Names the files rather than just counting them: picking several at once is exactly when you
+      // cannot tell from the list alone which of them actually made it, and one may have been
+      // rejected part-way through the run.
+      const names = attached
+        .map((f) => fileDisplayName(f.filePath, f.fileName))
+        .filter(Boolean)
+        .join(", ");
+      await save(
+        { evidenceFiles: [...existing, ...attached] },
+        `${attached.length} file${attached.length === 1 ? "" : "s"} uploaded to ${itemDisplayName(item.itemName, deltaMajor)}`
+          + `: ${names}. ${total} attached in total.`
+      );
+    }
+  };
+
+  // Uploads one file and pushes its path onto `attached`. Returns false when it was rejected, so
+  // the caller can stop rather than keep hammering through a bad selection.
+  const uploadOne = async (file, attached) => {
+    if (!file) return false;
     // The accept attribute filters the picker but does nothing for drag-and-drop, so the check has to
     // live here too. The backend rejects these regardless (FileStorageService.validateType); this just
     // says so immediately instead of after uploading the whole file.
@@ -215,37 +308,39 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
       const msg = `"${file.name}" isn't a file type that can be attached as evidence.`;
       setError(msg);
       showToast(msg, "error");
-      return;
+      return false;
     }
     if (file.size > MAX_EVIDENCE_FILE_SIZE_MB * 1024 * 1024) {
       const msg = `"${file.name}" is larger than the ${MAX_EVIDENCE_FILE_SIZE_LABEL} attachment limit.`;
       setError(msg);
       showToast(msg, "error");
-      return;
+      return false;
     }
     setUploading(true);
     setError(null);
     try {
       setUploadPercent(0);
       const result = await uploadEvidence(file, setUploadPercent);
-      await save({ evidenceFilePath: result.filePath, evidenceFileName: result.fileName });
+      attached.push({ filePath: result.filePath, fileName: result.fileName });
+      return true;
     } catch (err) {
       const msg = err.response?.data?.message || `Couldn't upload "${file.name}". Please try again.`;
       setError(msg);
       showToast(msg, "error");
+      return false;
     } finally {
       setUploading(false);
       setUploadPercent(null);
     }
   };
 
-  const handleFileChange = (e) => uploadFile(e.target.files[0]);
+  const handleFileChange = (e) => uploadFiles(e.target.files);
 
   const handleDrop = (e) => {
     e.preventDefault();
     setDragOver(false);
     if (locked || uploading) return;
-    uploadFile(e.dataTransfer.files[0]);
+    uploadFiles(e.dataTransfer.files);
   };
 
   const handleNotesChange = (e) => {
@@ -272,7 +367,10 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
     save({ notes: trimmed });
   };
 
-  const displayName = evidenceDisplayName(item);
+  const attachedFiles = evidenceFilesOf(item);
+  // Display only -- item.itemName (the stored name) is still what every comparison below and the
+  // save/toast calls above key off.
+  const displayName = itemDisplayName(item.itemName, deltaMajor);
   const isDeltaType = item.itemName === DELTA_TYPE_ITEM;
   // Hyperlinks Verified answered "Not Applicable": nothing to attach evidence for or note, since
   // this combination has no hyperlinks to check at all. Mirrors
@@ -290,19 +388,25 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
     ? "This is the last delta — finishing it closes this combination for good and makes its server ready to decommission."
     : "Choose Pre delta if more deltas will follow, or Final delta if this is the last one.";
 
-  const removeEvidence = () => {
+  // Removes ONE file. The whole remaining list is sent, which is also how the backend learns a file
+  // is gone -- there is no per-file delete endpoint by design.
+  const removeEvidenceFile = (filePath) => {
     if (locked) return;
-    save({ evidenceFilePath: null, evidenceFileName: null });
+    save({
+      evidenceFiles: evidenceFilesOf(item)
+        .filter((f) => f.filePath !== filePath)
+        .map((f) => ({ filePath: f.filePath, fileName: f.fileName })),
+    });
   };
 
   return (
     <div className="precheck-item-card" style={{ borderLeftColor: visual.border }}>
       <div className="precheck-item-card-header">
         <span id={`precheck-item-label-${item.id}`} className="precheck-item-name">
-          {item.itemName}
+          {displayName}
         </span>
         <label className="sr-only" htmlFor={`precheck-status-${item.id}`}>
-          {item.itemName} status
+          {displayName} status
         </label>
         <select
           id={`precheck-status-${item.id}`}
@@ -317,7 +421,7 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
           data-status-tone={visual.badge}
           style={{ backgroundColor: visual.bg, color: visual.fg }}
         >
-          {statusOptionsFor(item.itemName, productType).map((opt) => (
+          {statusOptionsFor(item.itemName, productType, deltaMajor).map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
             </option>
@@ -339,13 +443,53 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
 
       {!isDeltaType && (
         <div className="precheck-item-card-body">
-          {item.evidenceFilePath ? (
-            <AttachmentPreview
-              filePath={item.evidenceFilePath}
-              fileName={displayName}
-              variant="full"
-              onRemove={locked ? undefined : removeEvidence}
-            />
+          {attachedFiles.length ? (
+            <>
+              <div className="detail-fact-label" style={{ marginBottom: 6 }}>
+                Evidence ({attachedFiles.length})
+              </div>
+              {/* One preview per file, each removable on its own. */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {attachedFiles.map((file) => (
+                  <AttachmentPreview
+                    key={file.filePath}
+                    filePath={file.filePath}
+                    fileName={fileDisplayName(file.filePath, file.fileName)}
+                    variant="full"
+                    onRemove={locked ? undefined : () => removeEvidenceFile(file.filePath)}
+                  />
+                ))}
+              </div>
+              {/* An item can carry several files, so the way to add another has to stay on screen
+                  once the first one is attached -- otherwise the only route to a second file is
+                  removing the first. */}
+              {!locked && (
+                <label
+                  style={{
+                    display: "inline-block",
+                    marginTop: 8,
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    color: "var(--color-primary)",
+                    cursor: uploading ? "default" : "pointer",
+                  }}
+                >
+                  {uploading
+                    ? uploadPercent === null
+                      ? "Uploading..."
+                      : `Uploading... ${uploadPercent}%`
+                    : `+ Add ${attachedFiles.length === 1 ? "another file" : "more files"}`}
+                  <input
+                    type="file"
+                    multiple
+                    accept={EVIDENCE_ACCEPT}
+                    onChange={handleFileChange}
+                    disabled={uploading}
+                    style={{ display: "none" }}
+                  />
+                </label>
+              )}
+            </>
           ) : isNotApplicable ? (
             <div className="progress-label">No evidence needed -- not applicable to this combination.</div>
           ) : (
@@ -365,21 +509,22 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
                     ? uploadPercent === null
                       ? "Uploading..."
                       : `Uploading... ${uploadPercent}%`
-                    : "Drop evidence file here, or "}
+                    : "Drop evidence files here, or "}
                   {!uploading && <span style={{ color: "var(--color-primary)", fontWeight: 600 }}>click to browse</span>}
                   <input
                     type="file"
+                    multiple
                     accept={EVIDENCE_ACCEPT}
                     onChange={handleFileChange}
                     disabled={uploading}
                     style={{ display: "none" }}
                   />
                 </label>
-                <span className="progress-label">· up to {MAX_EVIDENCE_FILE_SIZE_LABEL}</span>
+                <span className="progress-label">· several files allowed, up to {MAX_EVIDENCE_FILE_SIZE_LABEL} each</span>
               </div>
             )
           )}
-          {!locked && !item.evidenceFilePath && !isNotApplicable && (
+          {!locked && !attachedFiles.length && !isNotApplicable && (
             <div style={{ fontSize: 11, color: "var(--color-red)", marginTop: 4 }}>Evidence required</div>
           )}
 
@@ -390,7 +535,7 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
           ) : (
             <>
               <label className="sr-only" htmlFor={`precheck-notes-${item.id}`}>
-                {item.itemName} notes
+                {displayName} notes
               </label>
               <textarea
                 id={`precheck-notes-${item.id}`}
@@ -408,6 +553,7 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, onSaved 
           )}
 
           {error && <div className="inline-hint" style={{ marginTop: 8 }}>{error}</div>}
+
         </div>
       )}
     </div>
@@ -550,10 +696,12 @@ export default function PreCheckPanel({
   // the backend refuses edits from everyone including admins (PreCheckItemService.requireNotFinalised).
   const locked = submission.status === "SUBMITTED" || !canEdit || combination.finalDeltaComplete;
 
-  // "Pre Delta Migration" only applies once Delta Type has actually been set to "Pre delta" --
-  // before that (Not Started) or once it's "Final delta", the item is hidden and not required.
+  // "Previous Delta Migration" only applies once Delta Type is actually "Pre delta" AND this is not
+  // the combination's first pre-delta (currentDeltaMajor > 1) -- there is no previous delta to
+  // report on yet on the very first one. Before PRE_DELTA (Not Started), once it's "Final delta", or
+  // on the first pre-delta, the item is hidden and not required.
   const deltaTypeItem = items.find((i) => i.itemName === DELTA_TYPE_ITEM);
-  const preDeltaMigrationRequired = deltaTypeItem?.status === "PRE_DELTA";
+  const preDeltaMigrationRequired = deltaTypeItem?.status === "PRE_DELTA" && (combination.currentDeltaMajor || 1) > 1;
   const visibleItems = items.filter((i) => !isPreDeltaMigrationItem(i.itemName) || preDeltaMigrationRequired);
 
   // Withdrawing a submitted pre-check is ADMIN-only by explicit product decision -- engineers and
@@ -804,6 +952,7 @@ export default function PreCheckPanel({
               combinationId={combinationId}
               editingAs={submittedByName}
               productType={combination.productType}
+              deltaMajor={combination.currentDeltaMajor}
               onSaved={updateItemInPlace}
             />
           ))}

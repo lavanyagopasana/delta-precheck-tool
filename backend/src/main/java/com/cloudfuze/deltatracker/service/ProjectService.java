@@ -7,6 +7,8 @@ import com.cloudfuze.deltatracker.dto.ProjectUpdateRequest;
 import com.cloudfuze.deltatracker.dto.ProjectSummaryDto;
 import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
 import com.cloudfuze.deltatracker.entity.AppUserRole;
+import com.cloudfuze.deltatracker.entity.ChangeLogEntityType;
+import com.cloudfuze.deltatracker.entity.DeltaCycle;
 import com.cloudfuze.deltatracker.entity.PairStatus;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
 import com.cloudfuze.deltatracker.entity.ProductType;
@@ -38,6 +40,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -69,6 +72,11 @@ public class ProjectService {
     // Source of truth for "which engineers work for this manager" -- a project's engineers are
     // derived from its Migration Manager's team, not picked by hand (see syncEngineersToManager).
     private final TeamService teamService;
+    // Asked for the "declined, awaiting resubmission" set rather than re-deriving it here: a decline
+    // deletes the live chain, so that state exists only in DeltaCycle history and the rule for
+    // reading it back already lives in DeltaCycleService.findDeclinedAwaitingResubmission.
+    private final DeltaCycleService deltaCycleService;
+    private final ChangeLogService changeLogService;
 
     public ProjectService(ProjectRepository projectRepository,
                            ProjectMetabaseDatabaseRepository projectMetabaseDatabaseRepository,
@@ -82,7 +90,9 @@ public class ProjectService {
                            WorkspaceCombinationService workspaceCombinationService,
                            AppUserService appUserService,
                            ServerPurgeService serverPurgeService,
-                           TeamService teamService) {
+                           TeamService teamService,
+                           DeltaCycleService deltaCycleService,
+                           ChangeLogService changeLogService) {
         this.projectRepository = projectRepository;
         this.projectMetabaseDatabaseRepository = projectMetabaseDatabaseRepository;
         this.serverRepository = serverRepository;
@@ -96,6 +106,8 @@ public class ProjectService {
         this.appUserService = appUserService;
         this.serverPurgeService = serverPurgeService;
         this.teamService = teamService;
+        this.deltaCycleService = deltaCycleService;
+        this.changeLogService = changeLogService;
     }
 
     // email == null means auth isn't configured (or caller identity is unknown) -- in that case
@@ -298,6 +310,10 @@ public class ProjectService {
             throw new ApiException(HttpStatus.FORBIDDEN, "You don't have permission to edit this project.");
         }
 
+        // Read before anything is changed -- these are what the trail compares against.
+        String previousName = project.getName();
+        String previousManager = project.getMigrationManagerName();
+
         String trimmedName = request.getName() == null ? "" : request.getName().trim();
         if (trimmedName.isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Project name is required.");
@@ -353,6 +369,13 @@ public class ProjectService {
             project.setEngineerEmails(teamService.engineersOf(newManager));
         }
 
+        // Recorded from the values captured before the setters above ran. Both fields in one place
+        // because this is the only path that edits a project's details.
+        changeLogService.record(ChangeLogEntityType.PROJECT, project.getId(), "Name",
+                previousName, trimmedName, callerEmail);
+        changeLogService.record(ChangeLogEntityType.PROJECT, project.getId(), "Migration Manager",
+                previousManager, newManager, callerEmail);
+
         project.setName(trimmedName);
         Project saved = projectRepository.save(project);
         return buildSummary(saved, serverRepository.findAll());
@@ -379,40 +402,56 @@ public class ProjectService {
 
         ProductType productType = parseProductType(request.getProductType());
         String next = blankToNull(request.getDatabaseName());
-        Optional<ProjectMetabaseDatabase> existing =
-                projectMetabaseDatabaseRepository.findByProjectIdAndProductType(id, productType);
-        String current = existing.map(ProjectMetabaseDatabase::getDatabaseName).orElse(null);
-
-        // Confirming the database is a ONE-WAY action for everyone except an admin. Whoever sets it is
-        // fixing which database this product type's processed/conflict figures are read from, and those
-        // figures are what a Delta gets approved against -- so quietly re-pointing it later would change
-        // the meaning of an approval nobody re-examined. First set: the manager or an assigned engineer.
-        // Every change after that: admin only, which is also the unblock path for a wrong first choice.
-        //
-        // Clearing counts as a change. Otherwise the lock is one blank submit away from being reset and
-        // then re-set to anything.
-        //
-        // callerEmail == null means auth isn't configured, and the whole app runs open in that mode
-        // (see isVisible) -- the lock would otherwise make local dev unusable.
-        boolean isAdmin = callerRole == AppUserRole.ADMIN;
-        if (current != null && !isAdmin && callerEmail != null && !current.equals(next)) {
-            throw new ApiException(HttpStatus.CONFLICT,
-                    "This project's " + productType + " Metabase database is already set to \"" + current
-                            + "\". Only an admin can change it.");
-        }
-
         if (next == null) {
-            existing.ifPresent(projectMetabaseDatabaseRepository::delete);
-        } else if (existing.isPresent()) {
-            ProjectMetabaseDatabase row = existing.get();
-            row.setDatabaseName(next);
-            row.setSetBy(callerEmail);
-            row.setSetAt(LocalDateTime.now());
-            projectMetabaseDatabaseRepository.save(row);
-        } else {
-            projectMetabaseDatabaseRepository.save(
-                    new ProjectMetabaseDatabase(project, productType, next, callerEmail));
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Choose a Metabase database to add.");
         }
+
+        // Adding the SAME database twice would double every figure for that product type, so it is
+        // rejected rather than silently deduplicated -- the caller asked for something that cannot
+        // be what they meant. Case-insensitive, because Metabase's own names are.
+        if (projectMetabaseDatabaseRepository
+                .findByProjectIdAndProductTypeAndDatabaseNameIgnoreCase(id, productType, next).isPresent()) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "\"" + next + "\" is already one of this project's " + productType + " databases.");
+        }
+
+        projectMetabaseDatabaseRepository.save(
+                new ProjectMetabaseDatabase(project, productType, next, callerEmail));
+        return buildSummary(project, serverRepository.findAll());
+    }
+
+    /**
+     * Removes one database from a product type. <b>Admin only</b>, unlike adding.
+     *
+     * <p>The asymmetry is deliberate and is what is left of the old one-way lock. Adding is additive:
+     * it widens the figures, and the new database is listed on the panel where anyone can see it
+     * contributed. Removing subtracts -- the processed and conflict counts a Delta was approved
+     * against silently get smaller, with nothing on screen to say a source was dropped. That is the
+     * half worth keeping an admin in front of.
+     *
+     * <p>callerEmail == null means auth is not configured and the whole app runs open (see isVisible),
+     * so the check is skipped -- the lock would otherwise make local dev unusable.
+     */
+    public ProjectSummaryDto removeMetabaseDatabase(Long id, String rawProductType, String rawDatabaseName,
+                                                     String callerEmail, AppUserRole callerRole) {
+        Project project = findOrThrow(id);
+        if (callerEmail != null && callerRole != AppUserRole.ADMIN
+                && callerRole != AppUserRole.MIGRATION_MANAGER) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Only an admin or a Migration Manager can remove a Metabase database -- it changes the "
+                            + "figures already approved against.");
+        }
+
+        ProductType productType = parseProductType(rawProductType);
+        String name = blankToNull(rawDatabaseName);
+        if (name == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Say which Metabase database to remove.");
+        }
+        ProjectMetabaseDatabase row = projectMetabaseDatabaseRepository
+                .findByProjectIdAndProductTypeAndDatabaseNameIgnoreCase(id, productType, name)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND,
+                        "\"" + name + "\" isn't one of this project's " + productType + " databases."));
+        projectMetabaseDatabaseRepository.delete(row);
         return buildSummary(project, serverRepository.findAll());
     }
 
@@ -449,8 +488,11 @@ public class ProjectService {
                     dto.setSetAt(row.getSetAt());
                     return dto;
                 })
-                // Stable order so the page doesn't reshuffle its rows between loads.
-                .sorted(java.util.Comparator.comparing(ProjectMetabaseDatabaseDto::getProductType))
+                // Stable order so the page doesn't reshuffle its rows between loads. By name as
+                // well as type, because a product type can now hold several databases.
+                .sorted(java.util.Comparator.comparing(ProjectMetabaseDatabaseDto::getProductType)
+                        .thenComparing(ProjectMetabaseDatabaseDto::getDatabaseName,
+                                String.CASE_INSENSITIVE_ORDER))
                 .toList();
     }
 
@@ -514,6 +556,13 @@ public class ProjectService {
         // ServerService.decommission -- see ServerPurgeService for why this isn't inlined here anymore
         // (the previous inline version predated Delta cycles and never deleted them, so deleting a
         // project with any Delta cycle failed on a foreign-key constraint).
+        // Recorded BEFORE the purge/delete below, while the name is still there to record. Feeds
+        // the "recently deleted projects" list on the Projects page -- once this row is gone there is
+        // no project page left to view a per-project history on, so that list is the only place this
+        // is visible afterwards.
+        changeLogService.recordDeletion(ChangeLogEntityType.PROJECT, project.getId(), project.getName(),
+                callerEmail);
+
         servers.forEach(serverPurgeService::purge);
         // The per-product-type Metabase rows hang off this project by FK, so they go first --
 
@@ -629,7 +678,8 @@ public class ProjectService {
             Map<Long, Long> openEscalationByServer,
             Map<Long, List<WorkspaceCombination>> combinationsByServer,
             Map<Long, EnumMap<SignOffRole, SignOffStatus>> signOffByCombination,
-            Map<Long, PreCheckSubmission> submissionByCombination) {
+            Map<Long, PreCheckSubmission> submissionByCombination,
+            Set<Long> declinedAwaitingResubmission) {
     }
 
     private SummaryData loadSummaryData(List<Long> serverIds) {
@@ -638,6 +688,7 @@ public class ProjectService {
         Map<Long, List<WorkspaceCombination>> combinationsByServer = new HashMap<>();
         Map<Long, EnumMap<SignOffRole, SignOffStatus>> signOffByCombination = new HashMap<>();
         Map<Long, PreCheckSubmission> submissionByCombination = new HashMap<>();
+        Set<Long> declinedAwaitingResubmission = new HashSet<>();
         if (!serverIds.isEmpty()) {
             for (WorkspacePair wp : workspacePairRepository.findByServerIdIn(serverIds)) {
                 pairCountByServer.merge(wp.getServer().getId(), 1L, Long::sum);
@@ -660,10 +711,22 @@ public class ProjectService {
                 for (PreCheckSubmission sub : preCheckSubmissionRepository.findByCombinationIdIn(combinationIds)) {
                     submissionByCombination.put(sub.getCombination().getId(), sub);
                 }
+                // A declined combination has NO live sign-off rows -- the decline rollover deletes the
+                // chain (DeltaCycleService.rollOver) -- so the loop above cannot see it and the bucket
+                // counters below used to drop it entirely. Same source and same "no live chain" guard
+                // SignOffService.listApprovals uses, so the Approvals page and these counts agree.
+                Set<Long> ownCombinationIds = new HashSet<>(combinationIds);
+                for (DeltaCycle cycle : deltaCycleService.findDeclinedAwaitingResubmission()) {
+                    Long combinationId = cycle.getCombinationId();
+                    if (ownCombinationIds.contains(combinationId)
+                            && !signOffByCombination.containsKey(combinationId)) {
+                        declinedAwaitingResubmission.add(combinationId);
+                    }
+                }
             }
         }
         return new SummaryData(pairCountByServer, openEscalationByServer, combinationsByServer,
-                signOffByCombination, submissionByCombination);
+                signOffByCombination, submissionByCombination, declinedAwaitingResubmission);
     }
 
     /** One project on its own -- used by create/update/detail, where there is nothing to share with. */
@@ -683,6 +746,7 @@ public class ProjectService {
         Map<Long, List<WorkspaceCombination>> combinationsByServer = data.combinationsByServer();
         Map<Long, EnumMap<SignOffRole, SignOffStatus>> signOffByCombination = data.signOffByCombination();
         Map<Long, PreCheckSubmission> submissionByCombination = data.submissionByCombination();
+        Set<Long> declinedAwaitingResubmission = data.declinedAwaitingResubmission();
         // This project's combinations only -- the shared maps hold every project's, so the flat list
         // the aggregates below iterate has to be narrowed back down to this project's servers.
         List<WorkspaceCombination> combinations = serverIds.stream()
@@ -729,6 +793,14 @@ public class ProjectService {
                 devPending++;
             }
 
+            // Checked BEFORE the no-chain skip below: a declined combination is deliberately
+            // chainless (the rollover deleted it) and would otherwise be indistinguishable from one
+            // whose pre-check was never submitted, which is how declines came to be counted nowhere
+            // and the dashboard's Approvals donut showed "Declined (0)" against real declined work.
+            if (declinedAwaitingResubmission.contains(c.getId())) {
+                declined++;
+                continue;
+            }
             // No chain yet (pre-check never submitted) is not an approval state -- it belongs to the
             // pre-check funnel, not this one, so such combinations are counted in no bucket at all.
             if (roles == null || roles.isEmpty()) {

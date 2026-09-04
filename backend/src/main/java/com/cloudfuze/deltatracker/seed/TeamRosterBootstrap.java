@@ -106,8 +106,8 @@ public class TeamRosterBootstrap implements CommandLineRunner {
             // an admin built it by hand -- so reuse it rather than creating a second one beside it.
             Team existingTeam = managers.stream()
                     .map(m -> appUserRepository.findByEmailIgnoreCase(m.email()).orElse(null))
-                    .filter(u -> u != null && u.getTeam() != null)
-                    .map(AppUser::getTeam)
+                    .filter(u -> u != null && !u.getTeams().isEmpty())
+                    .map(u -> u.getTeams().iterator().next())
                     .findFirst()
                     .orElse(null);
 
@@ -133,7 +133,7 @@ public class TeamRosterBootstrap implements CommandLineRunner {
                 Optional<AppUser> existing = appUserRepository.findByEmailIgnoreCase(r.email());
                 if (existing.isEmpty()) {
                     AppUser created = new AppUser(r.email(), r.role(), "roster-seed");
-                    created.setTeam(team);
+                    created.getTeams().add(team);
                     appUserRepository.save(created);
                     usersCreated++;
                     continue;
@@ -144,9 +144,11 @@ public class TeamRosterBootstrap implements CommandLineRunner {
                 if (user.getRole() == AppUserRole.ADMIN) {
                     continue;
                 }
-                // Only fill in what is missing. Somebody already placed on a team stays there.
-                if (user.getTeam() == null) {
-                    user.setTeam(team);
+                // Only fill in what is missing. Somebody already on ANY team stays as they are --
+                // now that membership is multi-valued this seed could technically add one more, but
+                // quietly widening a placement an admin made by hand is not seeding, it is editing.
+                if (user.getTeams().isEmpty()) {
+                    user.getTeams().add(team);
                     user.setRole(r.role());
                     appUserRepository.save(user);
                 }

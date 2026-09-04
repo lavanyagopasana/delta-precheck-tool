@@ -1,6 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { getSignOffApprovals, approveSignOff, declineSignOff, getDeltaCycles } from "../api/client";
+import MetabaseStatusPanel from "../components/MetabaseStatusPanel";
+import { METABASE_UI_ENABLED } from "../config/features";
+import {
+  getSignOffApprovals,
+  approveSignOff,
+  declineSignOff,
+  getDeltaCycles,
+  getProjectMetabaseStatus,
+} from "../api/client";
 import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
 import PreCheckPanel from "../components/PreCheckPanel";
@@ -305,6 +313,13 @@ export default function ApprovalsPage() {
   );
   const [projectFilter, setProjectFilter] = useState(projectParam || "ALL");
   const [preCheckFor, setPreCheckFor] = useState(null);
+  // The approval row whose project migration status is open, plus that request's own state.
+  // Kept per-row rather than page-level because two approvals on this page routinely belong to
+  // different projects -- one shared "status" would show whichever was opened last.
+  const [statusFor, setStatusFor] = useState(null);
+  const [statusEntries, setStatusEntries] = useState(null);
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [statusError, setStatusError] = useState(null);
 
   const load = () => {
     setLoading(true);
@@ -318,6 +333,30 @@ export default function ApprovalsPage() {
   };
 
   useEffect(load, []);
+
+  // Reads the same endpoint the project page uses, so an approver sees exactly the figures the
+  // engineer does -- a second source here could disagree with the page it was checked against.
+  const loadStatus = (projectId) => {
+    setStatusLoading(true);
+    setStatusError(null);
+    getProjectMetabaseStatus(projectId)
+      .then((data) => setStatusEntries(data || []))
+      .catch((err) =>
+        setStatusError(
+          err.response?.data?.message || "Couldn't read the migration status from Metabase."
+        )
+      )
+      .finally(() => setStatusLoading(false));
+  };
+
+  const openStatus = (approval) => {
+    setStatusFor(approval);
+    // Cleared rather than left showing the previous project's numbers while the new ones load.
+    // Stale migration figures under a different project name is the one mistake this button
+    // must not make -- it is being used to decide an approval.
+    setStatusEntries(null);
+    loadStatus(approval.projectId);
+  };
 
   if (loading && approvals.length === 0) return <p>Loading approvals...</p>;
 
@@ -456,16 +495,40 @@ export default function ApprovalsPage() {
             sortable: false,
             filterable: false,
             render: (a) => (
-              <button
-                className="btn secondary"
-                style={{ padding: "4px 10px", fontSize: 12 }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setPreCheckFor(a);
-                }}
-              >
-                Review
-              </button>
+              <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap" }}>
+                <button
+                  className="btn secondary"
+                  style={{ padding: "4px 10px", fontSize: 12 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPreCheckFor(a);
+                  }}
+                >
+                  Review
+                </button>
+                {/* An approver checks the migration figures in Metabase before signing off, and was
+                    otherwise leaving this page to do it on the project page and coming back. Disabled
+                    rather than hidden when the row carries no project id, so the control does not
+                    appear and disappear between rows. Hidden entirely while the integration is off. */}
+                {METABASE_UI_ENABLED && (
+                <button
+                  className="btn secondary"
+                  style={{ padding: "4px 10px", fontSize: 12 }}
+                  disabled={a.projectId == null}
+                  title={
+                    a.projectId == null
+                      ? "This approval is not linked to a project"
+                      : "Migration status from Metabase for this project"
+                  }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openStatus(a);
+                  }}
+                >
+                  Migration status
+                </button>
+                )}
+              </div>
             ),
           },
           {
@@ -478,6 +541,16 @@ export default function ApprovalsPage() {
           },
         ]}
       />
+
+      {METABASE_UI_ENABLED && statusFor && (
+        <MetabaseStatusPanel
+          entries={statusEntries}
+          loading={statusLoading}
+          error={statusError}
+          onRefresh={() => loadStatus(statusFor.projectId)}
+          onClose={() => setStatusFor(null)}
+        />
+      )}
 
       {preCheckFor && (
         <Modal

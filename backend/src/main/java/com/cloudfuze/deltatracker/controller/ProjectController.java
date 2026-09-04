@@ -1,5 +1,6 @@
 package com.cloudfuze.deltatracker.controller;
 
+import com.cloudfuze.deltatracker.dto.ChangeLogEntryDto;
 import com.cloudfuze.deltatracker.dto.CreateServerRequest;
 import com.cloudfuze.deltatracker.dto.ProjectCreateRequest;
 import com.cloudfuze.deltatracker.dto.ProjectDetailDto;
@@ -8,7 +9,9 @@ import com.cloudfuze.deltatracker.dto.ProjectMetabaseRequest;
 import com.cloudfuze.deltatracker.dto.ProjectSummaryDto;
 import com.cloudfuze.deltatracker.dto.ProjectUpdateRequest;
 import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
+import com.cloudfuze.deltatracker.entity.ChangeLogEntityType;
 import com.cloudfuze.deltatracker.service.AppUserService;
+import com.cloudfuze.deltatracker.service.ChangeLogService;
 import com.cloudfuze.deltatracker.service.MetabaseStatusService;
 import com.cloudfuze.deltatracker.service.ProjectService;
 import com.cloudfuze.deltatracker.service.ServerService;
@@ -29,19 +32,40 @@ public class ProjectController {
     private final AppUserService appUserService;
     private final ServerService serverService;
     private final MetabaseStatusService metabaseStatusService;
+    private final ChangeLogService changeLogService;
 
     public ProjectController(ProjectService projectService, AppUserService appUserService, ServerService serverService,
-                              MetabaseStatusService metabaseStatusService) {
+                              MetabaseStatusService metabaseStatusService, ChangeLogService changeLogService) {
         this.projectService = projectService;
         this.appUserService = appUserService;
         this.serverService = serverService;
         this.metabaseStatusService = metabaseStatusService;
+        this.changeLogService = changeLogService;
     }
 
     @GetMapping
     public List<ProjectSummaryDto> list(@AuthenticationPrincipal Jwt jwt) {
         String email = JwtEmailUtil.extractEmail(jwt);
         return projectService.list(email, appUserService.roleOf(email).orElse(null));
+    }
+
+    /**
+     * Every project ever deleted, newest first. Once a project is gone there is no project page
+     * left to view its own history on, so this is the only place a deletion stays visible -- open
+     * to any allowlisted caller, same as every other history GET.
+     */
+    @GetMapping("/deleted")
+    public List<ChangeLogEntryDto> deleted() {
+        return changeLogService.recentlyDeleted(ChangeLogEntityType.PROJECT);
+    }
+
+    /**
+     * Edit history, newest first. A GET open to any allowlisted caller -- the trail exists to be
+     * read, so restricting it to the people allowed to make the edits would defeat the point.
+     */
+    @GetMapping("/{id}/history")
+    public List<ChangeLogEntryDto> history(@PathVariable Long id) {
+        return changeLogService.historyDtos(ChangeLogEntityType.PROJECT, id);
     }
 
     @GetMapping("/{id}")
@@ -88,6 +112,21 @@ public class ProjectController {
                                                   @AuthenticationPrincipal Jwt jwt) {
         String email = JwtEmailUtil.extractEmail(jwt);
         return projectService.setMetabaseDatabase(id, request, email,
+                appUserService.roleOf(email).orElse(null));
+    }
+
+    // Remove one database from a product type. ADMIN only, enforced in the service -- adding widens
+    // the figures visibly, removing shrinks them with nothing on screen to say a source was dropped.
+    //
+    // Query params rather than a body: DELETE with a request body is poorly supported by proxies and
+    // by axios' own default config, and the two values are short identifiers.
+    @DeleteMapping("/{id}/metabase")
+    public ProjectSummaryDto removeMetabaseDatabase(@PathVariable Long id,
+                                                     @RequestParam String productType,
+                                                     @RequestParam String databaseName,
+                                                     @AuthenticationPrincipal Jwt jwt) {
+        String email = JwtEmailUtil.extractEmail(jwt);
+        return projectService.removeMetabaseDatabase(id, productType, databaseName, email,
                 appUserService.roleOf(email).orElse(null));
     }
 

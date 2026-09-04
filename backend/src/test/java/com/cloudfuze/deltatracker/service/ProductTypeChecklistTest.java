@@ -18,21 +18,30 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ProductTypeChecklistTest {
 
     @Test
-    void emailChecklistIsTheFourConfirmedItemsInOrder() {
+    void emailChecklistIsTheConfirmedItemsInOrder() {
+        // Five sections added 2026-09-03, between One Time Migration and Data Verified, in the order
+        // an email migration is actually checked. Previous Delta Migration joined on 2026-09-04,
+        // reversing the original "Email doesn't need it" call -- see EMAIL_PRE_CHECK_ITEMS's javadoc.
         assertThat(ServerService.preCheckItemsFor(ProductType.EMAIL)).containsExactly(
                 "Delta Type",
                 "OneTime Migration",
+                ServerService.PRE_DELTA_MIGRATION_ITEM,
+                "Email Folders",
+                "Email Picking",
+                "Email Copy Queue",
+                "Email Info",
+                "Attachment Details",
                 "Data Verified",
                 "Workspace Status Updated in DB");
     }
 
     @Test
-    void emailDropsTheContentOnlyItems() {
-        // An email migration has no folder permissions, no hyperlinks and no local drive to reconcile,
-        // and no Previous Delta Migration item -- requiring evidence for any of them would be unfillable.
+    void emailDropsTheFolderOrientedItems() {
+        // An email migration has no folder permissions, no hyperlinks and no local drive to
+        // reconcile -- requiring evidence for any of them would be unfillable. Previous Delta
+        // Migration is NOT in this list any more -- Email carries it now, same as Content and Message.
         assertThat(ServerService.preCheckItemsFor(ProductType.EMAIL))
-                .doesNotContain("Permissions Verified", "Hyperlinks Verified", "Drive changes",
-                        ServerService.PRE_DELTA_MIGRATION_ITEM);
+                .doesNotContain("Permissions Verified", "Hyperlinks Verified", "Drive changes");
     }
 
     @Test
@@ -45,10 +54,16 @@ class ProductTypeChecklistTest {
     }
 
     @Test
-    void messageChecklistIsTheFiveConfirmedItemsInOrder() {
+    void messageChecklistIsTheConfirmedItemsInOrder() {
+        // Channels and DM sections added 2026-09-03, directly under One Time Migration: a chat
+        // migration is verified as channels first, then direct and group messages. Previous Delta
+        // Migration joined on 2026-09-04, same reversal as Email's -- see its javadoc.
         assertThat(ServerService.preCheckItemsFor(ProductType.MESSAGE)).containsExactly(
                 "Delta Type",
                 "OneTime Migration",
+                ServerService.PRE_DELTA_MIGRATION_ITEM,
+                "Channels Details",
+                "DM's or Group DM's",
                 "Delta Message Sync",
                 "Data Verified",
                 "Workspace Status Updated in DB");
@@ -56,11 +71,10 @@ class ProductTypeChecklistTest {
 
     @Test
     void messageDropsTheFileOrientedItems() {
-        // A chat migration has no folder permissions, hyperlinks or local drive, and no Previous Delta
-        // Migration item -- requiring evidence for any of them would be unfillable.
+        // A chat migration has no folder permissions, hyperlinks or local drive -- requiring evidence
+        // for any of them would be unfillable. Previous Delta Migration is NOT in this list any more.
         assertThat(ServerService.preCheckItemsFor(ProductType.MESSAGE))
-                .doesNotContain("Permissions Verified", "Hyperlinks Verified", "Drive changes",
-                        ServerService.PRE_DELTA_MIGRATION_ITEM);
+                .doesNotContain("Permissions Verified", "Hyperlinks Verified", "Drive changes");
     }
 
     @Test
@@ -85,11 +99,16 @@ class ProductTypeChecklistTest {
     }
 
     @Test
-    void contentChecklistIsUnchanged() {
+    void contentChecklistIsTheConfirmedItemsInOrder() {
+        // Folder and File detail sections added 2026-09-03, after Previous Delta Migration. Renamed
+        // from "contentChecklistIsUnchanged": it is no longer unchanged, and a test whose name claims
+        // otherwise is worse than no name at all.
         assertThat(ServerService.preCheckItemsFor(ProductType.CONTENT)).containsExactly(
                 "Delta Type",
                 "OneTime Migration",
                 "Previous Delta Migration",
+                "Folder Details",
+                "File Details",
                 "Data Verified",
                 "Permissions Verified",
                 "Hyperlinks Verified",

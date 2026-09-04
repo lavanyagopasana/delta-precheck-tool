@@ -57,6 +57,13 @@ public class CombinationReadinessDto {
     // the same one. This is the fallback the frontend shows before currentDeltaLabel exists (i.e.
     // before the pre-check names this cycle's type).
     private String currentDeltaCycleLabel;
+
+    /**
+     * Which pre-delta this is -- 1, 2, 3 ... -- so the Delta Type dropdown can offer "Pre delta 2"
+     * rather than a bare "Pre delta". The stored ItemStatus stays PRE_DELTA either way; this only
+     * decides what the option is CALLED, which is why a new enum value was not needed.
+     */
+    private int currentDeltaMajor;
     // The current cycle's declared type, settled at submit time. Null until the pre-check is
     // submitted -- nothing has decided this cycle's nature before then.
     private DeltaType currentDeltaType;

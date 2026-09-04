@@ -46,6 +46,7 @@ class ServerDecommissionTest {
 
     private static final Long SID = 10L;
     private static final String ADMIN = "admin@cloudfuze.com";
+    private static final String MANAGER = "mgr@cloudfuze.com";
     private static final String ENGINEER = "eng@cloudfuze.com";
 
     @Mock private ServerRepository serverRepository;
@@ -58,6 +59,7 @@ class ServerDecommissionTest {
     @Mock private AppUserService appUserService;
     @Mock private ServerPurgeService serverPurgeService;
     @Mock private TeamService teamService;
+    @Mock private ChangeLogService changeLogService;
 
     private ServerService service;
     private Server server;
@@ -66,7 +68,7 @@ class ServerDecommissionTest {
     void setUp() {
         service = new ServerService(serverRepository, workspacePairRepository, workspaceCombinationRepository,
                 preCheckSubmissionRepository, ticketService, projectRepository, deltaCycleRepository, appUserService,
-                serverPurgeService, teamService);
+                serverPurgeService, teamService, changeLogService);
 
         server = new Server("SRV-1");
         server.setId(SID);
@@ -77,8 +79,11 @@ class ServerDecommissionTest {
         when(preCheckSubmissionRepository.findByCombinationIdIn(any())).thenReturn(List.of());
         when(deltaCycleRepository.findByCombinationIdIn(any())).thenReturn(List.of());
         when(ticketService.countOpenForServer(anyLong())).thenReturn(0L);
-        when(appUserService.isAdmin(ADMIN)).thenReturn(true);
-        when(appUserService.isAdmin(ENGINEER)).thenReturn(false);
+        // canEditProjectData, not isAdmin: delete/decommission is now admins AND Migration
+        // Managers, and the service asks that one predicate rather than checking a role itself.
+        when(appUserService.canEditProjectData(ADMIN)).thenReturn(true);
+        when(appUserService.canEditProjectData(MANAGER)).thenReturn(true);
+        when(appUserService.canEditProjectData(ENGINEER)).thenReturn(false);
     }
 
     private WorkspaceCombination combination(Long id, boolean finalDeltaDone) {
@@ -217,6 +222,28 @@ class ServerDecommissionTest {
         service.deleteServer(SID, ADMIN);
 
         verify(serverPurgeService).purge(server);
+    }
+
+    @Test
+    void aMigrationManagerCanDeleteAServerToo() {
+        // The change that opened this up: managers own delivery for their projects, so the
+        // destructive project actions are theirs as well as an admin's.
+        givenCombinations();
+
+        service.deleteServer(SID, MANAGER);
+
+        verify(serverPurgeService).purge(server);
+    }
+
+    @Test
+    void anEngineerStillCannotDeleteAServer() {
+        // The other half of the same rule -- widening it to managers must not widen it to everyone.
+        givenCombinations();
+
+        assertThatThrownBy(() -> service.deleteServer(SID, ENGINEER))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Only an admin or a Migration Manager");
+        verify(serverPurgeService, never()).purge(any());
     }
 
     @Test

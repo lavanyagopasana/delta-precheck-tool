@@ -61,7 +61,7 @@ public class TeamController {
     @PostMapping("/assign")
     public void assign(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody TeamAssignRequest request) {
         requireAdmin(jwt);
-        teamService.assign(request.getEmail().trim(), request.getTeamId());
+        teamService.assign(request.getEmail().trim(), request.resolvedTeamIds());
     }
 
     private String requireAdmin(Jwt jwt) {

@@ -3,6 +3,7 @@ package com.cloudfuze.deltatracker.service;
 import com.cloudfuze.deltatracker.dto.CombinationSummaryDto;
 import com.cloudfuze.deltatracker.dto.ServerReadinessDto;
 import com.cloudfuze.deltatracker.dto.WorkspacePairDto;
+import com.cloudfuze.deltatracker.entity.ChangeLogEntityType;
 import com.cloudfuze.deltatracker.entity.DeltaCycle;
 import com.cloudfuze.deltatracker.entity.DeltaCycleStatus;
 import com.cloudfuze.deltatracker.entity.PairStatus;
@@ -36,6 +37,11 @@ import java.util.stream.Collectors;
 public class ServerService {
 
     public static final String DELTA_TYPE_ITEM = "Delta Type";
+
+    // The one-time migration is a fact about work that already happened, not about this cycle, so its
+    // evidence is the one thing a rollover carries into the next pre-delta. Named as a constant
+    // because DeltaCycleService has to recognise it exactly.
+    public static final String ONE_TIME_MIGRATION_ITEM = "OneTime Migration";
     // Content only. Its NOT_APPLICABLE status exempts it from the evidence/note requirement other
     // items carry -- see PreCheckSubmissionService.submit.
     public static final String HYPERLINKS_VERIFIED_ITEM = "Hyperlinks Verified";
@@ -67,6 +73,11 @@ public class ServerService {
             DELTA_TYPE_ITEM,
             "OneTime Migration",
             PRE_DELTA_MIGRATION_ITEM,
+            // Added 2026-09-03. Each is its own row: one status, one mandatory note, one mandatory
+            // evidence upload -- the submit precondition already requires all three of every item
+            // except Delta Type, so no extra rule was needed to make them mandatory.
+            "Folder Details",
+            "File Details",
             "Data Verified",
             "Permissions Verified",
             HYPERLINKS_VERIFIED_ITEM,
@@ -77,9 +88,12 @@ public class ServerService {
     /**
      * The Email checklist, confirmed with the team on 2026-08-06. Deliberately shorter than Content:
      * an email migration has no folder permissions, no hyperlinks and no local drive to reconcile, so
-     * Permissions Verified / Hyperlinks Verified / Drive changes don't apply. There is also no
-     * "Previous Delta Migration" item -- that one exists to record the prior delta's data movement for
-     * Content, and Email tracks the same thing through One Time Migration.
+     * Permissions Verified / Hyperlinks Verified / Drive changes don't apply.
+     *
+     * <p>Previous Delta Migration was left out here until 2026-09-04 on the reasoning that Email
+     * tracks the same thing through One Time Migration -- reversed by product decision: Email gets it
+     * too, same as Content and Message, once there is a previous pre-delta to report on
+     * (PreCheckSubmissionService gates it on currentDeltaMajor > 1, not on product type).
      *
      * <p>Delta Type stays first for the same reason it leads the Content list: it settles whether this
      * cycle is a pre-delta or the final one. Every item except Delta Type requires a status, an evidence
@@ -88,6 +102,15 @@ public class ServerService {
     public static final List<String> EMAIL_PRE_CHECK_ITEMS = List.of(
             DELTA_TYPE_ITEM,
             "OneTime Migration",
+            PRE_DELTA_MIGRATION_ITEM,
+            // Added 2026-09-03, one row each, in the order an email migration is actually checked:
+            // the folder tree, what got picked up, what is queued to copy, the resulting counts, then
+            // attachments. Each carries its own status, mandatory note and mandatory evidence.
+            "Email Folders",
+            "Email Picking",
+            "Email Copy Queue",
+            "Email Info",
+            "Attachment Details",
             "Data Verified",
             "Workspace Status Updated in DB"
     );
@@ -100,7 +123,10 @@ public class ServerService {
     /**
      * The Message checklist, confirmed with the team on 2026-08-07. Shares Data Verified and Workspace
      * Status Updated in DB with Content unchanged, drops the file-oriented items (Permissions,
-     * Hyperlinks, Drive changes, Previous Delta Migration), and adds Delta Message Sync.
+     * Hyperlinks, Drive changes), and adds Delta Message Sync.
+     *
+     * <p>Previous Delta Migration was excluded here too until 2026-09-04, reversed the same way and
+     * for the same reason as Email's -- see EMAIL_PRE_CHECK_ITEMS's javadoc.
      *
      * <p>Two of its items carry non-default status options: OneTime Migration can be partially
      * completed (a chat migration can move some history and not the rest), and Delta Message Sync is
@@ -110,6 +136,12 @@ public class ServerService {
     public static final List<String> MESSAGE_PRE_CHECK_ITEMS = List.of(
             DELTA_TYPE_ITEM,
             "OneTime Migration",
+            PRE_DELTA_MIGRATION_ITEM,
+            // Added 2026-09-03, immediately under One Time Migration: a chat migration is verified as
+            // channels first and direct/group messages second. One row each, with a mandatory note
+            // and a mandatory upload (the evidence for these is the user-mapping CSV).
+            "Channels Details",
+            "DM's or Group DM's",
             DELTA_MESSAGE_SYNC_ITEM,
             "Data Verified",
             "Workspace Status Updated in DB"
@@ -144,6 +176,7 @@ public class ServerService {
     private final AppUserService appUserService;
     private final ServerPurgeService serverPurgeService;
     private final TeamService teamService;
+    private final ChangeLogService changeLogService;
 
     public ServerService(ServerRepository serverRepository,
                           WorkspacePairRepository workspacePairRepository,
@@ -154,7 +187,8 @@ public class ServerService {
                           DeltaCycleRepository deltaCycleRepository,
                           AppUserService appUserService,
                           ServerPurgeService serverPurgeService,
-                          TeamService teamService) {
+                          TeamService teamService,
+                          ChangeLogService changeLogService) {
         this.serverRepository = serverRepository;
         this.workspacePairRepository = workspacePairRepository;
         this.workspaceCombinationRepository = workspaceCombinationRepository;
@@ -165,6 +199,7 @@ public class ServerService {
         this.appUserService = appUserService;
         this.serverPurgeService = serverPurgeService;
         this.teamService = teamService;
+        this.changeLogService = changeLogService;
     }
 
     public Server findOrThrow(Long id) {
@@ -213,8 +248,15 @@ public class ServerService {
         return buildReadiness(server, false);
     }
 
-    public ServerReadinessDto updateProductType(Long serverId, ProductType productType) {
+    public ServerReadinessDto updateProductType(Long serverId, ProductType productType, String callerEmail) {
         Server server = findOrThrow(serverId);
+        // Server records nothing about its own changes -- no creator, no modified-by -- so this trail
+        // is the only place a product-type correction is visible afterwards. It matters more than it
+        // looks: the product type decides which checklist a combination is given.
+        changeLogService.record(ChangeLogEntityType.SERVER, server.getId(), "Product type",
+                server.getProductType() == null ? null : server.getProductType().name(),
+                productType == null ? null : productType.name(),
+                callerEmail);
         server.setProductType(productType);
         server = serverRepository.save(server);
         return buildReadiness(server, false);
@@ -274,12 +316,13 @@ public class ServerService {
      * Note this destroys the sign-off/evidence audit trail for the server. That was accepted knowingly.
      * If an external record is ever needed, it has to be exported BEFORE this runs.
      *
-     * ADMIN-only, enforced both here and in SecurityConfig -- the same defense-in-depth split
-     * AppUserService.requireAdmin uses for the allowlist, so the rule survives a routing change. The
-     * all-Final-Deltas-complete guard is what stops this being a way to delete in-flight work.
+     * ADMIN or MIGRATION_MANAGER, enforced both here and in SecurityConfig -- the same
+     * defense-in-depth split AppUserService.requireAdmin uses for the allowlist, so the rule
+     * survives a routing change. The all-Final-Deltas-complete guard is what stops this being a way
+     * to delete in-flight work.
      */
     public void decommission(Long serverId, String callerEmail) {
-        requireAdmin(callerEmail);
+        requireAdminOrManager(callerEmail);
         Server server = findOrThrow(serverId);
 
         if (!isDecommissionReady(server)) {
@@ -287,27 +330,46 @@ public class ServerService {
                     "Every combination on this server must complete its Final Delta before it can be decommissioned.");
         }
 
+        recordServerRemoval(server, "Server decommissioned", callerEmail);
         serverPurgeService.purge(server);
     }
 
     /**
      * Permanently deletes a server and everything under it (combinations, pairs, pre-check, sign-offs,
      * Delta cycles, tickets, evidence files). Same cascade as {@link #decommission}, but available to
-     * admins at any time — no Final-Delta readiness guard. Use when removing a server that was added
-     * by mistake or clearing in-progress work; use decommission when closing out finished migration work.
+     * admins and managers at any time — no Final-Delta readiness guard. Use when removing a server
+     * that was added by mistake or clearing in-progress work; use decommission when closing out
+     * finished migration work.
      */
     public void deleteServer(Long serverId, String callerEmail) {
-        requireAdmin(callerEmail);
+        requireAdminOrManager(callerEmail);
         Server server = findOrThrow(serverId);
+        recordServerRemoval(server, "Server deleted", callerEmail);
         serverPurgeService.purge(server);
+    }
+
+    /**
+     * Records a server's removal (decommission or delete) against its PROJECT's history, not the
+     * server's own -- the server row is about to be gone, and unlike a project there is no
+     * "recently removed servers" list, so the project's own history panel (which still exists) is
+     * the only place this stays visible. A server with no project records nothing: nobody can
+     * navigate to a project page to see it anyway.
+     */
+    private void recordServerRemoval(Server server, String fieldName, String callerEmail) {
+        if (server.getProject() == null) {
+            return;
+        }
+        changeLogService.record(ChangeLogEntityType.PROJECT, server.getProject().getId(), fieldName,
+                server.getName(), null, callerEmail);
     }
 
     // Not AppUserService.requireAdmin: that one's message is specific to managing app access, and this
     // isn't that. A null email means auth isn't configured, which the whole app deliberately treats as
     // open (see SecurityConfig.authConfigured).
-    private void requireAdmin(String callerEmail) {
-        if (callerEmail != null && !appUserService.isAdmin(callerEmail)) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "Only an admin can delete or decommission a server.");
+    private void requireAdminOrManager(String callerEmail) {
+        if (callerEmail != null && !appUserService.canEditProjectData(callerEmail)) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Only an admin or a Migration Manager can delete or decommission a server.");
         }
     }
 

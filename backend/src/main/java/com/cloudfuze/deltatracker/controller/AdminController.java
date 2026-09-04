@@ -35,7 +35,8 @@ public class AdminController {
     @PostMapping
     public AppUserDto upsert(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody AppUserUpsertRequest request) {
         String adminEmail = requireAdmin(jwt);
-        return appUserService.upsert(request.getEmail().trim().toLowerCase(), request.getRole(), adminEmail);
+        return appUserService.upsert(request.getEmail().trim().toLowerCase(), request.getRole(),
+                request.getAssignableAsManager(), adminEmail);
     }
 
     // `role` is the FALLBACK applied to rows whose own "role" column is blank or absent; it is

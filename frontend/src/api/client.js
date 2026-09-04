@@ -1,5 +1,6 @@
 import axios from "axios";
 import { getAccessToken } from "../auth/getAccessToken";
+import { endExpiredSession } from "../auth/sessionExpiry";
 
 // Backend origin resolves at runtime (deploy-time file first, then build-time env, then this page's
 // own origin) so a bundle built anywhere works anywhere -- see config/runtimeConfig.js.
@@ -28,6 +29,48 @@ client.interceptors.request.use(async (config) => {
 //
 // This normalises those cases into the same shape the rest of the app already handles, so a
 // misconfigured proxy produces an error that names itself instead of a mystery.
+// A 401 from our own API means the bearer token was rejected, which in practice means it expired --
+// authorization failures (not on the allowlist, wrong role) come back as 403, not 401.
+//
+// This is not a rare edge: MSAL decides whether to renew by looking at the ACCESS token's expiry,
+// but what we send is the ID token (see auth/getAccessToken.js for why). A cached entry MSAL still
+// considers fresh can therefore hand back an ID token that has already expired, and every call on
+// the page starts failing at once.
+//
+// One forced refresh and one retry. If that still fails the session is genuinely over, and the
+// right outcome is the login screen -- not an error on every panel of a page the person can no
+// longer load anything into. Before this, an hour-old tab showed "Something went wrong (401)" with
+// no way forward but signing out by hand.
+client.interceptors.response.use(undefined, async (error) => {
+  const original = error.config;
+  if (error.response?.status !== 401 || !original) return Promise.reject(error);
+
+  if (!original._retriedAfter401) {
+    original._retriedAfter401 = true;
+    try {
+      const fresh = await getAccessToken(true);
+      if (fresh) {
+        original.headers = { ...original.headers, Authorization: `Bearer ${fresh}` };
+        return await client.request(original);
+      }
+    } catch (retryError) {
+      // Only a second 401 means the session is finished. A 500 or a dropped connection on the
+      // retry is a different problem and has to keep its own error, or a flaky network would log
+      // people out.
+      if (retryError?.response && retryError.response.status !== 401) {
+        return Promise.reject(retryError);
+      }
+    }
+  }
+
+  await endExpiredSession();
+  // Deliberately never settles. endExpiredSession clears MSAL, which re-renders the app as the
+  // login page; resolving or rejecting here would first let every in-flight caller paint its own
+  // error message into a UI that is about to be replaced. This is a "we are navigating away"
+  // promise, not a leak -- the components holding it are unmounted moments later.
+  return new Promise(() => {});
+});
+
 client.interceptors.response.use(undefined, (error) => {
   const response = error.response;
   if (!response) return Promise.reject(error);
@@ -85,6 +128,11 @@ export const getServerReadiness = (serverId) =>
 // combinations (id, name, pairCount, status); fetch one's own readiness here.
 export const getCombinationReadiness = (combinationId) =>
   client.get(`/combinations/${combinationId}`).then((r) => r.data);
+
+// This combination's edit history, newest first. Empty today by design, not omission -- nothing
+// edits a combination's details yet (no PATCH route exists), so this is wired ready for the day one
+// does. Open to any allowlisted caller.
+export const getCombinationHistory = (id) => client.get(`/combinations/${id}/history`).then((r) => r.data);
 export const startCombinationDelta = (combinationId) =>
   client.post(`/combinations/${combinationId}/delta/start`).then((r) => r.data);
 export const finishCombinationDelta = (combinationId) =>
@@ -104,17 +152,44 @@ export const decommissionServer = (serverId) =>
 export const deleteServer = (serverId) =>
   client.delete(`/servers/${serverId}`).then((r) => r.data);
 
+// This server's edit history (product type), newest first. Server records nothing else about its
+// own changes -- no creator, no modified-by -- so this trail is the only account of them. Open to
+// any allowlisted caller.
+export const getServerHistory = (id) => client.get(`/servers/${id}/history`).then((r) => r.data);
+
+// Every user-mapping CSV uploaded against this server, newest first -- who, the filename, and for a
+// re-upload how many existing pairs it replaced (those rows exist nowhere else afterwards). Open to
+// any allowlisted caller.
+export const getServerPairImports = (id) => client.get(`/servers/${id}/pair-imports`).then((r) => r.data);
+
 export const getProjects = () => client.get("/projects").then((r) => r.data);
+
+// Every project ever deleted, newest first. There is no page left for a deleted project, so this is
+// the only place its deletion stays visible -- open to any allowlisted caller.
+export const getDeletedProjects = () => client.get("/projects/deleted").then((r) => r.data);
 export const getProjectDetail = (id) => client.get(`/projects/${id}`).then((r) => r.data);
 export const createProject = (payload) => client.post("/projects", payload).then((r) => r.data);
 export const updateProjectDetails = (id, payload) =>
   client.patch(`/projects/${id}`, payload).then((r) => r.data);
 export const removeProject = (id) => client.delete(`/projects/${id}`).then((r) => r.data);
-// Fix which Metabase database holds ONE product type's data for a project. Per product type because a
-// Metabase database only ever holds one type's data. Send "" as databaseName to clear it (admin only
-// once fixed). Rejects 409 when already fixed and the caller isn't an admin.
+
+// This project's edit history (name, Migration Manager), newest first. A GET open to any
+// allowlisted caller -- the trail is disclosure, so it is visible to everyone who can see the
+// project, not gated to whoever may make the edit.
+export const getProjectHistory = (id) => client.get(`/projects/${id}/history`).then((r) => r.data);
+// Add a Metabase database to ONE product type on a project. A product type can be spread across
+// several databases, so this appends rather than replaces; adding the same name twice is rejected
+// (409). Open to the project's Migration Manager, an assigned engineer, or an admin.
 export const setProjectMetabaseDatabase = (id, productType, databaseName) =>
   client.patch(`/projects/${id}/metabase`, { productType, databaseName }).then((r) => r.data);
+
+// Remove one database from a product type. ADMIN ONLY -- adding widens the figures visibly, removing
+// shrinks the ones a Delta was approved against with nothing on screen to say a source was dropped.
+// Query params, not a body: axios drops the body on DELETE by default.
+export const removeProjectMetabaseDatabase = (id, productType, databaseName) =>
+  client
+    .delete(`/projects/${id}/metabase`, { params: { productType, databaseName } })
+    .then((r) => r.data);
 // The live processStatus breakdown, one entry per product type the project has a database for.
 // Fetched on demand (the "Get process status" button), never on page load -- it is several round
 // trips to Metabase and a project usually doesn't need it.
@@ -133,9 +208,11 @@ export const getTeams = () => client.get("/teams").then((r) => r.data);
 export const createTeam = (payload) => client.post("/teams", payload).then((r) => r.data);
 export const updateTeam = (id, payload) => client.patch(`/teams/${id}`, payload).then((r) => r.data);
 export const removeTeam = (id) => client.delete(`/teams/${id}`).then((r) => r.data);
-// teamId: null takes the person off every team, which is why it is sent explicitly rather than omitted.
-export const assignUserTeam = (email, teamId) =>
-  client.post("/teams/assign", { email, teamId }).then((r) => r.data);
+// Sets the person's teams to exactly teamIds -- an empty array takes them off every team, which is
+// why it is sent explicitly rather than omitted. Replace, not add: a caller that means "also put
+// them on this team" sends the union it wants (see AdminUsersPage's team cards).
+export const assignUserTeams = (email, teamIds) =>
+  client.post("/teams/assign", { email, teamIds }).then((r) => r.data);
 
 export const importWorkspacePairsCsv = (serverId, file) => {
   const formData = new FormData();
@@ -172,14 +249,35 @@ export const SAMPLE_CSV_COLUMNS_COMBINATION = ["source_email", "source_path", "d
 // advertising two columns an email engineer has nothing to put in.
 export const SAMPLE_CSV_COLUMNS_COMBINATION_EMAIL = ["source_email", "destination_email"];
 
-// Email and Message migrate accounts, not folder trees, so both take only the two columns; Content is
-// the only type with paths. One predicate rather than an inline `=== "EMAIL"` in each place, because
-// that check had already been written in four spots and adding Message meant finding all of them.
-export const usesTwoColumnCsv = (productType) => productType === "EMAIL" || productType === "MESSAGE";
+// Message's own column names, product-named rather than the generic source/destination email+path
+// used everywhere else. Same four generic fields underneath (WorkspacePairService.COLUMN_ALIASES
+// maps these header strings onto source_email/source_path/destination_email/destination_path) --
+// this is only how the sample file, the export and the "View CSV format" table label and order them.
+export const SAMPLE_CSV_COLUMNS_COMBINATION_MESSAGE = [
+  "Channel name",
+  "Destination Channel name",
+  "Destination Team name",
+  "Channel type",
+];
+
+// Only Email is genuinely two columns now (no folder tree to move). Message used to share this
+// shape; it has its own four-column format instead (SAMPLE_CSV_COLUMNS_COMBINATION_MESSAGE), kept as
+// a separate predicate rather than folded into usesTwoColumnCsv so a caller that only means "does
+// this type skip the two path columns entirely" isn't accidentally also asked about Message's shape.
+export const usesTwoColumnCsv = (productType) => productType === "EMAIL";
+
+// Message's shape is distinct enough (its own column names AND a different field order --
+// destination email comes second, not fourth) that a boolean can't express it. Callers that build a
+// per-type shape should branch on this before falling back to usesTwoColumnCsv.
+export const usesMessageCsvShape = (productType) => productType === "MESSAGE";
 
 // The CSV shape for a server's product type.
 export const sampleCsvColumnsForProductType = (productType) =>
-  usesTwoColumnCsv(productType) ? SAMPLE_CSV_COLUMNS_COMBINATION_EMAIL : SAMPLE_CSV_COLUMNS_COMBINATION;
+  usesMessageCsvShape(productType)
+    ? SAMPLE_CSV_COLUMNS_COMBINATION_MESSAGE
+    : usesTwoColumnCsv(productType)
+    ? SAMPLE_CSV_COLUMNS_COMBINATION_EMAIL
+    : SAMPLE_CSV_COLUMNS_COMBINATION;
 
 export const importWorkspacePairsCsvForCombination = (serverId, combination, file) => {
   const formData = new FormData();

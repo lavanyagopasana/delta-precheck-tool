@@ -278,4 +278,92 @@ class MetabaseStatusServiceTest {
         assertThat(MetabaseStatusService.isCloudFuzeInternal("someone@notcloudfuze.com")).isFalse();
         assertThat(MetabaseStatusService.isCloudFuzeInternal(null)).isFalse();
     }
+
+    // ---- Drive changes (CONTENT only). The real db 214 (bluecurrent) numbers throughout: one
+    // customer user, ithelp@bluecurrent.com, with 2695 of the collection's 3010 changes.
+
+    private Map<String, Long> bluecurrentDriveChanges() {
+        Map<String, Long> counts = new LinkedHashMap<>();
+        counts.put("PROCESSED", 2535L);
+        counts.put("NOT_PROCESSED", 81L);
+        counts.put("COMPLETED", 79L);
+        return counts;
+    }
+
+    @Test
+    void countsDriveChangesForTheCustomersUserIdsOnly() {
+        configured(ProductType.CONTENT, "bluecurrent");
+        when(metabaseClient.fetchDatabases()).thenReturn(List.of(db(214, "bluecurrent")));
+        when(metabaseClient.countByProcessStatus(anyLong(), anyString())).thenReturn(Map.of("PROCESSED", 1L));
+        when(metabaseClient.countByOwnerEmail(anyLong(), anyString())).thenReturn(Map.of("ithelp@bluecurrent.com", 1L));
+        when(metabaseClient.customerUserIds(214L))
+                .thenReturn(Map.of("6a726233e727ce1468cc2141", "ithelp@bluecurrent.com"));
+        when(metabaseClient.countDriveChangesByStatus(eq(214L), any())).thenReturn(bluecurrentDriveChanges());
+
+        MetabaseStatusDto dto = service.statusForProject(1L).get(0);
+
+        assertThat(dto.getDriveChanges()).extracting(MetabaseStatusCountDto::getStatus)
+                // PROCESSED then COMPLETED then NOT_PROCESSED -- STATUS_ORDER, not Metabase's
+                // count order, so the page never reshuffles between reads.
+                .containsExactly("PROCESSED", "COMPLETED", "NOT_PROCESSED");
+        assertThat(dto.getTotalDriveChanges()).isEqualTo(2695L);
+        assertThat(dto.getDriveChangeUsers()).singleElement()
+                .satisfies(u -> {
+                    assertThat(u.getEmail()).isEqualTo("ithelp@bluecurrent.com");
+                    // The id, not just the email: it is what reproduces the figure in Metabase.
+                    assertThat(u.getUserId()).isEqualTo("6a726233e727ce1468cc2141");
+                });
+    }
+
+    @Test
+    void doesNotReadDriveChangesForEmailOrMessage() {
+        configured(ProductType.EMAIL, "bluecurrentemail");
+        configured(ProductType.MESSAGE, "bluecurrentmsg");
+        when(metabaseClient.fetchDatabases())
+                .thenReturn(List.of(db(215, "bluecurrentemail"), db(216, "bluecurrentmsg")));
+        when(metabaseClient.countByProcessStatus(anyLong(), anyString())).thenReturn(Map.of("PROCESSED", 1L));
+        when(metabaseClient.countByOwnerEmail(anyLong(), anyString())).thenReturn(Map.of("it@customer.com", 1L));
+
+        List<MetabaseStatusDto> out = service.statusForProject(1L);
+
+        // DriveChangeIdDetails is a Drive concept -- the collection does not exist in these
+        // databases, so asking would be a guaranteed error rather than a zero.
+        assertThat(out).allSatisfy(dto -> assertThat(dto.getDriveChanges()).isNull());
+        verify(metabaseClient, never()).customerUserIds(anyLong());
+    }
+
+    @Test
+    void reportsNoCustomerUserRatherThanCountingZeroChanges() {
+        configured(ProductType.CONTENT, "bluecurrent");
+        when(metabaseClient.fetchDatabases()).thenReturn(List.of(db(214, "bluecurrent")));
+        when(metabaseClient.countByProcessStatus(anyLong(), anyString())).thenReturn(Map.of("PROCESSED", 1L));
+        when(metabaseClient.countByOwnerEmail(anyLong(), anyString())).thenReturn(Map.of("it@customer.com", 1L));
+        // Every user in this database is CloudFuze staff.
+        when(metabaseClient.customerUserIds(214L)).thenReturn(Map.of());
+
+        MetabaseStatusDto dto = service.statusForProject(1L).get(0);
+
+        // Filtering on an empty id list would match nothing and render as "0 Drive changes", which
+        // reads as "nothing migrated". The real answer is that nobody can be attributed.
+        assertThat(dto.getDriveChangesError()).contains("no non-CloudFuze user");
+        assertThat(dto.getDriveChanges()).isNull();
+        verify(metabaseClient, never()).countDriveChangesByStatus(anyLong(), any());
+    }
+
+    @Test
+    void aDriveChangeFailureLeavesTheWorkspaceCountsOnScreen() {
+        configured(ProductType.CONTENT, "bluecurrent");
+        when(metabaseClient.fetchDatabases()).thenReturn(List.of(db(214, "bluecurrent")));
+        when(metabaseClient.countByProcessStatus(anyLong(), anyString())).thenReturn(Map.of("PROCESSED", 42L));
+        when(metabaseClient.countByOwnerEmail(anyLong(), anyString())).thenReturn(Map.of("ithelp@bluecurrent.com", 42L));
+        when(metabaseClient.customerUserIds(214L))
+                .thenThrow(new ApiException(HttpStatus.BAD_GATEWAY, "Metabase rejected our API key."));
+
+        MetabaseStatusDto dto = service.statusForProject(1L).get(0);
+
+        // Two independent reads: one failing is no reason to blank the other.
+        assertThat(dto.getDriveChangesError()).isEqualTo("Metabase rejected our API key.");
+        assertThat(dto.getError()).isNull();
+        assertThat(dto.getTotalWorkspaces()).isEqualTo(42L);
+    }
 }

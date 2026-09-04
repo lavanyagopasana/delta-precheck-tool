@@ -4,6 +4,7 @@ import com.cloudfuze.deltatracker.entity.DeltaCycle;
 import com.cloudfuze.deltatracker.entity.DeltaCycleItem;
 import com.cloudfuze.deltatracker.entity.DeltaCycleSignOff;
 import com.cloudfuze.deltatracker.entity.PreCheckItem;
+import com.cloudfuze.deltatracker.entity.PreCheckItemEvidence;
 import com.cloudfuze.deltatracker.entity.PreCheckSubmission;
 import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.entity.SignOff;
@@ -65,6 +66,11 @@ class ServerPurgeServiceTest {
     @Mock private DeltaCycleRepository deltaCycleRepository;
     @Mock private DeltaCycleItemRepository deltaCycleItemRepository;
     @Mock private DeltaCycleSignOffRepository deltaCycleSignOffRepository;
+    // The three trails added 2026-09-03. Each holds a FK to a row this service deletes, so the
+    // purge has to clear them first or the delete is refused.
+    @Mock private com.cloudfuze.deltatracker.repository.PreCheckItemEvidenceRepository preCheckItemEvidenceRepository;
+    @Mock private com.cloudfuze.deltatracker.repository.PreCheckItemEditRepository preCheckItemEditRepository;
+    @Mock private com.cloudfuze.deltatracker.repository.DeltaCycleItemEvidenceRepository deltaCycleItemEvidenceRepository;
     @Mock private FileStorageService fileStorageService;
     @Mock private JdbcTemplate jdbcTemplate;
 
@@ -76,7 +82,8 @@ class ServerPurgeServiceTest {
     void setUp() {
         service = new ServerPurgeService(serverRepository, workspaceCombinationRepository, preCheckItemRepository,
                 preCheckSubmissionRepository, signOffRepository, ticketRepository, deltaCycleRepository,
-                deltaCycleItemRepository, deltaCycleSignOffRepository, fileStorageService, jdbcTemplate);
+                deltaCycleItemRepository, deltaCycleSignOffRepository, preCheckItemEvidenceRepository,
+                preCheckItemEditRepository, deltaCycleItemEvidenceRepository, fileStorageService, jdbcTemplate);
 
         server = new Server("SRV-1");
         server.setId(SID);
@@ -254,5 +261,37 @@ class ServerPurgeServiceTest {
         service.purge(server);
 
         verify(serverRepository).delete(server);
+    }
+
+    /**
+     * The regression behind "That conflicts with an existing record" when deleting a server.
+     *
+     * <p>precheck_item_evidence and precheck_item_edits each hold a FK to precheck_items, so deleting
+     * the items first is refused by the database. The purge has to clear the children, and it has to
+     * delete the actual FILES behind every evidence row -- not only the item's mirrored first one, or
+     * the extras stay on disk with nothing referencing them.
+     */
+    @Test
+    void deletesEvidenceRowsAndTheEditTrailBeforeTheItemsThatOwnThem() {
+        PreCheckItem item = new PreCheckItem(combination, "Data Verified");
+        item.setId(901L);
+        item.setEvidenceFilePath("uploads/first.png");
+        when(preCheckItemRepository.findByCombinationId(CID)).thenReturn(List.of(item));
+
+        PreCheckItemEvidence extra = new PreCheckItemEvidence(item, "uploads/second.pdf", "second.pdf", null);
+        when(preCheckItemEvidenceRepository.findByItemIdInOrderByUploadedAtAscIdAsc(List.of(901L)))
+                .thenReturn(List.of(extra));
+
+        service.purge(server);
+
+        InOrder order = inOrder(preCheckItemEvidenceRepository, preCheckItemEditRepository,
+                preCheckItemRepository);
+        order.verify(preCheckItemEvidenceRepository).deleteAll(any());
+        order.verify(preCheckItemEditRepository).deleteAll(any());
+        order.verify(preCheckItemRepository).deleteAll(any());
+
+        // Both files go: the extra evidence row's, and the item's mirrored first one.
+        verify(fileStorageService).delete("uploads/second.pdf");
+        verify(fileStorageService).delete("uploads/first.png");
     }
 }

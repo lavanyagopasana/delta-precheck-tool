@@ -14,6 +14,16 @@ public class RosterDto {
     private List<String> engineers;
 
     /**
+     * The 2nd and 3rd approvers in the sign-off chain.
+     *
+     * <p>Flat lists with no team mapping, unlike engineers, because nothing scopes them: teams exist
+     * to decide which engineers a manager may assign, while a Dev Lead or QA Lead approves across
+     * every team. {@code AppUser.team} being nullable is what lets them sit outside the structure.
+     */
+    private List<String> devLeads;
+    private List<String> qaLeads;
+
+    /**
      * manager email (lowercase) -> engineer emails on that manager's team.
      *
      * <p>Sent alongside the flat lists rather than replacing them, so the caller can scope a

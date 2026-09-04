@@ -57,6 +57,28 @@ public class DeltaCycleItem {
     @Column(name = "evidence_file_name")
     private String evidenceFileName;
 
+    /**
+     * Evidence captured from Metabase rather than uploaded as a file, stored as JSON: the status
+     * counts, the database and collection they came from, the aggregation pipeline that produced
+     * them, and who captured them when.
+     *
+     * <p>Why this exists alongside evidenceFilePath rather than replacing it: a screenshot is a
+     * photograph of a number. It cannot be re-checked, it cannot be compared against the same query
+     * run later, and -- as six of them proved on 2026-08-29 -- it lives in a directory nothing backs
+     * up, so deleting a project destroyed them permanently. This column is in Postgres, which every
+     * deploy dumps.
+     *
+     * <p>Deliberately a text column holding JSON, not a set of typed columns. The shape differs per
+     * checklist item (workspace counts, drive-change counts, permission counts), and a column per
+     * variant would mean a schema change every time a new item is wired up.
+     */
+    @Column(name = "evidence_data", columnDefinition = "text")
+    private String evidenceData;
+
+    /** When {@link #evidenceData} was captured -- an approver needs to know how stale the figures are. */
+    @Column(name = "evidence_captured_at")
+    private LocalDateTime evidenceCapturedAt;
+
     @Column(name = "last_modified_by")
     private String lastModifiedBy;
 

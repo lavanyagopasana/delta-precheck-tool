@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   getAllowedUsers, upsertAllowedUser, removeAllowedUser, importUsersCsv,
-  getTeams, createTeam, removeTeam, assignUserTeam,
+  getTeams, createTeam, removeTeam, assignUserTeams,
 } from "../api/client";
 import { useCurrentUser } from "../auth/CurrentUserContext";
 import { useToast } from "../components/Toast";
@@ -25,6 +25,15 @@ const roleLabel = (role) => ROLE_OPTIONS.find((r) => r.value === role)?.label ||
 // The only two roles a team is meaningful for. Mirrors the backend, where Team membership exists to
 // scope a Migration Manager's engineer picker and nothing else.
 const TEAM_ROLES = ["MIGRATION_MANAGER", "MIGRATION_ENGINEER"];
+
+// Membership is multi-valued now. teamsOf tolerates a row from either shape -- `teams` is what the
+// API sends, and the deprecated single teamId is the fallback so a cached/older response still
+// renders one team instead of none.
+const teamsOf = (u) => {
+  if (Array.isArray(u?.teams) && u.teams.length) return u.teams;
+  return u?.teamId ? [{ id: u.teamId, name: u.teamName }] : [];
+};
+const teamIdsOf = (u) => teamsOf(u).map((t) => t.id);
 
 // Consistent accent color per role, reused by the summary strip and the row indicators.
 const ROLE_COLOR = {
@@ -90,6 +99,9 @@ const teamDisplayName = (team) => {
   // replaced the one piece of identity the card had, so several such teams were indistinguishable
   // and you could not tell which one to fix. The missing manager is stated in the meta row instead.
   if (managers.length === 0) return team.name;
+  // Every manager, joined -- the Teams panel's cards are wide enough for it and this is the label
+  // an admin recognises. (The Teams PAGE had to stop using this: there it was the card title in a
+  // narrow grid track, where one long unbreakable string wrapped a character per line.)
   return `${managers.map(emailLocalPart).join("/")} team`;
 };
 
@@ -108,7 +120,11 @@ export default function AdminUsersPage() {
   const [editRole, setEditRole] = useState("MIGRATION_ENGINEER");
   // "" means no team. Held here rather than edited inline in the table: a <select> in a row commits
   // on change, so a stray click or a scroll over a focused control silently reassigned somebody.
-  const [editTeamId, setEditTeamId] = useState("");
+  // Ids as strings, matching the checkbox values. A Set would be tidier but the render needs a
+  // stable, comparable value for the "nothing changed" check below.
+  const [editTeamIds, setEditTeamIds] = useState([]);
+  // Whether this person is offered in the project Migration Manager picker on top of their role.
+  const [editAssignable, setEditAssignable] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState(null);
   const [csvModalOpen, setCsvModalOpen] = useState(false);
@@ -174,7 +190,10 @@ export default function AdminUsersPage() {
       const created = await createTeam({ name: derivedName });
       // Creating the team and putting its manager on it are one action. Split apart, the second
       // half gets forgotten and the team cannot scope anybody.
-      await assignUserTeam(newTeamManager, created.id);
+      // Union rather than just the new id -- assign replaces the whole set, and a manager who
+      // already runs another team must not be moved off it by being given this one.
+      const existing = users.find((u) => u.email.toLowerCase() === newTeamManager.toLowerCase());
+      await assignUserTeams(newTeamManager, [...new Set([...teamIdsOf(existing), created.id])]);
       showToast(`${derivedName} created.`, "success");
       setNewTeamManager("");
       await Promise.all([loadTeams(), getAllowedUsers().then(setUsers).catch(() => {})]);
@@ -193,7 +212,8 @@ export default function AdminUsersPage() {
     const managerEmail = cardManager[team.id];
     if (!managerEmail) return;
     try {
-      await assignUserTeam(managerEmail, team.id);
+      const existing = users.find((u) => u.email.toLowerCase() === managerEmail.toLowerCase());
+      await assignUserTeams(managerEmail, [...new Set([...teamIdsOf(existing), team.id])]);
       showToast(`${emailLocalPart(managerEmail)} now manages this team.`, "success");
       setCardManager((prev) => ({ ...prev, [team.id]: "" }));
       await Promise.all([loadTeams(), getAllowedUsers().then(setUsers).catch(() => {})]);
@@ -249,9 +269,9 @@ export default function AdminUsersPage() {
     // free-text search, rather than one silently replacing the other.
     let rows = roleFilter === "ALL" ? users : users.filter((u) => u.role === roleFilter);
     if (teamFilter === "NONE") {
-      rows = rows.filter((u) => !u.teamId);
+      rows = rows.filter((u) => teamIdsOf(u).length === 0);
     } else if (teamFilter !== "ALL") {
-      rows = rows.filter((u) => String(u.teamId) === teamFilter);
+      rows = rows.filter((u) => teamIdsOf(u).some((id) => String(id) === teamFilter));
     }
     return rows;
   }, [users, roleFilter, teamFilter]);
@@ -262,8 +282,10 @@ export default function AdminUsersPage() {
   const teamCounts = useMemo(() => {
     const c = { NONE: 0 };
     users.forEach((u) => {
-      if (!u.teamId) c.NONE += 1;
-      else c[u.teamId] = (c[u.teamId] || 0) + 1;
+      const ids = teamIdsOf(u);
+      // Somebody on two teams counts under both, so these no longer sum to the user total.
+      if (!ids.length) c.NONE += 1;
+      else ids.forEach((id) => { c[id] = (c[id] || 0) + 1; });
     });
     return c;
   }, [users]);
@@ -334,7 +356,8 @@ export default function AdminUsersPage() {
   const openEdit = (user) => {
     setEditUser(user);
     setEditRole(user.role);
-    setEditTeamId(user.teamId ? String(user.teamId) : "");
+    setEditTeamIds(teamIdsOf(user).map(String));
+    setEditAssignable(Boolean(user.assignableAsManager));
     setEditError(null);
   };
 
@@ -346,9 +369,12 @@ export default function AdminUsersPage() {
   const handleEditSave = async (e) => {
     e.preventDefault();
     if (!editUser) return;
-    const teamChanged = editTeamId !== (editUser.teamId ? String(editUser.teamId) : "");
+    // Order-insensitive: checking two boxes in the other order is not a change.
+    const before = teamIdsOf(editUser).map(String).slice().sort().join(",");
+    const teamChanged = editTeamIds.slice().sort().join(",") !== before;
     const roleChanged = editRole !== editUser.role;
-    if (!roleChanged && !teamChanged) {
+    const assignableChanged = editAssignable !== Boolean(editUser.assignableAsManager);
+    if (!roleChanged && !teamChanged && !assignableChanged) {
       closeEdit();
       return;
     }
@@ -358,17 +384,32 @@ export default function AdminUsersPage() {
       // Role and team are two separate endpoints, so only send what actually changed -- upsert
       // carries guards (no self-demotion, no demoting the last admin) that should not fire for
       // somebody who only moved team.
-      if (roleChanged) {
-        await upsertAllowedUser({ email: editUser.email, role: editRole });
+      // The flag rides along on the same upsert as the role -- one endpoint owns the app_users row.
+      // Sent only when something on that row actually changed, so a team-only edit still skips the
+      // upsert guards (no self-demotion, no demoting the last admin) as before.
+      if (roleChanged || assignableChanged) {
+        await upsertAllowedUser({
+          email: editUser.email,
+          role: editRole,
+          assignableAsManager: editAssignable,
+        });
       }
       if (teamChanged) {
-        await assignUserTeam(editUser.email, editTeamId ? Number(editTeamId) : null);
+        await assignUserTeams(editUser.email, editTeamIds.map(Number));
       }
       const parts = [];
       if (roleChanged) parts.push(`is now ${roleLabel(editRole)}`);
+      if (assignableChanged) {
+        parts.push(editAssignable
+          ? "can be assigned as Migration Manager"
+          : "can no longer be assigned as Migration Manager");
+      }
       if (teamChanged) {
-        const t = teams.find((x) => String(x.id) === editTeamId);
-        parts.push(t ? `moved to ${teamDisplayName(t)}` : "removed from their team");
+        const names = editTeamIds
+          .map((id) => teams.find((x) => String(x.id) === id))
+          .filter(Boolean)
+          .map((t) => teamDisplayName(t));
+        parts.push(names.length ? `is now on ${names.join(", ")}` : "was taken off every team");
       }
       showToast(`${editUser.email} ${parts.join(" and ")}.`);
       loadTeams();
@@ -512,7 +553,7 @@ export default function AdminUsersPage() {
                 {managerOptions.map((m) => (
                   <option key={m.email} value={m.email}>
                     {m.email}
-                    {m.teamName ? ` (currently ${m.teamName})` : ""}
+                    {teamsOf(m).length ? ` (currently ${teamsOf(m).map((t) => t.name).join(", ")})` : ""}
                   </option>
                 ))}
               </select>
@@ -584,7 +625,7 @@ export default function AdminUsersPage() {
                         {managerOptions.map((m) => (
                           <option key={m.email} value={m.email}>
                             {emailLocalPart(m.email)}
-                            {m.teamName ? " (has a team)" : ""}
+                            {teamsOf(m).length ? " (has a team)" : ""}
                           </option>
                         ))}
                       </select>
@@ -725,13 +766,21 @@ export default function AdminUsersPage() {
                   }}
                 />
                 {roleLabel(u.role)}
+                {u.assignableAsManager && u.role !== "MIGRATION_MANAGER" && (
+                  <span
+                    className="team-card-tag"
+                    title="Also offered in the project Migration Manager picker"
+                  >
+                    + manager
+                  </span>
+                )}
               </span>
             ),
           },
           {
             key: "team",
             label: "Team",
-            filterValue: (u) => u.teamName || "",
+            filterValue: (u) => teamsOf(u).map((t) => t.name).join(" "),
             // Editable inline rather than behind the Edit modal: team is the one field an admin
             // changes in bulk while reading down the list, and the modal only handles role.
             render: (u) => {
@@ -753,12 +802,16 @@ export default function AdminUsersPage() {
               // value changes -- so scrolling the page with the control focused, or a mis-aimed
               // click, reassigned a person's team instantly and silently. Team changes now go
               // through the Edit dialog, where they are deliberate and reviewable before saving.
-              const team = teams.find((t) => t.id === u.teamId);
-              if (!team) {
+              const own = teamsOf(u)
+                .map((ref) => teams.find((t) => t.id === ref.id) || ref)
+                .filter(Boolean);
+              if (!own.length) {
                 return <span style={{ color: "var(--color-text-faint)", fontSize: 12.5 }}>No team</span>;
               }
               return (
-                <span title={`${team.name} — edit via the pencil button`}>{teamDisplayName(team)}</span>
+                <span title={`${own.map((t) => t.name).join(", ")} — edit via the pencil button`}>
+                  {own.map((t) => teamDisplayName(t)).join(", ")}
+                </span>
               );
             },
           },
@@ -822,21 +875,78 @@ export default function AdminUsersPage() {
               </select>
             </div>
 
-            {/* Only offered for the roles a team means anything for. An Admin/Dev Lead/QA Lead has
-                no team by design, so showing the control would imply otherwise. */}
-            {TEAM_ROLES.includes(editRole) && (
+            {/* ADMIN only. A MIGRATION_MANAGER is already in the picker by role, so the checkbox
+                would be a no-op there; and an engineer or a Dev/QA Lead being named a project's
+                Migration Manager is not a thing this team does, so offering it invited a setting
+                nobody wanted. The admin is the real case: AppUserRole is single-valued, so somebody
+                who is an admin AND runs engagements could otherwise only be assigned by being
+                demoted out of admin, losing Manage Access and the pre-check unblock path. */}
+            {editRole === "ADMIN" && (
               <div style={{ marginBottom: 8 }}>
-                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Team</label>
-                <select value={editTeamId} onChange={(e) => setEditTeamId(e.target.value)} style={{ width: "100%" }}>
-                  <option value="">No team</option>
-                  {teams.map((t) => (
-                    <option key={t.id} value={String(t.id)}>
-                      {teamDisplayName(t)} ({t.name})
-                    </option>
-                  ))}
-                </select>
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={editAssignable}
+                    onChange={(e) => setEditAssignable(e.target.checked)}
+                    style={{ marginTop: 2 }}
+                  />
+                  <span>
+                    <strong style={{ fontWeight: 600 }}>Can be assigned as Migration Manager</strong>
+                    <span style={{ display: "block", color: "var(--color-text-muted)", marginTop: 2 }}>
+                      Adds them to the manager picker when a project is created or reassigned. Their
+                      role, and everything it permits, is unchanged.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            )}
+
+            {/* Only offered for the roles a team means anything for -- plus anyone flagged above,
+                since engineers are auto-assigned from the named manager's team and a flagged person
+                on no team would hand their projects an empty engineer list. */}
+            {(TEAM_ROLES.includes(editRole) || editAssignable) && (
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+                  Teams
+                </label>
+                {/* Checkboxes, not a <select multiple>: membership is multi-valued, and a native
+                    multi-select hides that behind ctrl-click -- an admin who plain-clicks one row
+                    silently drops every other membership. Boxes show the whole set at once, which
+                    is also why the save can send it as-is (assign replaces). */}
+                {teams.length === 0 ? (
+                  <p style={{ margin: 0, fontSize: 12.5, color: "var(--color-text-faint)" }}>
+                    No teams exist yet.
+                  </p>
+                ) : (
+                  <div className="checklist" style={{ maxHeight: 168, overflowY: "auto" }}>
+                    {teams.map((t) => {
+                      const id = String(t.id);
+                      return (
+                        <label
+                          key={t.id}
+                          style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "3px 0" }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={editTeamIds.includes(id)}
+                            onChange={(e) =>
+                              setEditTeamIds((prev) =>
+                                e.target.checked ? [...prev, id] : prev.filter((x) => x !== id)
+                              )
+                            }
+                          />
+                          <span>
+                            {teamDisplayName(t)} ({t.name})
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
                 <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "var(--color-text-faint)" }}>
-                  A Migration Manager's team decides which engineers their projects can assign.
+                  {editTeamIds.length === 0
+                    ? "On no team -- their projects fall back to the full engineer list."
+                    : "A Migration Manager's teams decide which engineers their projects can assign; an engineer on several teams is offered to every one of those managers."}
                 </p>
               </div>
             )}
@@ -853,7 +963,9 @@ export default function AdminUsersPage() {
                 disabled={
                   editSaving ||
                   (editRole === editUser.role &&
-                    editTeamId === (editUser.teamId ? String(editUser.teamId) : ""))
+                    editAssignable === Boolean(editUser.assignableAsManager) &&
+                    editTeamIds.slice().sort().join(",") ===
+                      teamIdsOf(editUser).map(String).slice().sort().join(","))
                 }
               >
                 {editSaving ? "Saving..." : "Save"}

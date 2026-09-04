@@ -1,7 +1,10 @@
 package com.cloudfuze.deltatracker.controller;
 
+import com.cloudfuze.deltatracker.dto.ChangeLogEntryDto;
 import com.cloudfuze.deltatracker.dto.CombinationReadinessDto;
 import com.cloudfuze.deltatracker.dto.DeltaCycleDto;
+import com.cloudfuze.deltatracker.entity.ChangeLogEntityType;
+import com.cloudfuze.deltatracker.service.ChangeLogService;
 import com.cloudfuze.deltatracker.service.DeltaCycleService;
 import com.cloudfuze.deltatracker.service.WorkspaceCombinationService;
 import com.cloudfuze.deltatracker.util.JwtEmailUtil;
@@ -17,11 +20,14 @@ public class WorkspaceCombinationController {
 
     private final WorkspaceCombinationService combinationService;
     private final DeltaCycleService deltaCycleService;
+    private final ChangeLogService changeLogService;
 
     public WorkspaceCombinationController(WorkspaceCombinationService combinationService,
-                                           DeltaCycleService deltaCycleService) {
+                                           DeltaCycleService deltaCycleService,
+                                           ChangeLogService changeLogService) {
         this.combinationService = combinationService;
         this.deltaCycleService = deltaCycleService;
+        this.changeLogService = changeLogService;
     }
 
     @GetMapping("/{id}")
@@ -32,6 +38,18 @@ public class WorkspaceCombinationController {
     // This combination's Delta history -- one entry per completed cycle, each carrying the checklist
     // and sign-off snapshot frozen at its approval time. Read-only by nature (a snapshot is never
     // edited), so it needs no role beyond the allowlist default in SecurityConfig.
+    /**
+     * This combination's edit history, newest first.
+     *
+     * <p>Nothing edits a combination's details today -- there is no PATCH route for one -- so this is
+     * empty by design rather than by omission, and exists so it works the day editing lands. A
+     * combination's actual lifecycle (delta started, finished, declined) is the Delta History below.
+     */
+    @GetMapping("/{id}/history")
+    public List<ChangeLogEntryDto> history(@PathVariable Long id) {
+        return changeLogService.historyDtos(ChangeLogEntityType.COMBINATION, id);
+    }
+
     @GetMapping("/{id}/delta-cycles")
     public List<DeltaCycleDto> deltaCycles(@PathVariable Long id) {
         return deltaCycleService.history(id);

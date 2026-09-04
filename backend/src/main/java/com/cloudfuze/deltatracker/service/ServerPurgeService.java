@@ -5,9 +5,13 @@ import com.cloudfuze.deltatracker.entity.PreCheckItem;
 import com.cloudfuze.deltatracker.entity.Server;
 import com.cloudfuze.deltatracker.entity.WorkspaceCombination;
 import com.cloudfuze.deltatracker.entity.DeltaCycleItem;
+import com.cloudfuze.deltatracker.entity.PreCheckItemEvidence;
+import com.cloudfuze.deltatracker.repository.DeltaCycleItemEvidenceRepository;
 import com.cloudfuze.deltatracker.repository.DeltaCycleItemRepository;
 import com.cloudfuze.deltatracker.repository.DeltaCycleRepository;
 import com.cloudfuze.deltatracker.repository.DeltaCycleSignOffRepository;
+import com.cloudfuze.deltatracker.repository.PreCheckItemEditRepository;
+import com.cloudfuze.deltatracker.repository.PreCheckItemEvidenceRepository;
 import com.cloudfuze.deltatracker.repository.PreCheckItemRepository;
 import com.cloudfuze.deltatracker.repository.PreCheckSubmissionRepository;
 import com.cloudfuze.deltatracker.repository.ServerRepository;
@@ -47,6 +51,9 @@ public class ServerPurgeService {
     private final DeltaCycleRepository deltaCycleRepository;
     private final DeltaCycleItemRepository deltaCycleItemRepository;
     private final DeltaCycleSignOffRepository deltaCycleSignOffRepository;
+    private final PreCheckItemEvidenceRepository preCheckItemEvidenceRepository;
+    private final PreCheckItemEditRepository preCheckItemEditRepository;
+    private final DeltaCycleItemEvidenceRepository deltaCycleItemEvidenceRepository;
     private final FileStorageService fileStorageService;
     private final JdbcTemplate jdbcTemplate;
 
@@ -59,6 +66,9 @@ public class ServerPurgeService {
                               DeltaCycleRepository deltaCycleRepository,
                               DeltaCycleItemRepository deltaCycleItemRepository,
                               DeltaCycleSignOffRepository deltaCycleSignOffRepository,
+                              PreCheckItemEvidenceRepository preCheckItemEvidenceRepository,
+                              PreCheckItemEditRepository preCheckItemEditRepository,
+                              DeltaCycleItemEvidenceRepository deltaCycleItemEvidenceRepository,
                               FileStorageService fileStorageService,
                               JdbcTemplate jdbcTemplate) {
         this.serverRepository = serverRepository;
@@ -70,6 +80,9 @@ public class ServerPurgeService {
         this.deltaCycleRepository = deltaCycleRepository;
         this.deltaCycleItemRepository = deltaCycleItemRepository;
         this.deltaCycleSignOffRepository = deltaCycleSignOffRepository;
+        this.preCheckItemEvidenceRepository = preCheckItemEvidenceRepository;
+        this.preCheckItemEditRepository = preCheckItemEditRepository;
+        this.deltaCycleItemEvidenceRepository = deltaCycleItemEvidenceRepository;
         this.fileStorageService = fileStorageService;
         this.jdbcTemplate = jdbcTemplate;
     }
@@ -112,6 +125,19 @@ public class ServerPurgeService {
         purgeDeltaCycles(combination.getId());
 
         List<PreCheckItem> items = preCheckItemRepository.findByCombinationId(combination.getId());
+        List<Long> itemIds = items.stream().map(PreCheckItem::getId).toList();
+        if (!itemIds.isEmpty()) {
+            // An item's evidence rows and its edit trail both hold a FK to it, so they have to go
+            // FIRST or Postgres refuses the delete -- which surfaced as "That conflicts with an
+            // existing record" when deleting a server or a combination. Every stored file is removed
+            // here too, not just the item's mirrored first one, or the extras leak on disk forever.
+            List<PreCheckItemEvidence> evidence =
+                    preCheckItemEvidenceRepository.findByItemIdInOrderByUploadedAtAscIdAsc(itemIds);
+            evidence.forEach(file -> fileStorageService.delete(file.getFilePath()));
+            preCheckItemEvidenceRepository.deleteAll(evidence);
+            preCheckItemEditRepository.deleteAll(
+                    preCheckItemEditRepository.findByItemIdInOrderByEditedAtDescIdDesc(itemIds));
+        }
         items.forEach(item -> fileStorageService.delete(item.getEvidenceFilePath()));
         preCheckItemRepository.deleteAll(items);
 
@@ -140,6 +166,15 @@ public class ServerPurgeService {
         }
         List<Long> cycleIds = cycles.stream().map(DeltaCycle::getId).toList();
         List<DeltaCycleItem> cycleItems = deltaCycleItemRepository.findByCycleIdInOrderBySortOrderAsc(cycleIds);
+        List<Long> cycleItemIds = cycleItems.stream().map(DeltaCycleItem::getId).toList();
+        if (!cycleItemIds.isEmpty()) {
+            // Same FK problem as the live items above: the frozen per-cycle evidence references these
+            // rows and must be deleted before them. The files themselves were already removed with
+            // the live evidence (the snapshot copies the path, it does not own a second copy), so
+            // only the rows go here.
+            deltaCycleItemEvidenceRepository.deleteAll(
+                    deltaCycleItemEvidenceRepository.findByCycleItemIdInOrderByIdAsc(cycleItemIds));
+        }
         cycleItems.forEach(item -> fileStorageService.delete(item.getEvidenceFilePath()));
         deltaCycleItemRepository.deleteAll(cycleItems);
         deltaCycleSignOffRepository.deleteAll(deltaCycleSignOffRepository.findByCycleIdIn(cycleIds));

@@ -110,12 +110,24 @@ public class WorkspaceCombinationService {
      * keep demanding Permissions Verified / Hyperlinks Verified / Drive changes -- items that don't exist
      * for an email migration and can never be legitimately completed.
      *
-     * <p>Only runs on a checklist nobody has started: NOT_STARTED submission, no statuses set, no
-     * evidence, no notes, and no sign-off chain. A submitted or in-progress pre-check is a real record
-     * and is left exactly as it is, even if its shape is now stale -- silently deleting someone's
-     * evidence to tidy up a list would be far worse than an out-of-date checklist.
+     * <p>Two passes, because "replace the list" and "add what is missing" carry very different risks.
+     *
+     * <ol>
+     *   <li><b>Full replace</b> on a checklist nobody has started -- NOT_STARTED submission, no
+     *       statuses, no evidence, no notes, no chain. Safe because there is nothing to lose, and it
+     *       is the only pass that can REMOVE an item that no longer applies.</li>
+     *   <li><b>Additive top-up</b> on a part-filled checklist that has not been submitted. It gains
+     *       the items its product type has since acquired and keeps everything already filled in.
+     *       Added 2026-09-03: the Folder/File, Email and Channel/DM sections landed while
+     *       combinations were mid-fill, and pass 1 alone left every one of those showing the old
+     *       list -- the new sections simply never appeared. Nothing is removed here: dropping a
+     *       filled item to tidy the shape would destroy an engineer's evidence.</li>
+     * </ol>
+     *
+     * <p>A SUBMITTED pre-check, or one with a sign-off chain, is touched by neither. Adding a blank
+     * mandatory row to a form an approver is already reviewing would silently invalidate it.
      */
-    public void realignPreCheckItemsIfUntouched(WorkspaceCombination combination) {
+    public void alignPreCheckItemsToProductType(WorkspaceCombination combination) {
         List<String> expected = ServerService.preCheckItemsFor(combination.getServer().getProductType());
         List<PreCheckItem> existing = preCheckItemRepository.findByCombinationId(combination.getId());
 
@@ -132,13 +144,43 @@ public class WorkspaceCombinationService {
                 .orElse(true);
         boolean noChain = signOffRepository.findByCombinationId(combination.getId()).isEmpty();
 
-        if (!untouched || !noSubmissionProgress || !noChain) {
+        // Submitted, or already out for approval: neither pass may touch it.
+        if (!noSubmissionProgress || !noChain) {
             return;
         }
 
-        preCheckItemRepository.deleteAll(existing);
+        if (untouched) {
+            preCheckItemRepository.deleteAll(existing);
+            for (String itemName : expected) {
+                preCheckItemRepository.save(new PreCheckItem(combination, itemName));
+            }
+            return;
+        }
+
+        // Part-filled: add what is missing, and drop what no longer applies -- but only where nothing
+        // has been filled into it.
+        //
+        // The removal half matters when a SERVER'S PRODUCT TYPE CHANGES. Content -> Email leaves rows
+        // like Hyperlinks Verified and Drive changes on the form, and an email migration has no
+        // hyperlinks or local drive to evidence: they could never legitimately be completed, so the
+        // checklist could never be submitted. Adding alone was not enough.
+        //
+        // An item somebody HAS filled in is kept even when its product type no longer lists it.
+        // Deleting an engineer's status, note and evidence to tidy up the shape of a form is a worse
+        // outcome than one stale row -- and a filled row, unlike an empty one, does not block submit.
         for (String itemName : expected) {
-            preCheckItemRepository.save(new PreCheckItem(combination, itemName));
+            if (!existingNames.contains(itemName)) {
+                preCheckItemRepository.save(new PreCheckItem(combination, itemName));
+            }
+        }
+        List<PreCheckItem> staleAndEmpty = existing.stream()
+                .filter(item -> !expected.contains(item.getItemName()))
+                .filter(item -> item.getStatus() == ItemStatus.NOT_STARTED
+                        && !StringUtils.hasText(item.getNotes())
+                        && !StringUtils.hasText(item.getEvidenceFilePath()))
+                .toList();
+        if (!staleAndEmpty.isEmpty()) {
+            preCheckItemRepository.deleteAll(staleAndEmpty);
         }
     }
 
@@ -359,6 +401,7 @@ public class WorkspaceCombinationService {
         dto.setDeltaFinishedBy(combination.getDeltaFinishedBy());
         dto.setCurrentCycleNumber(combination.getCurrentCycleNumber());
         dto.setCurrentDeltaCycleLabel(combination.currentDeltaCycleLabel());
+        dto.setCurrentDeltaMajor(combination.getCurrentDeltaMajor());
         dto.setCurrentDeltaType(combination.getCurrentDeltaType());
         DeltaPhase phase = DeltaPhase.of(combination);
         dto.setDeltaPhase(phase);

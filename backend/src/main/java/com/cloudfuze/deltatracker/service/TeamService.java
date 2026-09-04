@@ -76,15 +76,24 @@ public class TeamService {
      * <p>A manager on no team simply has no entry here -- callers treat "absent" as "fall back to
      * the full engineer list", which is what keeps the dropdown from ever coming up empty.
      */
-    @Cacheable(CacheConfig.ROSTER_EMAILS_CACHE)
+    // Key spelled out rather than defaulted: a no-arg method keys on SimpleKey.EMPTY, which
+    // collided with AppUserService.managerCandidateEmails on this same cache and served each
+    // method the other's value. See that method's javadoc for the failure it caused.
+    @Cacheable(value = CacheConfig.ROSTER_EMAILS_CACHE, key = "'engineersByManager'")
     public Map<String, List<String>> engineersByManager() {
         Map<String, List<String>> byManager = new LinkedHashMap<>();
         for (Team team : teamRepository.findAllByOrderByNameAsc()) {
             List<String> engineers = emailsOf(team.getId(), AppUserRole.MIGRATION_ENGINEER);
-            for (String managerEmail : emailsOf(team.getId(), AppUserRole.MIGRATION_MANAGER)) {
-                // A manager can only be on one team (team_id is a single FK), so this never
-                // overwrites a previous entry for the same person.
-                byManager.put(managerEmail.toLowerCase(), engineers);
+            for (String managerEmail : managerEmailsOf(team.getId())) {
+                // MERGED, not put: a manager may now hold several teams, and their engineer pool is
+                // the union across all of them. A plain put would leave whichever team sorted last
+                // as the only one visible, silently hiding the rest of their people. Deduplicated
+                // because an engineer can be on more than one of that manager's teams.
+                byManager.merge(managerEmail.toLowerCase(), engineers, (existing, added) -> {
+                    LinkedHashSet<String> union = new LinkedHashSet<>(existing);
+                    union.addAll(added);
+                    return List.copyOf(union);
+                });
             }
         }
         return byManager;
@@ -121,28 +130,49 @@ public class TeamService {
     /**
      * Deletes a team, detaching its members first.
      *
-     * <p>Members are set back to team_id = null rather than deleted -- a team being dissolved must
-     * never remove people from the access allowlist. Their engineer dropdowns fall back to the
-     * unfiltered list until an admin puts them on another team.
+     * <p>Members lose only THIS membership rather than being deleted -- a team being dissolved must
+     * never remove people from the access allowlist, and with multi-team membership it must not
+     * remove them from their other teams either. Somebody left on no team falls back to the
+     * unfiltered engineer list until an admin places them again.
      */
     public void delete(Long id) {
         Team team = teamRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Team " + id + " not found"));
-        List<AppUser> members = appUserRepository.findByTeamId(id);
+        List<AppUser> members = appUserRepository.findByTeams_Id(id);
         for (AppUser member : members) {
-            member.setTeam(null);
+            member.getTeams().removeIf(t -> t.getId().equals(id));
         }
         appUserRepository.saveAll(members);
         teamRepository.delete(team);
         rosterCache.evict();
     }
 
-    /** Puts a user on a team, or removes them from every team when teamId is null. */
-    public void assign(String email, Long teamId) {
+    /**
+     * Sets a user's teams to exactly {@code teamIds} -- an empty or null list takes them off every
+     * team.
+     *
+     * <p>Replace, not add, because the caller that matters is the admin's team checkboxes: they show
+     * the full picture, so what comes back IS the full picture. A caller that means "also add them
+     * to this team" sends the union it wants, which keeps one endpoint honest instead of two whose
+     * difference is invisible in the payload.
+     */
+    public void assign(String email, List<Long> teamIds) {
         AppUser user = appUserRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException(email + " isn't on the access list"));
-        user.setTeam(teamId == null ? null : teamRepository.findById(teamId)
-                .orElseThrow(() -> new ResourceNotFoundException("Team " + teamId + " not found")));
+        LinkedHashSet<Team> resolved = new LinkedHashSet<>();
+        if (teamIds != null) {
+            for (Long teamId : teamIds) {
+                if (teamId == null) {
+                    continue;
+                }
+                resolved.add(teamRepository.findById(teamId)
+                        .orElseThrow(() -> new ResourceNotFoundException("Team " + teamId + " not found")));
+            }
+        }
+        // Mutated in place rather than replaced wholesale: Hibernate tracks THIS collection instance
+        // to work out which join rows to add and delete.
+        user.getTeams().clear();
+        user.getTeams().addAll(resolved);
         appUserRepository.save(user);
         rosterCache.evict();
     }
@@ -186,15 +216,31 @@ public class TeamService {
         return engineersOf(managerEmail).stream().anyMatch(callerEmail::equalsIgnoreCase);
     }
 
+    /**
+     * Who counts as a manager OF this team for engineer-scoping purposes: the MIGRATION_MANAGER
+     * role, plus anyone an admin flagged assignable (typically an ADMIN who also runs engagements).
+     *
+     * <p>Without the second group a flagged admin had no entry in engineersByManager, so their
+     * projects fell through to the "absent means show everyone" fallback and auto-assignment gave
+     * them no engineers at all -- even with the admin sitting on the right team.
+     */
+    private List<String> managerEmailsOf(Long teamId) {
+        LinkedHashSet<String> emails = new LinkedHashSet<>(emailsOf(teamId, AppUserRole.MIGRATION_MANAGER));
+        for (AppUser member : appUserRepository.findByTeams_IdAndAssignableAsManagerTrue(teamId)) {
+            emails.add(member.getEmail());
+        }
+        return List.copyOf(emails);
+    }
+
     private List<String> emailsOf(Long teamId, AppUserRole role) {
-        return appUserRepository.findByTeamIdAndRole(teamId, role).stream()
+        return appUserRepository.findByTeams_IdAndRole(teamId, role).stream()
                 .map(AppUser::getEmail)
                 .toList();
     }
 
     private List<String> membersOf(Long teamId) {
         List<String> emails = new ArrayList<>();
-        for (AppUser member : appUserRepository.findByTeamId(teamId)) {
+        for (AppUser member : appUserRepository.findByTeams_Id(teamId)) {
             emails.add(member.getEmail());
         }
         return emails;

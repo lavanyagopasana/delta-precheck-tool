@@ -51,12 +51,20 @@ public class WorkspacePairService {
     private static final int MAX_PATH_LEN = 1000;
     private static final int MAX_COMBINATION_LEN = 200;
 
+    // Message's CSV names its four columns Channel name / Destination Channel name / Destination Team
+    // name / Channel type -- accepted here as aliases onto the same four generic fields every other
+    // product type already uses, rather than a second schema. Channel name -> source_email,
+    // Destination Channel name -> destination_email, Destination Team name -> source_path (despite
+    // the "destination" in its own name -- that is the column ORDER Message specifies, third of four,
+    // which lands in the third generic field), Channel type -> destination_path.
     private static final Map<String, List<String>> COLUMN_ALIASES = Map.of(
             "server_url", List.of("serverurl", "url", "server"),
-            "source_email", List.of("sourceemail", "source", "sourceuser", "sourceaccount"),
-            "source_path", List.of("sourcepath", "sourcefolder", "sourcefolderpath"),
-            "destination_email", List.of("destinationemail", "destination", "destinationuser", "targetemail", "destinationaccount"),
-            "destination_path", List.of("destinationpath", "destinationfolder", "targetpath", "destinationfolderpath"),
+            "source_email", List.of("sourceemail", "source", "sourceuser", "sourceaccount", "channelname"),
+            "source_path", List.of("sourcepath", "sourcefolder", "sourcefolderpath", "destinationteamname"),
+            "destination_email", List.of("destinationemail", "destination", "destinationuser", "targetemail",
+                    "destinationaccount", "destinationchannelname"),
+            "destination_path", List.of("destinationpath", "destinationfolder", "targetpath",
+                    "destinationfolderpath", "channeltype"),
             "combination", List.of("combination", "platformcombination", "sourcedestinationtype")
     );
 
@@ -195,6 +203,24 @@ public class WorkspacePairService {
         int updated = 0;
         int duplicate = 0;
 
+        // A re-upload REPLACES this combination's pairs -- the file is the new complete list, so a
+        // row that is no longer in it must no longer be in the app. Merging left rows behind that the
+        // uploader had deliberately removed, with nothing on screen to say so.
+        //
+        // Deleted only after the header and required columns have been validated above, so a file
+        // that was never going to import cannot empty the list on its way to an error. Safe to
+        // delete outright because a WorkspacePair carries no state of its own beyond the row --
+        // source/destination email and path, and the combination name.
+        List<WorkspacePair> existing =
+                workspacePairRepository.findByServerIdAndCombinationIgnoreCase(server.getId(), trimmedCombination);
+        int replaced = existing.size();
+        if (!existing.isEmpty()) {
+            workspacePairRepository.deleteAll(existing);
+            // Flushed so the duplicate check inside processRow sees the rows as gone; otherwise every
+            // re-uploaded row would come back as a duplicate of the one it is replacing.
+            workspacePairRepository.flush();
+        }
+
         for (int rowNum = 1; rowNum < lines.size(); rowNum++) {
             String line = lines.get(rowNum);
             if (!StringUtils.hasText(line)) {
@@ -209,12 +235,23 @@ public class WorkspacePairService {
             }
         }
 
+        // Nothing usable in the file, but rows were deleted to make room for it: refuse the whole
+        // thing so the transaction rolls back and the old list survives. Without this, re-uploading
+        // a malformed file would silently leave the combination with no pairs at all.
+        if (created == 0 && replaced > 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "No usable rows in this CSV, so the existing " + replaced + " pair"
+                            + (replaced == 1 ? "" : "s") + " were kept. "
+                            + (errors.isEmpty() ? "The file has a header but no data rows." : errors.get(0)));
+        }
+
         server.setTotalPairCount((int) workspacePairRepository.countByServerId(server.getId()));
         serverRepository.save(server);
 
         result.setTotalRows(lines.size() - 1);
         result.setCreatedCount(created);
         result.setUpdatedCount(updated);
+        result.setReplacedCount(replaced);
         result.setDuplicateCount(duplicate);
         result.setDuplicates(duplicates);
         result.setErrors(errors);

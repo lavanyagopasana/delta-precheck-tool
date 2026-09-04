@@ -47,11 +47,35 @@ export function CycleSnapshot({ cycle }) {
                     {item.notes || <span style={{ color: "var(--color-text-faint)" }}>—</span>}
                   </td>
                   <td>
-                    {item.evidenceFilePath ? (
-                      <AttachmentPreview filePath={item.evidenceFilePath} fileName={item.evidenceFileName} />
-                    ) : (
-                      <span style={{ color: "var(--color-text-faint)" }}>—</span>
-                    )}
+                    {/* Every file frozen with the item, not just the first. evidenceFiles falls back to
+                        the single evidenceFilePath so cycles snapshotted before multi-file evidence
+                        existed still show the one file they genuinely recorded. */}
+                    {(() => {
+                      const files = item.evidenceFiles?.length
+                        ? item.evidenceFiles
+                        : item.evidenceFilePath
+                        ? [{ filePath: item.evidenceFilePath, fileName: item.evidenceFileName }]
+                        : [];
+                      if (!files.length) {
+                        return <span style={{ color: "var(--color-text-faint)" }}>—</span>;
+                      }
+                      return (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          {files.length > 1 && (
+                            <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+                              {files.length} files
+                            </span>
+                          )}
+                          {files.map((file) => (
+                            <AttachmentPreview
+                              key={file.filePath}
+                              filePath={file.filePath}
+                              fileName={file.fileName}
+                            />
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </td>
                 </tr>
               ))}

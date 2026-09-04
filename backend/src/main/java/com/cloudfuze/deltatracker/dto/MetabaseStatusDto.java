@@ -39,4 +39,17 @@ public class MetabaseStatusDto {
     // How many rows were excluded as CloudFuze-internal. Not hidden: on one real database this was 53
     // workspaces carrying 47 conflicts, which would have inflated the customer's figures.
     private long excludedInternalWorkspaces;
+
+    // ---- Drive changes. CONTENT only; null on the email and message entries, because
+    // DriveChangeIdDetails is a Drive concept and that collection does not exist for them. A null
+    // list and an empty list mean different things here: null is "not applicable to this product
+    // type", empty is "asked, and the customer has no Drive changes".
+    private List<MetabaseStatusCountDto> driveChanges;
+    // Whose changes these are: Users._id plus the primaryEmail it belongs to. Carried so the panel
+    // can name the customer AND give the id needed to reproduce the figure in Metabase by hand.
+    private List<MetabaseUserDto> driveChangeUsers;
+    private long totalDriveChanges;
+    // Non-null when the Drive change read specifically failed. Kept separate from `error` so a
+    // failure here still leaves the workspace counts on screen rather than blanking the whole block.
+    private String driveChangesError;
 }

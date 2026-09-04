@@ -184,10 +184,18 @@ public class SecurityConfig {
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER, AppUserRole.DEV_LEAD, AppUserRole.QA_LEAD))
                         .requestMatchers(HttpMethod.POST, "/api/pairs/import", "/api/servers/*/pairs/import").access(roleRequired(
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER, AppUserRole.MIGRATION_MANAGER))
-                        // Deleting a combination's pairs -- admin-only (unlike importing, which is
-                        // shared with engineers/managers).
+                        // Edit history and CSV upload history: GET only, any allowlisted caller. These
+                        // trails exist to be read -- restricting them to whoever may make the edit
+                        // would defeat the disclosure they are for. Listed ahead of the write rules
+                        // below so a role gate on editing never narrows who may READ the trail.
+                        .requestMatchers(HttpMethod.GET, "/api/projects/*/history", "/api/projects/deleted",
+                                "/api/servers/*/history", "/api/combinations/*/history",
+                                "/api/servers/*/pair-imports")
+                                .access(allowlistRequired())
+                        // Deleting a combination's pairs -- admins and managers. Engineers can still
+                        // IMPORT (above) but not clear the list, which is the destructive half.
                         .requestMatchers(HttpMethod.DELETE, "/api/servers/*/pairs").access(roleRequired(
-                                AppUserRole.ADMIN))
+                                AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER))
                         // Creating a Server directly (the "Server URL" add flow) -- same role set as
                         // CSV import, since it's an alternate way of doing the same thing a CSV row does.
                         .requestMatchers(HttpMethod.POST, "/api/projects/*/servers").access(roleRequired(
@@ -206,17 +214,19 @@ public class SecurityConfig {
                         // rather than left to the anyRequest() default, per .claude/rules/api-conventions.md.
                         .requestMatchers(HttpMethod.GET, "/api/combinations/*/delta-cycles")
                                 .access(allowlistRequired())
-                        // Decommissioning a server -- ADMIN only, matching the product decision that only
-                        // admins do this. It permanently erases the server and everything under it, so
-                        // this is the most destructive route in the app; also re-checked in ServerService
-                        // so the rule survives a routing change. Listed before the PATCH/DELETE
-                        // /api/servers/* rules below so it can't be widened by them.
+                        // Decommissioning a server -- admins and Migration Managers, who own delivery for
+                        // their projects. It permanently erases the server and everything under it, so this
+                        // is the most destructive route in the app; also re-checked in
+                        // ServerService.requireAdminOrManager so the rule survives a routing change, and the
+                        // all-Final-Deltas-complete guard still stops it erasing in-flight work. Listed
+                        // before the PATCH/DELETE /api/servers/* rules below so it can't be widened by them.
                         .requestMatchers(HttpMethod.POST, "/api/servers/*/decommission").access(roleRequired(
-                                AppUserRole.ADMIN))
-                        // Deleting a server (admin-only, anytime) -- same cascade as decommission but
-                        // without the all-Final-Deltas-complete guard. Also re-checked in ServerService.
+                                AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER))
+                        // Deleting a server (admins and managers, anytime) -- same cascade as decommission
+                        // but WITHOUT the all-Final-Deltas-complete guard, so this one can erase in-flight
+                        // work. Also re-checked in ServerService.
                         .requestMatchers(HttpMethod.DELETE, "/api/servers/*").access(roleRequired(
-                                AppUserRole.ADMIN))
+                                AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER))
                         // Deleting a project is gated here to the roles that could ever be allowed; the
                         // per-project ownership check (creator / managing MM / admin) and the
                         // Delta-initiated audit guard are enforced in ProjectService.delete.
@@ -243,21 +253,37 @@ public class SecurityConfig {
                         // DEV_LEAD/QA_LEAD approvers) is in ProjectService.updateMetabaseDatabaseName.
                         .requestMatchers(HttpMethod.PATCH, "/api/projects/*/metabase").access(roleRequired(
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER, AppUserRole.MIGRATION_ENGINEER))
+                        // Removing one is admins and managers, stated here as well as in the service:
+                        // it subtracts from figures a Delta was already approved against, and the
+                        // route should not depend on the service check alone to say so.
+                        .requestMatchers(HttpMethod.DELETE, "/api/projects/*/metabase")
+                                .access(roleRequired(AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER))
                         // Edit project details -- gated to roles that can ever edit; the per-project
                         // check (admin / current MM / creator / assigned engineer) is in ProjectService.
                         .requestMatchers(HttpMethod.PATCH, "/api/projects/*").access(roleRequired(
                                 AppUserRole.ADMIN, AppUserRole.MIGRATION_MANAGER, AppUserRole.MIGRATION_ENGINEER))
+                        // Includes the per-item edit trail (GET .../precheck-items/{id}/history):
+                        // it is disclosure, so every allowlisted caller sees it -- including the Dev
+                        // and QA Leads who approve an item they cannot edit, who are precisely the
+                        // people the trail exists for now that managers can fill a form they approve.
                         .requestMatchers(HttpMethod.GET, "/api/combinations/*/precheck-items/**", "/api/combinations/*/precheck-submission/**")
                                 .access(allowlistRequired())
-                        // Filling out and submitting a pre-check is a MIGRATION_ENGINEER action only, as of
-                        // 2026-08-06. MIGRATION_MANAGER was removed by product decision: the manager is the
-                        // first approver in the sign-off chain, so letting them also fill in the form they
-                        // then approve collapses two steps of the chain into one person. DEV_LEAD/QA_LEAD
-                        // were never here. ADMIN stays as the deliberate unblock path for a pre-check locked
-                        // to an engineer who has become unavailable -- without it that needs a database edit.
-                        // The per-action admin bypasses live in the services (ownership lock, submitted lock).
+                        // Filling out and submitting a pre-check: MIGRATION_ENGINEER, ADMIN and -- as of
+                        // 2026-09-03 -- MIGRATION_MANAGER. DEV_LEAD/QA_LEAD were never here.
+                        //
+                        // The manager was deliberately EXCLUDED from 2026-08-06 until then, because they are
+                        // the first approver in the chain and filling in the form they then approve collapses
+                        // two steps into one person. That risk has not gone away; it is now accepted and
+                        // mitigated by disclosure instead of prohibition -- every edit is recorded with its
+                        // author and role in precheck_item_edits and shown to everyone on the item, so a
+                        // manager approving their own entries is visible to whoever looks rather than
+                        // prevented. Reverting this means reverting that trail's purpose too.
+                        //
+                        // ADMIN additionally holds the per-action bypasses in the services (the "someone else
+                        // is filling this in" ownership lock, and the post-submission lock).
                         .requestMatchers("/api/combinations/*/precheck-items/**", "/api/combinations/*/precheck-submission/**")
-                                .access(roleRequired(AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER))
+                                .access(roleRequired(AppUserRole.ADMIN, AppUserRole.MIGRATION_ENGINEER,
+                                        AppUserRole.MIGRATION_MANAGER))
                         // Teams: any allowlisted caller may READ them, because the project dashboard
                         // needs team membership to scope its engineer picker and every role opens that
                         // page. Every WRITE is ADMIN-only -- team membership decides which engineers a
