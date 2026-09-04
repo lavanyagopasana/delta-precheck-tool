@@ -77,10 +77,12 @@ public class PreCheckSubmissionService {
 
         List<PreCheckItem> items = itemRepository.findByCombinationId(combinationId);
 
-        // "Pre Delta Migration" is only required once Delta Type has actually been set to
-        // PRE_DELTA -- otherwise the frontend hides it entirely, so it can't have a status,
-        // evidence, or a note either. Mirrors PreCheckPanel.js's preDeltaMigrationRequired.
-        boolean preDeltaMigrationRequired = items.stream()
+        // "Previous Delta Migration" is only required once Delta Type has actually been set to
+        // PRE_DELTA AND this is not the combination's first pre-delta (currentDeltaMajor > 1) --
+        // there is no previous delta to report on yet. Otherwise the frontend hides it entirely, so
+        // it can't have a status, evidence, or a note either. Mirrors PreCheckPanel.js's
+        // preDeltaMigrationRequired.
+        boolean preDeltaMigrationRequired = combination.getCurrentDeltaMajor() > 1 && items.stream()
                 .filter(i -> ServerService.DELTA_TYPE_ITEM.equals(i.getItemName()))
                 .findFirst()
                 .map(i -> i.getStatus() == ItemStatus.PRE_DELTA)

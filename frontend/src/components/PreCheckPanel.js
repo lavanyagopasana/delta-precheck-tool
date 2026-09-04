@@ -29,6 +29,19 @@ import DeltaBadge from "./DeltaBadge";
 import { emailLocalPart } from "../utils/format";
 import { previousDeltasDoneCount } from "../utils/delta";
 
+// The stored item name never changes ("Previous Delta Migration" is the matching key every save,
+// submit-precondition check and alignment pass keys off), but what it's LABELLED as does: on the
+// combination's Nth pre-delta this is asking about the (N-1)th one specifically, so "Pre Delta 2
+// Migration" on the 3rd pre-delta reads as what it actually is, not a generic "previous" that leaves
+// which cycle unstated. Purely a display transform, the same way deltaTypeStatusOptions below turns
+// deltaMajor into "Pre delta 2" without touching what's stored for Delta Type either.
+function itemDisplayName(itemName, deltaMajor) {
+  if (isPreDeltaMigrationItem(itemName) && deltaMajor > 1) {
+    return `Pre Delta ${deltaMajor - 1} Migration`;
+  }
+  return itemName;
+}
+
 // Filling out and submitting a pre-check is a MIGRATION_ENGINEER action. MIGRATION_MANAGER was removed
 // on 2026-08-06: the manager is the first approver in the sign-off chain, so filling in the form they
 // then approve collapses two steps into one person. DEV_LEAD/QA_LEAD were never allowed. ADMIN stays as
@@ -214,9 +227,9 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, deltaMaj
         ...patch,
       });
       onSaved(updated);
-      showToast(successMessage || `${item.itemName} saved.`, "success");
+      showToast(successMessage || `${itemDisplayName(item.itemName, deltaMajor)} saved.`, "success");
     } catch (err) {
-      const msg = err.response?.data?.message || `Couldn't save ${item.itemName}. Please try again.`;
+      const msg = err.response?.data?.message || `Couldn't save ${itemDisplayName(item.itemName, deltaMajor)}. Please try again.`;
       setError(msg);
       showToast(msg, "error");
     }
@@ -277,7 +290,7 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, deltaMaj
         .join(", ");
       await save(
         { evidenceFiles: [...existing, ...attached] },
-        `${attached.length} file${attached.length === 1 ? "" : "s"} uploaded to ${item.itemName}`
+        `${attached.length} file${attached.length === 1 ? "" : "s"} uploaded to ${itemDisplayName(item.itemName, deltaMajor)}`
           + `: ${names}. ${total} attached in total.`
       );
     }
@@ -355,6 +368,9 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, deltaMaj
   };
 
   const attachedFiles = evidenceFilesOf(item);
+  // Display only -- item.itemName (the stored name) is still what every comparison below and the
+  // save/toast calls above key off.
+  const displayName = itemDisplayName(item.itemName, deltaMajor);
   const isDeltaType = item.itemName === DELTA_TYPE_ITEM;
   // Hyperlinks Verified answered "Not Applicable": nothing to attach evidence for or note, since
   // this combination has no hyperlinks to check at all. Mirrors
@@ -387,10 +403,10 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, deltaMaj
     <div className="precheck-item-card" style={{ borderLeftColor: visual.border }}>
       <div className="precheck-item-card-header">
         <span id={`precheck-item-label-${item.id}`} className="precheck-item-name">
-          {item.itemName}
+          {displayName}
         </span>
         <label className="sr-only" htmlFor={`precheck-status-${item.id}`}>
-          {item.itemName} status
+          {displayName} status
         </label>
         <select
           id={`precheck-status-${item.id}`}
@@ -519,7 +535,7 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, deltaMaj
           ) : (
             <>
               <label className="sr-only" htmlFor={`precheck-notes-${item.id}`}>
-                {item.itemName} notes
+                {displayName} notes
               </label>
               <textarea
                 id={`precheck-notes-${item.id}`}
@@ -680,10 +696,12 @@ export default function PreCheckPanel({
   // the backend refuses edits from everyone including admins (PreCheckItemService.requireNotFinalised).
   const locked = submission.status === "SUBMITTED" || !canEdit || combination.finalDeltaComplete;
 
-  // "Pre Delta Migration" only applies once Delta Type has actually been set to "Pre delta" --
-  // before that (Not Started) or once it's "Final delta", the item is hidden and not required.
+  // "Previous Delta Migration" only applies once Delta Type is actually "Pre delta" AND this is not
+  // the combination's first pre-delta (currentDeltaMajor > 1) -- there is no previous delta to
+  // report on yet on the very first one. Before PRE_DELTA (Not Started), once it's "Final delta", or
+  // on the first pre-delta, the item is hidden and not required.
   const deltaTypeItem = items.find((i) => i.itemName === DELTA_TYPE_ITEM);
-  const preDeltaMigrationRequired = deltaTypeItem?.status === "PRE_DELTA";
+  const preDeltaMigrationRequired = deltaTypeItem?.status === "PRE_DELTA" && (combination.currentDeltaMajor || 1) > 1;
   const visibleItems = items.filter((i) => !isPreDeltaMigrationItem(i.itemName) || preDeltaMigrationRequired);
 
   // Withdrawing a submitted pre-check is ADMIN-only by explicit product decision -- engineers and

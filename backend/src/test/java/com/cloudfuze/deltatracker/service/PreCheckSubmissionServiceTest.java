@@ -150,6 +150,57 @@ class PreCheckSubmissionServiceTest {
         assertThat(combination.getCurrentDeltaType()).isEqualTo(DeltaType.FINAL_DELTA);
     }
 
+
+    /**
+     * The first pre-delta has no previous one to report on. combination.currentDeltaMajor defaults
+     * to 1, so this is the default state for every fresh combination, not a special setup.
+     */
+    @Test
+    void previousDeltaMigrationItemNotRequiredOnTheFirstPreDelta() {
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
+        when(itemRepository.findByCombinationId(CID)).thenReturn(List.of(
+                deltaTypeItem(ItemStatus.PRE_DELTA),
+                goodItem("Item A"),
+                // Present on the checklist (WorkspaceCombinationService seeds every product-type item
+                // regardless of cycle) but deliberately left blank -- submit must not care.
+                item(ServerService.PRE_DELTA_MIGRATION_ITEM, ItemStatus.NOT_STARTED, null, null)));
+
+        PreCheckSubmissionDto dto = service.submit(CID, request(OWNER));
+
+        assertThat(dto.getStatus()).isEqualTo(SubmissionStatus.SUBMITTED);
+    }
+
+    /**
+     * The second pre-delta onwards DOES have one to report on: currentDeltaMajor > 1 turns the same
+     * item that was exempt above back into a real requirement.
+     */
+    @Test
+    void previousDeltaMigrationItemIsRequiredFromTheSecondPreDeltaOnwards() {
+        combination.setCurrentDeltaMajor(2);
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
+        when(itemRepository.findByCombinationId(CID)).thenReturn(List.of(
+                deltaTypeItem(ItemStatus.PRE_DELTA),
+                goodItem("Item A"),
+                item(ServerService.PRE_DELTA_MIGRATION_ITEM, ItemStatus.NOT_STARTED, null, null)));
+
+        assertThatThrownBy(() -> service.submit(CID, request(OWNER)))
+                .isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    void previousDeltaMigrationItemSubmitsFineOnceFilledInOnASecondPreDelta() {
+        combination.setCurrentDeltaMajor(3);
+        when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, OWNER, null)));
+        when(itemRepository.findByCombinationId(CID)).thenReturn(List.of(
+                deltaTypeItem(ItemStatus.PRE_DELTA),
+                goodItem("Item A"),
+                goodItem(ServerService.PRE_DELTA_MIGRATION_ITEM)));
+
+        PreCheckSubmissionDto dto = service.submit(CID, request(OWNER));
+
+        assertThat(dto.getStatus()).isEqualTo(SubmissionStatus.SUBMITTED);
+    }
+
     @Test
     void submitRejectedWhenDeltaTypeItemIsMissingEntirely() {
         // A combination seeded before the Delta Type item existed. Guessing either way is wrong --

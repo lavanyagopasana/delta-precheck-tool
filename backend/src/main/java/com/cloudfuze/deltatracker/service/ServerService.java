@@ -88,9 +88,12 @@ public class ServerService {
     /**
      * The Email checklist, confirmed with the team on 2026-08-06. Deliberately shorter than Content:
      * an email migration has no folder permissions, no hyperlinks and no local drive to reconcile, so
-     * Permissions Verified / Hyperlinks Verified / Drive changes don't apply. There is also no
-     * "Previous Delta Migration" item -- that one exists to record the prior delta's data movement for
-     * Content, and Email tracks the same thing through One Time Migration.
+     * Permissions Verified / Hyperlinks Verified / Drive changes don't apply.
+     *
+     * <p>Previous Delta Migration was left out here until 2026-09-04 on the reasoning that Email
+     * tracks the same thing through One Time Migration -- reversed by product decision: Email gets it
+     * too, same as Content and Message, once there is a previous pre-delta to report on
+     * (PreCheckSubmissionService gates it on currentDeltaMajor > 1, not on product type).
      *
      * <p>Delta Type stays first for the same reason it leads the Content list: it settles whether this
      * cycle is a pre-delta or the final one. Every item except Delta Type requires a status, an evidence
@@ -99,6 +102,7 @@ public class ServerService {
     public static final List<String> EMAIL_PRE_CHECK_ITEMS = List.of(
             DELTA_TYPE_ITEM,
             "OneTime Migration",
+            PRE_DELTA_MIGRATION_ITEM,
             // Added 2026-09-03, one row each, in the order an email migration is actually checked:
             // the folder tree, what got picked up, what is queued to copy, the resulting counts, then
             // attachments. Each carries its own status, mandatory note and mandatory evidence.
@@ -119,7 +123,10 @@ public class ServerService {
     /**
      * The Message checklist, confirmed with the team on 2026-08-07. Shares Data Verified and Workspace
      * Status Updated in DB with Content unchanged, drops the file-oriented items (Permissions,
-     * Hyperlinks, Drive changes, Previous Delta Migration), and adds Delta Message Sync.
+     * Hyperlinks, Drive changes), and adds Delta Message Sync.
+     *
+     * <p>Previous Delta Migration was excluded here too until 2026-09-04, reversed the same way and
+     * for the same reason as Email's -- see EMAIL_PRE_CHECK_ITEMS's javadoc.
      *
      * <p>Two of its items carry non-default status options: OneTime Migration can be partially
      * completed (a chat migration can move some history and not the rest), and Delta Message Sync is
@@ -129,6 +136,7 @@ public class ServerService {
     public static final List<String> MESSAGE_PRE_CHECK_ITEMS = List.of(
             DELTA_TYPE_ITEM,
             "OneTime Migration",
+            PRE_DELTA_MIGRATION_ITEM,
             // Added 2026-09-03, immediately under One Time Migration: a chat migration is verified as
             // channels first and direct/group messages second. One row each, with a mandatory note
             // and a mandatory upload (the evidence for these is the user-mapping CSV).
@@ -322,6 +330,7 @@ public class ServerService {
                     "Every combination on this server must complete its Final Delta before it can be decommissioned.");
         }
 
+        recordServerRemoval(server, "Server decommissioned", callerEmail);
         serverPurgeService.purge(server);
     }
 
@@ -335,7 +344,23 @@ public class ServerService {
     public void deleteServer(Long serverId, String callerEmail) {
         requireAdminOrManager(callerEmail);
         Server server = findOrThrow(serverId);
+        recordServerRemoval(server, "Server deleted", callerEmail);
         serverPurgeService.purge(server);
+    }
+
+    /**
+     * Records a server's removal (decommission or delete) against its PROJECT's history, not the
+     * server's own -- the server row is about to be gone, and unlike a project there is no
+     * "recently removed servers" list, so the project's own history panel (which still exists) is
+     * the only place this stays visible. A server with no project records nothing: nobody can
+     * navigate to a project page to see it anyway.
+     */
+    private void recordServerRemoval(Server server, String fieldName, String callerEmail) {
+        if (server.getProject() == null) {
+            return;
+        }
+        changeLogService.record(ChangeLogEntityType.PROJECT, server.getProject().getId(), fieldName,
+                server.getName(), null, callerEmail);
     }
 
     // Not AppUserService.requireAdmin: that one's message is specific to managing app access, and this
