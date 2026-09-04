@@ -21,7 +21,9 @@ public class RosterController {
     @GetMapping("/api/roster")
     public RosterDto roster() {
         RosterDto dto = new RosterDto();
-        dto.setMigrationManagers(appUserService.emailsForRole(AppUserRole.MIGRATION_MANAGER));
+        // Not emailsForRole(MIGRATION_MANAGER): an admin who also runs engagements is assignable
+        // once flagged, and this list is what the project manager picker renders.
+        dto.setMigrationManagers(appUserService.managerCandidateEmails());
         dto.setEngineers(appUserService.emailsForRole(AppUserRole.MIGRATION_ENGINEER));
         dto.setDevLeads(appUserService.emailsForRole(AppUserRole.DEV_LEAD));
         dto.setQaLeads(appUserService.emailsForRole(AppUserRole.QA_LEAD));
