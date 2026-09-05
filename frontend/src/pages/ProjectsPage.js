@@ -16,7 +16,7 @@ import Modal from "../components/Modal";
 import HistoryButton from "../components/HistoryButton";
 import { TrashIcon, PlusIcon, EditIcon } from "../components/Icons";
 import { useConfirm } from "../components/ConfirmDialog";
-import { emailLocalPart, humanizePhase } from "../utils/format";
+import { emailLocalPart } from "../utils/format";
 
 const EMPTY_ROSTER = { migrationManagers: [], engineers: [] };
 
@@ -317,11 +317,6 @@ export default function ProjectsPage() {
               </div>
             ),
           },
-          {
-            key: "externalCustomerName",
-            label: "Customer",
-            render: (p) => p.externalCustomerName || "-",
-          },
           // Centred: a single-character count sitting at the left edge of a three-word header does not
           // read as belonging to it.
           { key: "serverCount", label: "No. Server URLs", filterable: false, align: "center" },
@@ -345,19 +340,6 @@ export default function ProjectsPage() {
               ) : (
                 "Not assigned yet"
               ),
-          },
-          {
-            // PMO's own phase for the project (KICKOFF -> ... -> DELTA -> COMPLETED). Read-only: this
-            // tool does not drive it, PMO does, and it is refreshed on every poll. Useful here because
-            // DELTA is precisely the phase this tracker gates, so it says which projects are close to
-            // needing a pre-check. Blank for projects created by hand, which have no PMO phase at all.
-            //
-            // Last of the data columns, by request. The actions column after it carries no label and
-            // holds the edit/delete buttons, so this is the rightmost thing on the row that reads as
-            // information about the project.
-            key: "externalPhase",
-            label: "PMO Phase",
-            render: (p) => (p.externalPhase ? humanizePhase(p.externalPhase) : "-"),
           },
           // No "Created By" column. Every PMO-synced project carried the literal string "PMO sync"
           // there (PmoSyncService.SYNC_CREATED_BY), so on a list that is almost entirely PMO projects
