@@ -456,6 +456,16 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, deltaMaj
                     filePath={file.filePath}
                     fileName={fileDisplayName(file.filePath, file.fileName)}
                     variant="full"
+                    // Who attached this specific file and when -- visible to everyone, not just the
+                    // person who uploaded it, so a form filled in by several engineers shows who did
+                    // which part.
+                    caption={
+                      file.uploadedBy
+                        ? `Uploaded by ${emailLocalPart(file.uploadedBy)}${
+                            file.uploadedAt ? ` · ${new Date(file.uploadedAt).toLocaleString()}` : ""
+                          }`
+                        : undefined
+                    }
                     onRemove={locked ? undefined : () => removeEvidenceFile(file.filePath)}
                   />
                 ))}
@@ -553,6 +563,15 @@ function ItemRow({ item, locked, combinationId, editingAs, productType, deltaMaj
           )}
 
           {error && <div className="inline-hint" style={{ marginTop: 8 }}>{error}</div>}
+
+          {/* Who last touched this item's status/note -- shown to everyone so a checklist filled in
+              by several engineers shows who did which section, not just what was filled. */}
+          {item.lastModifiedBy && (
+            <div style={{ fontSize: 11, color: "var(--color-text-faint)", marginTop: 6 }}>
+              Last updated by {emailLocalPart(item.lastModifiedBy)}
+              {item.lastModifiedAt ? ` · ${new Date(item.lastModifiedAt).toLocaleString()}` : ""}
+            </div>
+          )}
 
         </div>
       )}
@@ -660,30 +679,6 @@ export default function PreCheckPanel({
         <button className="btn secondary" style={{ marginTop: 12 }} onClick={load}>
           Retry
         </button>
-      </div>
-    );
-  }
-
-  if (submission.lockedByOther) {
-    return (
-      <div>
-        {showBackNav && (
-          <PreCheckBackNav
-            fromSignoff={fromSignoff}
-            projectId={combination.projectId}
-            projectName={combination.projectName}
-          />
-        )}
-        {showHeader && (
-          <PreCheckHeader serverName={combination.serverName} combinationName={combination.combinationName} />
-        )}
-        <div className="card">
-          <strong style={{ fontSize: 14 }}>This pre-check is in progress</strong>
-          <p style={{ color: "var(--color-text-muted)", fontSize: 13.5 }}>
-            {submission.startedByEmail} is currently filling this out. It'll be visible here once they submit it for
-            Migration Manager review.
-          </p>
-        </div>
       </div>
     );
   }

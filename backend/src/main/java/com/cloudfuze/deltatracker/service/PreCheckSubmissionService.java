@@ -67,14 +67,6 @@ public class PreCheckSubmissionService {
         requireNotFinalised(combination);
         PreCheckSubmission submission = getOrCreate(combination);
 
-        if (StringUtils.hasText(submission.getStartedByEmail())
-                && !submission.getStartedByEmail().equalsIgnoreCase(request.getSubmittedBy())
-                && !appUserService.isAdmin(request.getSubmittedBy())) {
-            throw new ApiException(HttpStatus.FORBIDDEN,
-                    "This pre-check is currently being filled out by " + submission.getStartedByEmail()
-                            + " -- only they can submit it.");
-        }
-
         List<PreCheckItem> items = itemRepository.findByCombinationId(combinationId);
 
         // "Previous Delta Migration" is only required once Delta Type has actually been set to
@@ -222,13 +214,12 @@ public class PreCheckSubmissionService {
                 .orElseGet(() -> submissionRepository.save(new PreCheckSubmission(combination)));
     }
 
+    // viewerEmail is unused now that a half-filled form is visible (and fillable) by anyone eligible
+    // rather than only the person who started it -- kept as a parameter since every caller already
+    // has it and callers outside this class shouldn't need to know that stopped mattering here.
     private PreCheckSubmissionDto toDto(PreCheckSubmission submission, String viewerEmail) {
         WorkspaceCombination combination = submission.getCombination();
         List<PreCheckItem> items = itemRepository.findByCombinationId(combination.getId());
-
-        boolean lockedByOther = submission.getStatus() != SubmissionStatus.SUBMITTED
-                && StringUtils.hasText(submission.getStartedByEmail())
-                && !submission.getStartedByEmail().equalsIgnoreCase(viewerEmail == null ? "" : viewerEmail.trim());
 
         PreCheckSubmissionDto dto = new PreCheckSubmissionDto();
         dto.setId(submission.getId());
@@ -240,7 +231,6 @@ public class PreCheckSubmissionService {
         dto.setSubmittedBy(submission.getSubmittedBy());
         dto.setSubmittedAt(submission.getSubmittedAt());
         dto.setStartedByEmail(submission.getStartedByEmail());
-        dto.setLockedByOther(lockedByOther);
         dto.setTotalCount(items.size());
 
         List<String> orderedItemNames = ServerService.preCheckItemsFor(combination.getServer().getProductType());
@@ -248,26 +238,21 @@ public class PreCheckSubmissionService {
                 .sorted(Comparator.comparingInt(i -> sortIndexOf(orderedItemNames, i.getItemName())))
                 .toList();
 
-        if (lockedByOther) {
-            dto.setCompletedCount(0);
-            dto.setItems(ordered.stream().map(PreCheckItemDto::redacted).toList());
-        } else {
-            dto.setCompletedCount((int) ordered.stream().filter(PreCheckSubmissionService::isItemComplete).count());
-            // Mapped WITH each item's evidence rows. Using the one-argument fromEntity here left
-            // evidenceFiles empty, and the panel's fallback then showed only evidenceFilePath -- the
-            // first file -- so an item with three attachments displayed one the moment the form was
-            // read through the submission (i.e. straight after submitting). The files were never
-            // lost; this path simply did not ask for them.
-            List<Long> itemIds = ordered.stream().map(PreCheckItem::getId).toList();
-            Map<Long, List<PreCheckItemEvidence>> evidenceByItem = itemIds.isEmpty()
-                    ? Map.of()
-                    : evidenceRepository.findByItemIdInOrderByUploadedAtAscIdAsc(itemIds).stream()
-                            .collect(Collectors.groupingBy(PreCheckItemEvidence::getItemId));
-            dto.setItems(ordered.stream()
-                    .map(item -> PreCheckItemDto.fromEntity(item,
-                            evidenceByItem.getOrDefault(item.getId(), List.of())))
-                    .toList());
-        }
+        dto.setCompletedCount((int) ordered.stream().filter(PreCheckSubmissionService::isItemComplete).count());
+        // Mapped WITH each item's evidence rows. Using the one-argument fromEntity here left
+        // evidenceFiles empty, and the panel's fallback then showed only evidenceFilePath -- the
+        // first file -- so an item with three attachments displayed one the moment the form was
+        // read through the submission (i.e. straight after submitting). The files were never
+        // lost; this path simply did not ask for them.
+        List<Long> itemIds = ordered.stream().map(PreCheckItem::getId).toList();
+        Map<Long, List<PreCheckItemEvidence>> evidenceByItem = itemIds.isEmpty()
+                ? Map.of()
+                : evidenceRepository.findByItemIdInOrderByUploadedAtAscIdAsc(itemIds).stream()
+                        .collect(Collectors.groupingBy(PreCheckItemEvidence::getItemId));
+        dto.setItems(ordered.stream()
+                .map(item -> PreCheckItemDto.fromEntity(item,
+                        evidenceByItem.getOrDefault(item.getId(), List.of())))
+                .toList());
         return dto;
     }
 

@@ -20,8 +20,10 @@ explicitly below so nobody has to re-discover them.
 - **`PreCheckItem`** — belongs to a `Server` (not a pair); `itemName`, `status` (`ItemStatus`),
   `notes`, one evidence file. One flat, server-wide checklist — not split into categories.
 - **`PreCheckSubmission`** — **exactly one per `Server`** (`unique(server_id)`), `status`
-  (`NOT_STARTED`→`DRAFT`→`SUBMITTED`), `startedByEmail` (locks the form to whoever started it until
-  submitted), `submittedBy`/`submittedAt`.
+  (`NOT_STARTED`→`DRAFT`→`SUBMITTED`), `startedByEmail` (who first touched it — informational only
+  as of 2026-09-04, no longer a lock; any eligible person can view a half-filled form and fill in
+  what's left — see the note under "The real pre-check submission rule"), `submittedBy`/
+  `submittedAt`.
 - **`SignOff`** — belongs to a `Server` + `role` (`MIGRATION_LEAD`/`DEV_LEAD`/`QA_LEAD`, unique per
   server+role pair); `status` (`PENDING`/`APPROVED`/`DECLINED`/`SKIPPED`). All three rows for a
   server are created together (`SignOffService.createChainIfAbsent`) the moment its pre-check is
@@ -42,9 +44,17 @@ explicitly below so nobody has to re-discover them.
 3. Every item **except** that same one has a note.
 4. The project has a `migrationManagerName` assigned (fails with a specific message otherwise).
 
-Only the person who started the submission (`startedByEmail`) can submit it — anyone else's
-attempt is rejected with a 403 explaining who currently owns it. On success, it auto-creates the
-sign-off chain and emails the assigned Migration Manager.
+**As of 2026-09-05, the pre-check is collaborative, not single-owner.** `startedByEmail` no longer
+gates anything — any eligible person (`MIGRATION_ENGINEER`/`ADMIN`, per the role gate in
+`SecurityConfig`) can view a half-filled form's real content, fill in whatever items are still
+unfilled, and submit it, not just whoever started it. `PreCheckSubmissionService.toDto` used to
+return a redacted, zeroed-out form (`PreCheckItemDto.redacted`) to everyone except the starter until
+submission, and `submit()` used to 403 anyone but the starter — both removed. Per-item attribution
+(`PreCheckItem.lastModifiedBy`/`lastModifiedAt`) and per-file attribution
+(`PreCheckItemEvidence.uploadedBy`/`uploadedAt`) already existed in the data model and are now
+surfaced in `PreCheckPanel.js` so everyone can see who filled which section and who uploaded which
+file. On successful submit, it auto-creates the sign-off chain and emails the assigned Migration
+Manager.
 
 ## The real sign-off / approval rule
 

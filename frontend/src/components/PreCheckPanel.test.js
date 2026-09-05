@@ -27,7 +27,6 @@ jest.mock("../auth/authConfig", () => ({
 
 const READY_SUBMISSION = {
   status: "DRAFT",
-  lockedByOther: false,
   submittedBy: null,
   submittedAt: null,
   startedByEmail: null,

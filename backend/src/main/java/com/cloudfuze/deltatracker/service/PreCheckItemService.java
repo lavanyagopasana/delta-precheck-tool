@@ -78,11 +78,7 @@ public class PreCheckItemService {
         boolean isAdmin = appUserService.isAdmin(request.getUpdatedBy());
         requireNotFinalised(combination);
         requireUnlocked(combinationId, isAdmin);
-        // The ownership lock is bypassed for managers as well as admins: a manager may edit any
-        // number of times, including over an engineer who claimed the form. The submitted lock above
-        // stays admin-only -- editing after submission changes what an approver already saw.
-        claimOrVerifyOwnership(combinationId, request.getUpdatedBy(),
-                isAdmin || appUserService.canEditProjectData(request.getUpdatedBy()));
+        recordStarterIfUnset(combinationId, request.getUpdatedBy(), isAdmin);
 
         // Read BEFORE the setters below overwrite them -- this is what the trail compares against.
         ItemStatus previousStatus = item.getStatus();
@@ -236,8 +232,7 @@ public class PreCheckItemService {
         boolean isAdmin = appUserService.isAdmin(updatedBy);
         requireNotFinalised(combination);
         requireUnlocked(combinationId, isAdmin);
-        claimOrVerifyOwnership(combinationId, updatedBy,
-                isAdmin || appUserService.canEditProjectData(updatedBy));
+        recordStarterIfUnset(combinationId, updatedBy, isAdmin);
 
         List<PreCheckItem> items = preCheckItemRepository.findByCombinationId(combinationId);
         items.forEach(i -> {
@@ -278,27 +273,22 @@ public class PreCheckItemService {
                 });
     }
 
-    // First person to edit a combination's pre-check claims it -- everyone else is blocked from
-    // editing (and from seeing the real content) until that person submits it for review. Admins
-    // bypass the claim entirely (full access, and they don't take ownership of the form).
-    private void claimOrVerifyOwnership(Long combinationId, String editorEmail, boolean isAdmin) {
-        if (isAdmin) {
+    // Records who first touched a combination's pre-check, purely as an informational "started by"
+    // -- it used to also BLOCK everyone else from editing or even viewing real content until that
+    // person submitted, but a pre-check is server-wide work and any eligible person should be able
+    // to see what's filled in so far and pick up whatever's left. Collaborative filling by design:
+    // multiple engineers can fill different items of the same checklist, and per-item
+    // lastModifiedBy/lastModifiedAt plus per-evidence-file uploadedBy/uploadedAt (both already
+    // recorded below) is how everyone can see who filled what.
+    private void recordStarterIfUnset(Long combinationId, String editorEmail, boolean isAdmin) {
+        if (isAdmin || !StringUtils.hasText(editorEmail)) {
             return;
         }
         PreCheckSubmission submission = preCheckSubmissionRepository.findByCombinationId(combinationId).orElse(null);
-        if (submission == null) {
+        if (submission == null || StringUtils.hasText(submission.getStartedByEmail())) {
             return;
         }
-        if (!StringUtils.hasText(submission.getStartedByEmail())) {
-            if (StringUtils.hasText(editorEmail)) {
-                submission.setStartedByEmail(editorEmail.trim());
-                preCheckSubmissionRepository.save(submission);
-            }
-            return;
-        }
-        if (!submission.getStartedByEmail().equalsIgnoreCase(editorEmail == null ? "" : editorEmail.trim())) {
-            throw new ApiException(HttpStatus.FORBIDDEN,
-                    "This pre-check is currently being filled out by " + submission.getStartedByEmail() + ".");
-        }
+        submission.setStartedByEmail(editorEmail.trim());
+        preCheckSubmissionRepository.save(submission);
     }
 }

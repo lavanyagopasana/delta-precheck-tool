@@ -19,8 +19,9 @@ Don't unilaterally add a large test suite to an unrelated PR — see `.claude/ru
    behavior, and the Dev-Lead-skips-QA branch. This is the highest-value target: it's the most
    business-rule-dense class in the app and the hardest to reason about by reading alone.
 2. **`PreCheckSubmissionService.submit`** — the three preconditions (all items have a status, all
-   have evidence, all have notes) and the "locked by another editor" behavior
-   (`startedByEmail` check).
+   have evidence, all have notes). The pre-check stopped being single-owner as of 2026-09-05 (see
+   `.claude/memory/domain-knowledge.md`) — there is no more "locked by another editor"/`startedByEmail`
+   check to test; anyone eligible can submit.
 3. **`AppUserService`** — `roleOf`/`isAllowed`/`autoProvisionIfEligible` interactions, and
    `importCsv`'s header-detection + per-row error collection.
 4. **`ProjectService.buildSummary`** — the Done/Pending approval-status computation (this had a

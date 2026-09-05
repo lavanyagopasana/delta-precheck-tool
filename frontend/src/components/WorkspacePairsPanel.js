@@ -235,11 +235,12 @@ export default function WorkspacePairsPanel({
       )
     : null;
 
-  // Held by SOMEONE ELSE -- your own claim isn't a lock, it's just where you left off, and that
-  // already reads as "Continue Pre-Check Form". Compared case-insensitively: email is the identity
-  // key everywhere in this app and a case difference here would silently mislabel your own form as
-  // someone else's. A submitted form isn't a lock either; it has its own "View" label above.
-  const lockedByEmail =
+  // Someone ELSE already started this checklist -- purely informational now, not a lock. The
+  // pre-check is collaborative: anyone eligible can open it, see exactly what's filled in so far
+  // (with who filled it, via each item's lastModifiedBy and each evidence file's uploadedBy), and
+  // fill in whatever's left. Compared case-insensitively: email is the identity key everywhere in
+  // this app and a case difference here would wrongly flag your own form as someone else's.
+  const startedByOther =
     activeCombinationSummary?.preCheckStartedByEmail &&
     activeCombinationSummary.submissionStatus !== "SUBMITTED" &&
     activeCombinationSummary.preCheckStartedByEmail.toLowerCase() !== (currentUser?.email || "").toLowerCase()
@@ -260,14 +261,11 @@ export default function WorkspacePairsPanel({
           preCheckAction={
             showPreCheckLink ? (
               <>
-                {/* Someone else has the form open. A submission is claimed (startedByEmail stamped)
-                    the moment it is opened, before any item is filled in, so it can sit at
-                    NOT_STARTED and still be locked -- which is exactly the state that used to
-                    render a live "Start Pre-Check Form" button leading to a read-only notice with
-                    nothing to do on it. Label it for what it is and say who holds it. */}
-                {lockedByEmail && (
+                {/* Someone else already started this checklist -- an FYI, not a lock. Anyone eligible
+                    can still open it, see what they filled in, and pick up the rest. */}
+                {startedByOther && (
                   <span className="precheck-lock-note">
-                    {emailLocalPart(lockedByEmail)} is filling this out
+                    {emailLocalPart(startedByOther)} started this -- open it to see progress and continue
                   </span>
                 )}
                 {/* Solid primary when there's work to do, outlined when there isn't. */}
@@ -276,7 +274,6 @@ export default function WorkspacePairsPanel({
                     activeCombinationSummary.finalDeltaComplete
                       || activeCombinationSummary.submissionStatus === "SUBMITTED"
                       || !canFillPreCheck
-                      || lockedByEmail
                       ? " secondary"
                       : ""
                   }`}
@@ -289,8 +286,6 @@ export default function WorkspacePairsPanel({
                   {activeCombinationSummary.finalDeltaComplete
                     ? "View Completed Pre-Check"
                     : activeCombinationSummary.submissionStatus === "SUBMITTED"
-                    ? "View Pre-Check Form"
-                    : lockedByEmail
                     ? "View Pre-Check Form"
                     : !canFillPreCheck
                     // A viewer role (Manager/Dev Lead/QA Lead) with nothing submitted and nobody

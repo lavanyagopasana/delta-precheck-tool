@@ -236,7 +236,7 @@ class PreCheckSubmissionServiceTest {
     }
 
     @Test
-    void submitAllowsAdminToBypassEditorLock() {
+    void submitAllowsAdminToSubmitEvenWhenStartedByAnotherEditor() {
         when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, "someone-else@cloudfuze.com", null)));
         when(itemRepository.findByCombinationId(CID))
                 .thenReturn(List.of(deltaTypeItem(ItemStatus.PRE_DELTA), goodItem("Item A")));
@@ -249,14 +249,18 @@ class PreCheckSubmissionServiceTest {
 
     // ---- submit: guards ----
 
+    // The pre-check is collaborative as of 2026-09-05: whoever started the checklist no longer
+    // holds an exclusive lock on submitting it. Any eligible person can pick up a half-filled form
+    // and submit it -- this used to 403 with "only they can submit it" and now succeeds.
     @Test
-    void submitRejectedWhenLockedByAnotherEditor() {
+    void submitAllowsAnyEligiblePersonEvenWhenStartedByAnotherEditor() {
         when(submissionRepository.findByCombinationId(CID)).thenReturn(Optional.of(submission(SubmissionStatus.DRAFT, "someone-else@cloudfuze.com", null)));
+        when(itemRepository.findByCombinationId(CID))
+                .thenReturn(List.of(deltaTypeItem(ItemStatus.PRE_DELTA), goodItem("Item A")));
 
-        assertThatThrownBy(() -> service.submit(CID, request(OWNER)))
-                .isInstanceOf(ApiException.class)
-                .satisfies(e -> assertThat(((ApiException) e).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
-        verify(submissionRepository, never()).save(any());
+        PreCheckSubmissionDto dto = service.submit(CID, request(OWNER));
+
+        assertThat(dto.getStatus()).isEqualTo(SubmissionStatus.SUBMITTED);
     }
 
     @Test

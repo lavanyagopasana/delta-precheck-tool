@@ -61,15 +61,4 @@ public class PreCheckItemDto {
                 : evidence.stream().map(EvidenceFileDto::fromEntity).toList());
         return dto;
     }
-
-    // Hides another editor's in-progress work from everyone else until they submit -- keeps only
-    // the static item identity/name, none of the actual progress (status, notes, evidence, who).
-    public static PreCheckItemDto redacted(PreCheckItem item) {
-        PreCheckItemDto dto = new PreCheckItemDto();
-        dto.setId(item.getId());
-        dto.setCombinationId(item.getCombinationId());
-        dto.setItemName(item.getItemName());
-        dto.setStatus(ItemStatus.NOT_STARTED);
-        return dto;
-    }
 }
